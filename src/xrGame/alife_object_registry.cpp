@@ -9,6 +9,57 @@
 #include "stdafx.h"
 #include "alife_object_registry.h"
 #include "ai_debug.h"
+#include "alife_graph_registry.h"
+#include "alife_simulator.h"
+#include "xrServer_Objects_ALife_Monsters.h"
+
+static bool can_serialize_alife_object(CSE_ALifeDynamicObject* object)
+{
+	if (_valid(object->Position()))
+		return true;
+
+	CSE_ALifeCreatureAbstract* creature = smart_cast<CSE_ALifeCreatureAbstract*>(object);
+	const bool alive = creature && creature->g_Alive();
+	const bool story_object = object->m_story_id != INVALID_STORY_ID || object->m_spawn_story_id != INVALID_SPAWN_STORY_ID;
+
+	if (!alive && !story_object)
+	{
+		Msg("! [SAVE_SANITIZE_SKIP] Skipping dead non-story ALife object with invalid position: section[%s] name[%s] id[%u] pos[%.5f, %.5f, %.5f]",
+		    object->name(),
+		    object->name_replace(),
+		    object->ID,
+		    object->Position().x,
+		    object->Position().y,
+		    object->Position().z);
+
+		return false;
+	}
+
+	const Fvector bad_position = object->Position();
+	Fvector rescue_position;
+	CSE_ALifeCreatureActor* actor = object->alife().graph().actor();
+	if (actor && _valid(actor->Position()))
+		rescue_position.set(actor->Position());
+	else
+		rescue_position.set(0.f, 0.f, 0.f);
+
+	Msg("! [SAVE_SANITIZE_REPAIR] Repairing protected ALife object with invalid position: section[%s] name[%s] id[%u] alive[%s] story[%u] spawn_story[%u] pos[%.5f, %.5f, %.5f] -> rescue[%.5f, %.5f, %.5f]",
+	    object->name(),
+	    object->name_replace(),
+	    object->ID,
+	    alive ? "true" : "false",
+	    object->m_story_id,
+	    object->m_spawn_story_id,
+	    bad_position.x,
+	    bad_position.y,
+	    bad_position.z,
+	    rescue_position.x,
+	    rescue_position.y,
+	    rescue_position.z);
+
+	object->o_Position.set(rescue_position);
+	return true;
+}
 
 CALifeObjectRegistry::CALifeObjectRegistry(LPCSTR section)
 {
@@ -28,6 +79,9 @@ CALifeObjectRegistry::~CALifeObjectRegistry()
 
 void CALifeObjectRegistry::save(IWriter& memory_stream, CSE_ALifeDynamicObject* object, u32& object_count)
 {
+	if (!can_serialize_alife_object(object))
+		return;
+
 	++object_count;
 
 	NET_Packet tNetPacket;

@@ -888,7 +888,30 @@ BOOL dbg_draw_ragdoll_spawn = FALSE;
 #endif
 void CCharacterPhysicsSupport::ActivateShell(CObject* who)
 {
-	R_ASSERT(_valid(m_EntityAlife.Position( )));
+	if (!_valid(m_EntityAlife.Position()))
+	{
+		const Fvector bad_position = m_EntityAlife.Position();
+		Fvector rescue_position;
+		if (g_actor && _valid(g_actor->Position()))
+			rescue_position.set(g_actor->Position());
+		else
+			rescue_position.set(0.f, 0.f, 0.f);
+
+		Msg("! [PHYS_RESCUE] Invalid entity position in ActivateShell: section[%s] name[%s] id[%u] alive[%s] pos[%.5f, %.5f, %.5f] -> rescue[%.5f, %.5f, %.5f]",
+			m_EntityAlife.cNameSect().c_str(),
+			m_EntityAlife.cName().c_str(),
+			m_EntityAlife.ID(),
+			m_EntityAlife.g_Alive() ? "true" : "false",
+			bad_position.x,
+			bad_position.y,
+			bad_position.z,
+			rescue_position.x,
+			rescue_position.y,
+			rescue_position.z);
+
+		m_EntityAlife.Position().set(rescue_position);
+		m_EntityAlife.XFORM().c.set(rescue_position);
+	}
 	Fvector start;
 	start.set(m_EntityAlife.Position());
 	Fvector velocity;
