@@ -960,12 +960,48 @@ void CCharacterPhysicsSupport::RemoveActiveWeaponCollision()
 	VERIFY(m_pPhysicsShell);
 	VERIFY(m_weapon_attach_bone);
 	VERIFY(!m_weapon_geoms.empty());
+	if (!m_pPhysicsShell || !m_weapon_attach_bone || m_weapon_geoms.empty() || !m_active_item_obj || !m_active_item_obj->PPhysicsShell())
+	{
+		Msg("! [PHYS_RESCUE] Skip active weapon collision removal: owner[%s] item[%s] geoms[%u]",
+			m_EntityAlife.cName().c_str(),
+			m_active_item_obj ? m_active_item_obj->cName().c_str() : "nil",
+			m_weapon_geoms.size());
+		m_weapon_geoms.clear();
+		m_weapon_attach_bone = nullptr;
+		m_active_item_obj = nullptr;
+		return;
+	}
+
 	xr_vector<CODEGeom*>::iterator ii = m_weapon_geoms.begin(), ee = m_weapon_geoms.end();
 	Fmatrix m0;
 	(*ii)->get_xform(m0);
 	CPhysicsElement* root = m_active_item_obj->PPhysicsShell()->get_ElementByStoreOrder(0);
+	if (!root || root->numberOfGeoms() == 0)
+	{
+		Msg("! [PHYS_RESCUE] Skip active weapon collision transform: owner[%s] item[%s] visual[%s] has no physics root geometry",
+			m_EntityAlife.cName().c_str(),
+			m_active_item_obj->cName().c_str(),
+			m_active_item_obj->cNameVisual().c_str());
+		m_weapon_geoms.clear();
+		m_weapon_attach_bone = nullptr;
+		m_active_item_obj = nullptr;
+		return;
+	}
+
 	CODEGeom* rg = root->geometry(0);
 	VERIFY(rg);
+	if (!rg)
+	{
+		Msg("! [PHYS_RESCUE] Skip active weapon collision transform: owner[%s] item[%s] visual[%s] root geom is nil",
+			m_EntityAlife.cName().c_str(),
+			m_active_item_obj->cName().c_str(),
+			m_active_item_obj->cNameVisual().c_str());
+		m_weapon_geoms.clear();
+		m_weapon_attach_bone = nullptr;
+		m_active_item_obj = nullptr;
+		return;
+	}
+
 	Fmatrix m1;
 	rg->get_xform(m1);
 
@@ -1081,6 +1117,15 @@ void CCharacterPhysicsSupport::AddActiveWeaponCollision()
 	}
 
 	CPhysicsElement* weapon_element = weapon_shell->get_ElementByStoreOrder(0);
+	if (!weapon_element || weapon_element->numberOfGeoms() == 0)
+	{
+		Msg("! [PHYS_RESCUE] Skip active weapon collision attach: owner[%s] item[%s] visual[%s] has no physics geometry",
+			m_EntityAlife.cName().c_str(),
+			active_weapon_item->object().cName().c_str(),
+			active_weapon_item->object().cNameVisual().c_str());
+		destroy_physics_shell(weapon_shell);
+		return;
+	}
 
 	u16 geom_num = weapon_element->numberOfGeoms();
 	for (u16 i = 0; i < geom_num; ++i)
