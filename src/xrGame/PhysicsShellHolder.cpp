@@ -23,6 +23,16 @@
 #ifdef	DEBUG
 #include "../xrengine/objectdump.h"
 #endif
+
+static bool has_usable_physics_shell(CPhysicsShell* shell)
+{
+	if (!shell || shell->get_ElementsNumber() == 0)
+		return false;
+
+	CPhysicsElement* root = shell->get_ElementByStoreOrder(0);
+	return root && root->has_geoms();
+}
+
 CPhysicsShellHolder::CPhysicsShellHolder()
 {
 	init();
@@ -212,6 +222,16 @@ void CPhysicsShellHolder::correct_spawn_pos()
 	Fvector c;
 	get_box(PPhysicsShell(), XFORM(), size, c);
 
+	if (!_valid(c) || !_valid(size) || !_valid(XFORM()))
+	{
+		Msg("! [PHYS_RESCUE] Skip spawn position correction for invalid physics shell: object[%s] model[%s] center[%.5f, %.5f, %.5f] size[%.5f, %.5f, %.5f]",
+			cName().c_str(),
+			cNameVisual().c_str(),
+			c.x, c.y, c.z,
+			size.x, size.y, size.z);
+		return;
+	}
+
 	R_ASSERT2(_valid( c ), make_string( "object: %s model: %s ", cName().c_str(), cNameVisual().c_str() ));
 	R_ASSERT2(_valid( size ), make_string( "object: %s model: %s ", cName().c_str(), cNameVisual().c_str() ));
 	R_ASSERT2(_valid( XFORM() ), make_string( "object: %s model: %s ", cName().c_str(), cNameVisual().c_str() ));
@@ -243,6 +263,15 @@ void CPhysicsShellHolder::activate_physic_shell()
 {
 	VERIFY(!m_pPhysicsShell);
 	create_physic_shell();
+	if (!has_usable_physics_shell(m_pPhysicsShell))
+	{
+		Msg("! [PHYS_RESCUE] Skip physics shell activation for object without usable geometry: object[%s] model[%s]",
+			cName().c_str(),
+			cNameVisual().c_str());
+		destroy_physics_shell(m_pPhysicsShell);
+		return;
+	}
+
 	Fvector l_fw, l_up;
 	l_fw.set(XFORM().k);
 	l_up.set(XFORM().j);
@@ -295,6 +324,15 @@ void CPhysicsShellHolder::setup_physic_shell()
 {
 	VERIFY(!m_pPhysicsShell);
 	create_physic_shell();
+	if (!has_usable_physics_shell(m_pPhysicsShell))
+	{
+		Msg("! [PHYS_RESCUE] Skip physics shell setup for object without usable geometry: object[%s] model[%s]",
+			cName().c_str(),
+			cNameVisual().c_str());
+		destroy_physics_shell(m_pPhysicsShell);
+		return;
+	}
+
 	m_pPhysicsShell->Activate(XFORM(), 0, XFORM());
 	smart_cast<IKinematics*>(Visual())->CalculateBones_Invalidate();
 	smart_cast<IKinematics*>(Visual())->CalculateBones(TRUE);
