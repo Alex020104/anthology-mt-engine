@@ -1,7 +1,7 @@
 {
-  "version": "2026.5.8-mt-nanfix.3",
+  "version": "2026.5.29-alpha-test.1",
   "mode": "mt",
-  "label": "MT TEST",
-  "url": "https://github.com/sysliveprime-ctrl/xray-monolith/releases/download/2026.5.8-nanfix/STALKER-Anomaly-modded-exes-MT-TEST_2026.5.8-nanfix.zip",
-  "notes": "Anthology MT engine 2026.5.8 + nanfix. Skips physics activation for models without usable geometry."
+  "label": "MT TEST ALPHA-BETA-GAMMA",
+  "url": "https://github.com/sysliveprime-ctrl/xray-monolith/releases/download/2026.5.29-alpha-test.1/STALKER-Anomaly-modded-exes-MT-TEST_2026.5.29-alpha-test.1.zip",
+  "notes": "ВНИМАНИЕ: новая версия движка - альфа-бета-гамма тест. Устанавливать только на свой страх и риск. Тупо тест; возможны вылеты, баги и поломки."
 }
