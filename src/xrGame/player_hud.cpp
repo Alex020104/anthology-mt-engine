@@ -1665,18 +1665,24 @@ u32 player_hud::script_anim_play(u8 hand, LPCSTR section, LPCSTR anm_name, bool 
 		if (!M2.valid())
 			M2 = script_anim_item_model->ID_Cycle_Safe("idle");
 
-		R_ASSERT3(M2.valid(), "model %s has no motion [idle] ", pSettings->r_string(m_sect_name, "item_visual"));
+		if (!M2.valid())
+		{
+			Msg("!script motion item model has no motion [%s] or [idle] in section [%s]", item_anm_name.c_str(), section);
+			script_anim_item_model = nullptr;
+		}
+		else
+		{
+			u16 root_id = script_anim_item_model->dcast_PKinematics()->LL_GetBoneRoot();
+			CBoneInstance& root_binst = script_anim_item_model->dcast_PKinematics()->LL_GetBoneInstance(root_id);
+			root_binst.set_callback_overwrite(TRUE);
+			root_binst.mTransform.identity();
 
-		u16 root_id = script_anim_item_model->dcast_PKinematics()->LL_GetBoneRoot();
-		CBoneInstance& root_binst = script_anim_item_model->dcast_PKinematics()->LL_GetBoneInstance(root_id);
-		root_binst.set_callback_overwrite(TRUE);
-		root_binst.mTransform.identity();
+			u16 pc = script_anim_item_model->partitions().count();
+			for (u16 pid = 0; pid < pc; ++pid)
+				CBlend* B = script_anim_item_model->PlayCycle(pid, M2, bMixIn, 0, 0, 0, speed);
 
-		u16 pc = script_anim_item_model->partitions().count();
-		for (u16 pid = 0; pid < pc; ++pid)
-			CBlend* B = script_anim_item_model->PlayCycle(pid, M2, bMixIn, 0, 0, 0, speed);
-
-		script_anim_item_model->dcast_PKinematics()->CalculateBones_Invalidate();
+			script_anim_item_model->dcast_PKinematics()->CalculateBones_Invalidate();
+		}
 	}
 
 	play_blend(this, (hand == 2 ? 0 : hand == 0 ? 2 : 1), M.mid, bMixIn, speed, true);
