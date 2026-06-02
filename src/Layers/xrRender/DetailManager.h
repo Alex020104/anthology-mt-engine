@@ -268,6 +268,7 @@ public:
 	void Render();
 
 	/// MT stuff
+	volatile u32 m_frame_calc_started;
 	volatile u32 m_frame_calc;
 	volatile u32 m_frame_rendered;
 

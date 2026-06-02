@@ -91,6 +91,10 @@ CDetailManager::CDetailManager()
 	m_time_rot_2 = 0;
 	m_time_pos = 0;
 	m_global_time_old = 0;
+	m_frame_calc_started = 0;
+	m_frame_calc = 0;
+	m_frame_rendered = 0;
+	bWait = false;
 
 #ifdef DETAIL_RADIUS
 	// KD: variable detail radius
@@ -473,6 +477,20 @@ void CDetailManager::Render()
 	if (!psDeviceFlags.is(rsDetails)) return;
 #endif
 
+	if (m_frame_calc != RDEVICE.dwFrame)
+	{
+		if (m_frame_calc_started != RDEVICE.dwFrame)
+		{
+			MT_CALC();
+		}
+
+		while (m_frame_calc != RDEVICE.dwFrame && m_frame_calc_started == RDEVICE.dwFrame)
+		{
+			PROF_EVENT("Wait details");
+			Sleep(0);
+		}
+	}
+
 	while (bWait)
 	{
 		PROF_EVENT("Wait details");
@@ -511,9 +529,29 @@ void __stdcall CDetailManager::MT_CALC()
 	if (!psDeviceFlags.is(rsDetails)) return;
 #endif
 
+	const u32 frame = RDEVICE.dwFrame;
+	if (m_frame_calc == frame)
+		return;
+
+	for (;;)
+	{
+		const u32 started = m_frame_calc_started;
+		if (started == frame)
+			return;
+
+		const LONG previous = InterlockedCompareExchange(
+			reinterpret_cast<volatile LONG*>(&m_frame_calc_started),
+			static_cast<LONG>(frame),
+			static_cast<LONG>(started)
+		);
+
+		if (previous == static_cast<LONG>(started))
+			break;
+	}
+
 	bWait = true;
 
-	if (m_frame_calc != RDEVICE.dwFrame && (m_frame_rendered + 1) == RDEVICE.dwFrame)
+	if ((m_frame_rendered + 1) == frame)
 	{
 		Fvector EYE = RDEVICE.vCameraPosition_saved;
 
@@ -525,8 +563,9 @@ void __stdcall CDetailManager::MT_CALC()
 		RDEVICE.Statistic->RenderDUMP_DT_Cache.End();
 
 		UpdateVisibleM();
-		m_frame_calc = RDEVICE.dwFrame;
 	}
+
+	m_frame_calc = frame;
 	bWait = false;
 }
 
