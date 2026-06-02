@@ -1,7 +1,7 @@
 {
-  "version": "2026.06.02.2",
+  "version": "2026.06.02.3",
   "mode": "mt",
   "label": "MT DX11/DX11AVX",
-  "url": "https://github.com/sysliveprime-ctrl/xray-monolith/releases/download/2026.06.02.2/STALKER-Anomaly-modded-exes-MT-TEST_2026.06.02.2.zip",
-  "notes": "Исправлен редкий визуальный баг с мерцанием"
+  "url": "https://github.com/sysliveprime-ctrl/xray-monolith/releases/download/2026.06.02.3/STALKER-Anomaly-modded-exes-MT-TEST_2026.06.02.3.zip",
+  "notes": "Исправлен DB-файл движка в engine ZIP."
 }
