@@ -1,7 +1,7 @@
 {
-  "version": "2026.06.02.3",
+  "version": "2026.06.03.1",
   "mode": "mt",
   "label": "MT DX11/DX11AVX",
-  "url": "https://github.com/sysliveprime-ctrl/xray-monolith/releases/download/2026.06.02.3/STALKER-Anomaly-modded-exes-MT-TEST_2026.06.02.3.zip",
-  "notes": "Исправлен DB-файл движка в engine ZIP."
+  "url": "https://github.com/sysliveprime-ctrl/xray-monolith/releases/download/2026.06.03.1/STALKER-Anomaly-modded-exes-MT-TEST_2026.06.03.1.zip",
+  "notes": "Вылет при переходе (ВАЖНО ЭТО ТЕСТ)"
 }
