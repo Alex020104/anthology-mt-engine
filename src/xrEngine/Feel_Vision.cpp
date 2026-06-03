@@ -59,6 +59,9 @@ IC BOOL feel_vision_test_callback(const collide::ray_defs& rd, CObject* object, 
 
 void Vision::o_new(CObject* O)
 {
+	if (!O || !O->CFORM())
+		return;
+
 	xrSRWLockGuard guard(&lock_visible, false);
 	feel_visible.push_back(feel_visible_Item());
 	feel_visible_Item& I = feel_visible.back();
@@ -193,7 +196,8 @@ void Vision::o_trace(Fvector& P, float dt, float vis_threshold)
 	xr_vector<feel_visible_Item>::iterator I = feel_visible.begin(), E = feel_visible.end();
 	for (; I != E; I++)
 	{
-		if (0 == I->O->CFORM())
+		CObject* object = I->O;
+		if (!object || !object->CFORM())
 		{
 			I->fuzzy = -1;
 			continue;
@@ -203,9 +207,9 @@ void Vision::o_trace(Fvector& P, float dt, float vis_threshold)
 		// if (positive(I->fuzzy) && I->O->Position().similar(I->cp_LR_dst,lr_granularity) && P.similar(I->cp_LR_src,lr_granularity))
 		// continue;
 
-		I->cp_LR_dst = I->O->Position();
+		I->cp_LR_dst = object->Position();
 		I->cp_LR_src = P;
-		I->cp_LAST = I->O->get_last_local_point_on_mesh(I->cp_LP, I->bone_id);
+		I->cp_LAST = object->get_last_local_point_on_mesh(I->cp_LP, I->bone_id);
 
 		//
 		Fvector D, OP = I->cp_LAST;

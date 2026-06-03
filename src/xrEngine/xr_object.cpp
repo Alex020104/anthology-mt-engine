@@ -523,11 +523,15 @@ Fvector CObject::get_last_local_point_on_mesh(Fvector const& local_point, u16 co
 {
 	VERIFY(bone_id == u16(-1));
 
+	ICollisionForm* cform = CFORM();
+	if (!cform)
+		return Position();
+
 	Fvector result;
 	// Fetch data
 	Fmatrix mE;
 	const Fmatrix& M = XFORM();
-	const Fbox& B = CFORM()->getBBox();
+	const Fbox& B = cform->getBBox();
 
 	// Build OBB + Ellipse and X-form point
 	Fvector c, r;
