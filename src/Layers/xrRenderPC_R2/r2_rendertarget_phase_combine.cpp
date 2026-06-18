@@ -279,7 +279,7 @@ void CRenderTarget::phase_combine()
 	if(ps_r2_nightvision > 0)
 		phase_nightvision();
 	
-	if (scope_fake_enabled)
+	if (scope_fake_enabled && !Device.m_SecondViewport.IsSVPActive())
 	{
 		phase_fakescope(); //crookr
 	}

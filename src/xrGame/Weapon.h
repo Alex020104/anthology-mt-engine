@@ -93,6 +93,7 @@ public:
 	IC float GetZRotatingFactor()    const { return m_zoom_params.m_fZoomRotationFactor; }
 	IC float GetSecondVPZoomFactor() const { return m_zoom_params.m_fSecondVPFovFactor; }
 	IC float IsSecondVPZoomPresent() const { return GetSecondVPZoomFactor() > 0.005f; }
+	IC bool IsSecondVPLensZoomOnly() const { return m_zoom_params.m_bSecondVPLensZoomOnly && IsSecondVPZoomPresent(); }
 
 	// Up
 	// Magazine system & etc
@@ -388,6 +389,8 @@ protected:
 		float m_fScopeZoomFactor;
 		float m_fZoomRotationFactor;
 		float m_fSecondVPFovFactor;
+		bool m_bSecondVPLensZoomOnly;
+		u8 m_u8SecondVPFrameDelay;
 		Fvector m_ZoomDof;
 		Fvector4 m_ReloadDof;
 		Fvector4 m_ReloadEmptyDof; //Swartz: reload when empty mag. DOF

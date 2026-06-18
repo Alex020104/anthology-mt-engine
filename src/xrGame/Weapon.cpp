@@ -124,6 +124,8 @@ CWeapon::CWeapon()
 	m_zoom_params.m_pVision = NULL;
 	m_zoom_params.m_pNight_vision = NULL;
 	m_zoom_params.m_fSecondVPFovFactor = 0.0f;
+	m_zoom_params.m_bSecondVPLensZoomOnly = false;
+	m_zoom_params.m_u8SecondVPFrameDelay = 2;
 
 	m_altAimPos = false;
 	m_zoomtype = 0;
@@ -836,6 +838,8 @@ void CWeapon::Load(LPCSTR section)
 		m_bAutoSpawnAmmo = TRUE;
 
 	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, section, "scope_lense_fov", 0.0f);
+	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, section, "scope_lense_zoom_only", false);
+	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, section, "scope_lense_frame_delay", 2);
 	m_zoom_params.m_bHideCrosshairInZoom = true;
 
 	if (pSettings->line_exist(hud_sect, "zoom_hide_crosshair"))
@@ -3289,7 +3293,13 @@ u32 CWeapon::Cost() const
 
 float CWeapon::GetSecondVPFov() const
 {
-	if (m_zoom_params.m_bUseDynamicZoom && IsSecondVPZoomPresent())
+	if (!IsSecondVPZoomPresent())
+		return g_fov;
+
+	if (m_zoom_params.m_bSecondVPLensZoomOnly)
+		return clampr(GetSecondVPZoomFactor(), 1.0f, g_fov);
+
+	if (m_zoom_params.m_bUseDynamicZoom)
 		return (m_fRTZoomFactor / 100.f) * g_fov;
 
 	return GetSecondVPZoomFactor() * g_fov;
@@ -3301,7 +3311,12 @@ void CWeapon::UpdateSecondVP()
 		return;
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	Device.m_SecondViewport.SetSVPActive(m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.05f);
+	const bool svp_active = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.05f;
+
+	Device.m_SecondViewport.SetSVPActive(svp_active);
+
+	if (svp_active)
+		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);
 }
 
 Fmatrix CWeapon::RayTransform()
