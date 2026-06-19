@@ -840,6 +840,24 @@ void CWeapon::Load(LPCSTR section)
 	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, section, "scope_lense_fov", 0.0f);
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, section, "scope_lense_frame_delay", 2);
+	if (strstr(section, "wpn_ak107") &&
+		(strstr(section, "wpn_addon_scope") || strstr(section, "pso1m21") || strstr(section, "pso2")))
+	{
+		const bool forced = m_zoom_params.m_fSecondVPFovFactor <= 0.005f;
+		if (forced)
+		{
+			m_zoom_params.m_fSecondVPFovFactor = 12.0f;
+			m_zoom_params.m_bSecondVPLensZoomOnly = true;
+			m_zoom_params.m_u8SecondVPFrameDelay = 2;
+		}
+
+		Msg("[PIP_AK107] load section=%s lens_fov=%.3f zoom_only=%d frame_delay=%u forced=%d",
+			section,
+			m_zoom_params.m_fSecondVPFovFactor,
+			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
+			m_zoom_params.m_u8SecondVPFrameDelay,
+			forced ? 1 : 0);
+	}
 	m_zoom_params.m_bHideCrosshairInZoom = true;
 
 	if (pSettings->line_exist(hud_sect, "zoom_hide_crosshair"))
@@ -3317,6 +3335,26 @@ void CWeapon::UpdateSecondVP()
 
 	if (svp_active)
 		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);
+
+	if (strstr(cNameSect().c_str(), "wpn_ak107") && IsSecondVPZoomPresent())
+	{
+		static bool last_svp_active = false;
+		static u32 last_log_time = 0;
+		const bool should_log = last_svp_active != svp_active || Device.dwTimeGlobal > last_log_time + 1000;
+		if (should_log)
+		{
+			Msg("[PIP_AK107] update section=%s zoomed=%d rot=%.3f lens_fov=%.3f svp_fov=%.3f active=%d frame=%d",
+				cNameSect().c_str(),
+				IsZoomed() ? 1 : 0,
+				m_zoom_params.m_fZoomRotationFactor,
+				m_zoom_params.m_fSecondVPFovFactor,
+				GetSecondVPFov(),
+				svp_active ? 1 : 0,
+				Device.m_SecondViewport.IsSVPFrame() ? 1 : 0);
+			last_svp_active = svp_active;
+			last_log_time = Device.dwTimeGlobal;
+		}
+	}
 }
 
 Fmatrix CWeapon::RayTransform()
