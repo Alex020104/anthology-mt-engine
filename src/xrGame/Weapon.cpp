@@ -309,26 +309,6 @@ void CWeapon::UpdateZoomParams() {
 
 	//////////
 
-	const bool main_scope_attached = m_zoomtype == 0
-		&& ALife::eAddonPermanent != m_eScopeStatus
-		&& 0 != (m_flagsAddOnState & CSE_ALifeItemWeapon::eWeaponAddonScope)
-		&& m_scopes.size();
-
-	shared_str active_scope_name;
-	if (main_scope_attached)
-		active_scope_name = GetScopeName();
-
-	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, cNameSect(), "scope_lense_fov", 0.0f);
-	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, cNameSect(), "scope_lense_zoom_only", false);
-	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, cNameSect(), "scope_lense_frame_delay", 2);
-
-	if (main_scope_attached && active_scope_name.c_str() && active_scope_name.c_str()[0])
-	{
-		m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, active_scope_name.c_str(), "scope_lense_fov", m_zoom_params.m_fSecondVPFovFactor);
-		m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, active_scope_name.c_str(), "scope_lense_zoom_only", m_zoom_params.m_bSecondVPLensZoomOnly);
-		m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, active_scope_name.c_str(), "scope_lense_frame_delay", m_zoom_params.m_u8SecondVPFrameDelay);
-	}
-
 	// Load scopes.xml if it's not loaded
 	if (pWpnScopeXml == nullptr)
 	{
@@ -354,13 +334,13 @@ void CWeapon::UpdateZoomParams() {
 		if (g_player_hud->m_adjust_mode)
 		{
 			m_zoom_params.m_fScopeZoomFactor = g_player_hud->m_adjust_zoom_factor[0] / zoom_multiple;
-		} else if (main_scope_attached)
+		} else if (ALife::eAddonPermanent != m_eScopeStatus && 0 != (m_flagsAddOnState & CSE_ALifeItemWeapon::eWeaponAddonScope) && m_scopes.size())
 		{
-			m_zoom_params.m_fScopeZoomFactor = pSettings->r_float(active_scope_name.c_str(), "scope_zoom_factor") / zoom_multiple;
+			m_zoom_params.m_fScopeZoomFactor = pSettings->r_float(GetScopeName(), "scope_zoom_factor") / zoom_multiple;
 			if (m_modular_attachments) {
-				m_zoom_params.m_bUseDynamicZoom = READ_IF_EXISTS(pSettings, r_bool, active_scope_name.c_str(), "scope_dynamic_zoom", false);
-				m_zoom_params.m_fMinBaseZoomFactor = READ_IF_EXISTS(pSettings, r_float, active_scope_name.c_str(), "min_scope_zoom_factor", 200.0f);
-				stepCount = READ_IF_EXISTS(pSettings, r_float, active_scope_name.c_str(), "zoom_step_count", 0);
+				m_zoom_params.m_bUseDynamicZoom = READ_IF_EXISTS(pSettings, r_bool, GetScopeName(), "scope_dynamic_zoom", false);
+				m_zoom_params.m_fMinBaseZoomFactor = READ_IF_EXISTS(pSettings, r_float, GetScopeName(), "min_scope_zoom_factor", 200.0f);
+				stepCount = READ_IF_EXISTS(pSettings, r_float, GetScopeName(), "zoom_step_count", 0);
 			}
 		} else
 		{
@@ -860,16 +840,6 @@ void CWeapon::Load(LPCSTR section)
 	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, section, "scope_lense_fov", 0.0f);
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, section, "scope_lense_frame_delay", 2);
-	if (m_zoom_params.m_fSecondVPFovFactor > 0.005f)
-	{
-		Msg("[PIP] load %s lens_fov=%.3f zoom_only=%d frame_delay=%u zoom_factor=%.3f dyn_zoom=%d",
-			section,
-			m_zoom_params.m_fSecondVPFovFactor,
-			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
-			m_zoom_params.m_u8SecondVPFrameDelay,
-			READ_IF_EXISTS(pSettings, r_float, section, "scope_zoom_factor", 0.0f),
-			READ_IF_EXISTS(pSettings, r_bool, section, "scope_dynamic_zoom", false) ? 1 : 0);
-	}
 	m_zoom_params.m_bHideCrosshairInZoom = true;
 
 	if (pSettings->line_exist(hud_sect, "zoom_hide_crosshair"))
@@ -3341,44 +3311,12 @@ void CWeapon::UpdateSecondVP()
 		return;
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	if (!pActor)
-		return;
-
 	const bool svp_active = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.05f;
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 
 	if (svp_active)
 		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);
-
-	if (strstr(cNameSect().c_str(), "wpn_ak107"))
-	{
-		static bool last_svp_active = false;
-		static u32 last_svp_log_time = 0;
-		const bool should_log = last_svp_active != svp_active || Device.dwTimeGlobal > last_svp_log_time + 1000;
-		if (should_log)
-		{
-			const bool main_scope_attached = m_zoomtype == 0
-				&& ALife::eAddonPermanent != m_eScopeStatus
-				&& 0 != (m_flagsAddOnState & CSE_ALifeItemWeapon::eWeaponAddonScope)
-				&& m_scopes.size();
-			const shared_str scope_name = main_scope_attached ? GetScopeName() : shared_str();
-			Msg("[PIP] %s scope=%s zoomed=%d rot=%.3f lens_fov=%.3f svp_fov=%.3f zoom_only=%d delay=%u active=%d frame=%d main_fov=%.3f",
-				cNameSect().c_str(),
-				scope_name.c_str() ? scope_name.c_str() : "",
-				IsZoomed() ? 1 : 0,
-				m_zoom_params.m_fZoomRotationFactor,
-				m_zoom_params.m_fSecondVPFovFactor,
-				GetSecondVPFov(),
-				m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
-				m_zoom_params.m_u8SecondVPFrameDelay,
-				svp_active ? 1 : 0,
-				Device.m_SecondViewport.IsSVPFrame() ? 1 : 0,
-				g_fov);
-			last_svp_active = svp_active;
-			last_svp_log_time = Device.dwTimeGlobal;
-		}
-	}
 }
 
 Fmatrix CWeapon::RayTransform()
