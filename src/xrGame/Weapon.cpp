@@ -57,6 +57,21 @@ extern int g_nearwall;
 
 BOOL g_use_non_linear_inertia = TRUE;
 
+static bool IsSecondVPThermalSection(LPCSTR section)
+{
+	if (!section || !section[0])
+		return false;
+
+	return xr_strcmp(section, "echo1") == 0
+		|| xr_strcmp(section, "gauss") == 0
+		|| xr_strcmp(section, "gauss_sight") == 0
+		|| xr_strcmp(section, "t12") == 0
+		|| strstr(section, "_echo1") != nullptr
+		|| strstr(section, "_gauss_sight") != nullptr
+		|| strstr(section, "_gauss") != nullptr
+		|| strstr(section, "_t12") != nullptr;
+}
+
 float CWeapon::SDS_Radius(bool alt) {
 	// hack for GL to always return 0, fix later
 	if (m_zoomtype == 2)
@@ -3348,7 +3363,7 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 
 	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, base_section, "scope_lense_fov", 0.0f);
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
-	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false);
+	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
 
 	if (m_eScopeStatus == ALife::eAddonAttachable && IsScopeAttached() && m_scopes.size())
@@ -3359,7 +3374,7 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 			LPCSTR lens_section = scope_section.c_str();
 			m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov", m_zoom_params.m_fSecondVPFovFactor);
 			m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_zoom_only", m_zoom_params.m_bSecondVPLensZoomOnly);
-			m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_thermal", m_zoom_params.m_bSecondVPThermal);
+			m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_thermal", m_zoom_params.m_bSecondVPThermal) || IsSecondVPThermalSection(lens_section);
 			m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, lens_section, "scope_lense_frame_delay", m_zoom_params.m_u8SecondVPFrameDelay);
 		}
 	}
@@ -3420,10 +3435,10 @@ void CWeapon::UpdateSecondVP()
 	}
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
+	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.85f;
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
 	if (svp_requested) {
-		const float blend = clampr(Device.fTimeDelta * 6.f, 0.0f, 1.0f);
+		const float blend = clampr(Device.fTimeDelta * 12.f, 0.0f, 1.0f);
 		m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
 		if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
 			m_zoom_params.m_fSecondVPCurrentFov = target_fov;
