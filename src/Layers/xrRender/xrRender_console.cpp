@@ -275,6 +275,7 @@ Fvector dsr_test2 = { 0.f, 0.f, 0.f };
 
 //--DSR-- HeatVision_start
 int ps_r2_heatvision = 0;			// heatvision shader ON/OFF
+bool ps_pip_svp_thermal = false;	// heatvision for thermal PiP SecondVP only
 float heat_vision_mode = 0.0f;		// heatvision mode - rgb/greyscale
 int heat_vision_cooldown = 1;		// heatvision corpse cooling down ON/OFF
 float heat_vision_cooldown_time = 20000.f;	// heatvision corpse cooling down time (in ms)

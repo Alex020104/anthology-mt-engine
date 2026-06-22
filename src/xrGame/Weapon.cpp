@@ -3431,6 +3431,7 @@ void CWeapon::UpdateSecondVP()
 {
 	if (!(ParentIsActor() && (m_pInventory != NULL) && (m_pInventory->ActiveItem() == this))) {
 		g_pip_svp_thermal = false;
+		ps_pip_svp_thermal = false;
 		return;
 	}
 
@@ -3451,6 +3452,7 @@ void CWeapon::UpdateSecondVP()
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 	g_pip_svp_thermal = svp_active && m_zoom_params.m_bSecondVPThermal;
+	ps_pip_svp_thermal = g_pip_svp_thermal;
 
 	if (svp_active)
 		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);

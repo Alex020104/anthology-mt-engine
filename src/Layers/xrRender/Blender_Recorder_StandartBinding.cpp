@@ -458,7 +458,8 @@ static class cl_heatvision_steps : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, ps_r2_heatvision, heat_vision_steps.x, heat_vision_steps.y, heat_vision_steps.z);
+		const int heatvision_mode = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && ps_pip_svp_thermal) ? 1 : 0;
+		RCache.set_c(C, heatvision_mode, heat_vision_steps.x, heat_vision_steps.y, heat_vision_steps.z);
 	}
 } binder_heatvision_params1;
 
