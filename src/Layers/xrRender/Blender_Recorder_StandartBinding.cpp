@@ -1429,6 +1429,7 @@ void CBlender_Compile::SetMapping()
 	r_Constant("m_hud_fov_params", &binder_hud_fov_params);
 	r_Constant("m_script_params", &binder_script_params); //--#SM+#--
 	r_Constant("m_blender_mode", &binder_blend_mode);	//--#SM+#--
+	r_Constant("scope_svp", &ssfx_issvp);
 	
 	// Rain
 	r_Constant("rain_params", &binder_rain_params);
