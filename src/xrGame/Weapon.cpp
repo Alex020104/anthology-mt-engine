@@ -2185,6 +2185,7 @@ void CWeapon::reload(LPCSTR section)
 {
 	CShootingObject::reload(section);
 	CHudItemObject::reload(section);
+	LoadSecondVPParams(section);
 
 	m_can_be_strapped = true;
 	m_strapped_mode = false;
