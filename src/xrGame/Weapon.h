@@ -394,6 +394,8 @@ protected:
 		float m_fSecondVPFovFactor;
 		float m_fSecondVPCurrentFov;
 		bool m_bSecondVPLensZoomOnly;
+		bool m_bSecondVPThermal;
+		bool m_bSecondVPLensZoomInitialized;
 		u8 m_u8SecondVPFrameDelay;
 		Fvector m_ZoomDof;
 		Fvector4 m_ReloadDof;

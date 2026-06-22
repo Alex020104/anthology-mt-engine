@@ -25,6 +25,9 @@
 #include "../../../PHDestroyable.h"
 #include "../../../CharacterPhysicsSupport.h"
 
+extern int ps_r2_heatvision;
+extern bool g_pip_svp_thermal;
+
 #ifdef DEBUG
 #	include <dinput.h>
 #endif // DEBUG
@@ -511,15 +514,8 @@ CAI_Bloodsucker::visibility_t CAI_Bloodsucker::get_visibility_state() const
 //--DSR-- HeatVision_start
 float CAI_Bloodsucker::GetTransparency() 
 {
-	if (m_visibility_state == no_visibility) 
-	{
-		return 1.0f;
-	}
-	else
-	{
-		return 0.0f;
-	}
-
+	const bool heatvision_render = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && g_pip_svp_thermal);
+	return (m_visibility_state == no_visibility && !heatvision_render) ? 1.0f : 0.0f;
 }
 //--DSR-- HeatVision_end
 
@@ -880,7 +876,6 @@ void CAI_Bloodsucker::manual_deactivate()
 	setVisible(TRUE);
 }
 
-
 extern int ps_r2_heatvision;
 void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 {
@@ -891,7 +886,7 @@ void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 	//	inherited::renderable_Render();  
 	//}
 
-	const bool heatvision_render = ps_r2_heatvision > 0 || Device.m_SecondViewport.IsSVPFrame();
+	const bool heatvision_render = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && g_pip_svp_thermal);
 	if (m_visibility_state != no_visibility || heatvision_render)
 		inherited::renderable_Render(DM);
 	//--DSR-- HeatVision_end
