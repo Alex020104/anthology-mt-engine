@@ -286,6 +286,7 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 	                                             partial_visibility_radius_string,
 	                                             default_partial_visibility_radius);
 	m_visibility_state = unset;
+	m_heatvision_forced_visible = false;
 	m_visibility_state_last_changed_time = 0;
 
 	PostLoad(section);
@@ -294,6 +295,7 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 void CAI_Bloodsucker::reinit()
 {
 	m_force_visibility_state = unset;
+	m_heatvision_forced_visible = false;
 
 	inherited::reinit();
 	CControlledActor::reinit();
@@ -632,9 +634,22 @@ void CAI_Bloodsucker::shedule_Update(u32 dt)
 {
 	inherited::shedule_Update(dt);
 
+	const bool heatvision_active = ps_r2_heatvision > 0 || g_pip_svp_thermal;
+	if (state_invisible && heatvision_active && !getVisible())
+	{
+		setVisible(TRUE);
+		m_heatvision_forced_visible = true;
+	}
+	else if (m_heatvision_forced_visible && !heatvision_active)
+	{
+		setVisible(FALSE);
+		m_heatvision_forced_visible = false;
+	}
+
 	if (!g_Alive())
 	{
 		setVisible(TRUE);
+		m_heatvision_forced_visible = false;
 		if (state_invisible)
 		{
 			stop_invisible_predator();
@@ -867,12 +882,16 @@ void CAI_Bloodsucker::stop_invisible_predator()
 void CAI_Bloodsucker::manual_activate()
 {
 	state_invisible = true;
+	m_visibility_state = no_visibility;
+	m_heatvision_forced_visible = false;
 	setVisible(FALSE);
 }
 
 void CAI_Bloodsucker::manual_deactivate()
 {
 	state_invisible = false;
+	m_visibility_state = full_visibility;
+	m_heatvision_forced_visible = false;
 	setVisible(TRUE);
 }
 

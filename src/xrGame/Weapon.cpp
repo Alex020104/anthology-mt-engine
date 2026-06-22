@@ -3436,7 +3436,8 @@ void CWeapon::UpdateSecondVP()
 	}
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.85f;
+	const float svp_activation_threshold = IsZoomed() ? 0.001f : 0.85f;
+	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > svp_activation_threshold;
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
 	if (svp_requested) {
 		const float blend = clampr(Device.fTimeDelta * 12.f, 0.0f, 1.0f);
