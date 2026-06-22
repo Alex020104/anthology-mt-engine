@@ -3400,6 +3400,16 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
 			m_zoom_params.m_u8SecondVPFrameDelay);
 	}
+
+	if (m_zoom_params.m_bSecondVPThermal)
+	{
+		Msg("[PIP_THERMAL] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d frame_delay=%u",
+			base_section,
+			scope_section.size() ? scope_section.c_str() : "nil",
+			m_zoom_params.m_fSecondVPFovFactor,
+			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
+			m_zoom_params.m_u8SecondVPFrameDelay);
+	}
 }
 
 float CWeapon::GetSecondVPTargetFov() const
