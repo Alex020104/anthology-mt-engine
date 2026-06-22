@@ -891,7 +891,8 @@ void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 	//	inherited::renderable_Render();  
 	//}
 
-	if (m_visibility_state != no_visibility || ps_r2_heatvision > 0)
+	const bool heatvision_render = ps_r2_heatvision > 0 || Device.m_SecondViewport.IsSVPFrame();
+	if (m_visibility_state != no_visibility || heatvision_render)
 		inherited::renderable_Render(DM);
 	//--DSR-- HeatVision_end
 }

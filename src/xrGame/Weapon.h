@@ -90,10 +90,12 @@ public:
 	}
 
 	float CWeapon::GetSecondVPFov() const;
+	float CWeapon::GetSecondVPTargetFov() const;
 	IC float GetZRotatingFactor()    const { return m_zoom_params.m_fZoomRotationFactor; }
 	IC float GetSecondVPZoomFactor() const { return m_zoom_params.m_fSecondVPFovFactor; }
 	IC float IsSecondVPZoomPresent() const { return GetSecondVPZoomFactor() > 0.005f; }
 	IC bool IsSecondVPLensZoomOnly() const { return m_zoom_params.m_bSecondVPLensZoomOnly && IsSecondVPZoomPresent(); }
+	IC bool IsSecondVPDynamicLensZoom() const { return IsSecondVPLensZoomOnly() && !!m_zoom_params.m_bUseDynamicZoom; }
 
 	// Up
 	// Magazine system & etc
@@ -390,6 +392,7 @@ protected:
 		float m_fScopeZoomFactor;
 		float m_fZoomRotationFactor;
 		float m_fSecondVPFovFactor;
+		float m_fSecondVPCurrentFov;
 		bool m_bSecondVPLensZoomOnly;
 		u8 m_u8SecondVPFrameDelay;
 		Fvector m_ZoomDof;

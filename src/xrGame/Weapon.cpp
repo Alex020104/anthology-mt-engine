@@ -124,6 +124,7 @@ CWeapon::CWeapon()
 	m_zoom_params.m_pVision = NULL;
 	m_zoom_params.m_pNight_vision = NULL;
 	m_zoom_params.m_fSecondVPFovFactor = 0.0f;
+	m_zoom_params.m_fSecondVPCurrentFov = g_fov;
 	m_zoom_params.m_bSecondVPLensZoomOnly = false;
 	m_zoom_params.m_u8SecondVPFrameDelay = 2;
 
@@ -360,7 +361,9 @@ void CWeapon::UpdateZoomParams() {
 		}
 
 
-		if (m_zoom_params.m_bUseDynamicZoom) {
+		if (IsSecondVPDynamicLensZoom()) {
+			SetZoomFactor(m_fRTZoomFactor);
+		} else if (m_zoom_params.m_bUseDynamicZoom) {
 			SetZoomFactor(m_fRTZoomFactor / zoom_multiple);
 		} else {
 			SetZoomFactor(m_zoom_params.m_fScopeZoomFactor);
@@ -983,14 +986,21 @@ BOOL CWeapon::net_Spawn(CSE_Abstract* DC)
 {
 	if (m_zoom_params.m_bUseDynamicZoom)
 	{
-		float delta, min_zoom_factor;
-		float power = scope_radius > 0.0 ? scope_scrollpower : 1;
-		if (zoomFlags.test(NEW_ZOOM)) {
-			NewGetZoomData(m_zoom_params.m_fScopeZoomFactor * power, m_zoom_params.m_fZoomStepCount, delta, min_zoom_factor, GetZoomFactor() * power, m_zoom_params.m_fMinBaseZoomFactor);
-		} else {
-			GetZoomData(m_zoom_params.m_fScopeZoomFactor * power, m_zoom_params.m_fZoomStepCount, m_zoom_params.m_fMinBaseZoomFactor, delta, min_zoom_factor);
+		if (IsSecondVPDynamicLensZoom())
+		{
+			m_fRTZoomFactor = 100.f;
 		}
-		m_fRTZoomFactor = min_zoom_factor;
+		else
+		{
+			float delta, min_zoom_factor;
+			float power = scope_radius > 0.0 ? scope_scrollpower : 1;
+			if (zoomFlags.test(NEW_ZOOM)) {
+				NewGetZoomData(m_zoom_params.m_fScopeZoomFactor * power, m_zoom_params.m_fZoomStepCount, delta, min_zoom_factor, GetZoomFactor() * power, m_zoom_params.m_fMinBaseZoomFactor);
+			} else {
+				GetZoomData(m_zoom_params.m_fScopeZoomFactor * power, m_zoom_params.m_fZoomStepCount, m_zoom_params.m_fMinBaseZoomFactor, delta, min_zoom_factor);
+			}
+			m_fRTZoomFactor = min_zoom_factor;
+		}
 	}
 	else
 		m_fRTZoomFactor = m_zoom_params.m_fScopeZoomFactor;
@@ -2053,7 +2063,10 @@ void CWeapon::OnZoomIn()
 	if (!firstZoomDone) {
 		firstZoomDone = true;
 
-		if (m_zoom_params.m_bUseDynamicZoom) {
+		if (IsSecondVPDynamicLensZoom()) {
+			m_fRTZoomFactor = 100.f;
+		}
+		else if (m_zoom_params.m_bUseDynamicZoom) {
 			float delta, min_zoom_factor;
 			float power = scope_radius > 0.0 ? scope_scrollpower : 1;
 			
@@ -2069,7 +2082,9 @@ void CWeapon::OnZoomIn()
 
 	//Msg("m_fRTZoomFactor %f, scope_scrollpower %f", m_fRTZoomFactor, scope_scrollpower);
 
-	if (m_zoom_params.m_bUseDynamicZoom)
+	if (IsSecondVPDynamicLensZoom())
+		SetZoomFactor(m_fRTZoomFactor);
+	else if (m_zoom_params.m_bUseDynamicZoom)
 		SetZoomFactor(scope_radius > 0.0 ? m_fRTZoomFactor / scope_scrollpower : m_fRTZoomFactor);
 	else
 		SetZoomFactor(CurrentZoomFactor());
@@ -2104,7 +2119,7 @@ void CWeapon::OnZoomOut()
 	m_zoom_params.m_bIsZoomModeNow = false;
     if (m_zoom_params.m_bUseDynamicZoom)
     {
-        m_fRTZoomFactor = scope_radius > 0.0 ? GetZoomFactor() * scope_scrollpower : GetZoomFactor(); //store current
+        m_fRTZoomFactor = IsSecondVPDynamicLensZoom() ? GetZoomFactor() : (scope_radius > 0.0 ? GetZoomFactor() * scope_scrollpower : GetZoomFactor()); //store current
     }
     
 	m_zoom_params.m_fCurrentZoomFactor = g_fov;
@@ -3207,6 +3222,9 @@ bool CWeapon::IsHudModeNow()
 
 float CWeapon::GetMinScopeZoomFactor() const
 {
+	if (IsSecondVPDynamicLensZoom())
+		return 100.f;
+
 	float delta, min_zoom_factor;
 	float power = scope_radius > 0.0 ? scope_scrollpower : 1;
 	if (zoomFlags.test(NEW_ZOOM)) {
@@ -3222,6 +3240,17 @@ void CWeapon::ZoomInc()
 {
 	if (!IsScopeAttached()) return;
 	if (!m_zoom_params.m_bUseDynamicZoom) return;
+
+	if (IsSecondVPDynamicLensZoom())
+	{
+		const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.f, 100.f);
+		const float steps = m_zoom_params.m_fZoomStepCount > 0.f ? m_zoom_params.m_fZoomStepCount : n_zoom_step_count;
+		const float delta = (100.f - min_zoom_factor) / std::max(steps, 1.f);
+		m_fRTZoomFactor = clampr(m_fRTZoomFactor - delta, min_zoom_factor, 100.f);
+		SetZoomFactor(m_fRTZoomFactor);
+		return;
+	}
+
 	float delta, min_zoom_factor;
 	float power = scope_radius > 0.0 ? scope_scrollpower : 1;
 
@@ -3245,6 +3274,17 @@ void CWeapon::ZoomDec()
 {
 	if (!IsScopeAttached()) return;
 	if (!m_zoom_params.m_bUseDynamicZoom) return;
+
+	if (IsSecondVPDynamicLensZoom())
+	{
+		const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.f, 100.f);
+		const float steps = m_zoom_params.m_fZoomStepCount > 0.f ? m_zoom_params.m_fZoomStepCount : n_zoom_step_count;
+		const float delta = (100.f - min_zoom_factor) / std::max(steps, 1.f);
+		m_fRTZoomFactor = clampr(m_fRTZoomFactor + delta, min_zoom_factor, 100.f);
+		SetZoomFactor(m_fRTZoomFactor);
+		return;
+	}
+
 	float delta, min_zoom_factor;
 	float power = scope_radius > 0.0 ? scope_scrollpower : 1;
 
@@ -3322,10 +3362,13 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 	}
 }
 
-float CWeapon::GetSecondVPFov() const
+float CWeapon::GetSecondVPTargetFov() const
 {
 	if (!IsSecondVPZoomPresent())
 		return g_fov;
+
+	if (IsSecondVPDynamicLensZoom())
+		return clampr((m_fRTZoomFactor / 100.f) * g_fov, 1.0f, g_fov);
 
 	if (m_zoom_params.m_bSecondVPLensZoomOnly)
 		return clampr(GetSecondVPZoomFactor(), 1.0f, g_fov);
@@ -3336,13 +3379,28 @@ float CWeapon::GetSecondVPFov() const
 	return GetSecondVPZoomFactor() * g_fov;
 }
 
+float CWeapon::GetSecondVPFov() const
+{
+	if (!IsSecondVPZoomPresent())
+		return g_fov;
+
+	return clampr(m_zoom_params.m_fSecondVPCurrentFov, 1.0f, g_fov);
+}
+
 void CWeapon::UpdateSecondVP()
 {
 	if (!(ParentIsActor() && (m_pInventory != NULL) && (m_pInventory->ActiveItem() == this)))
 		return;
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	const bool svp_active = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.05f;
+	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
+	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
+	const float blend = clampr(Device.fTimeDelta * 10.f, 0.0f, 1.0f);
+	m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
+	if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
+		m_zoom_params.m_fSecondVPCurrentFov = target_fov;
+
+	const bool svp_active = svp_requested || (IsSecondVPZoomPresent() && m_zoom_params.m_fSecondVPCurrentFov < g_fov - 0.05f);
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 
