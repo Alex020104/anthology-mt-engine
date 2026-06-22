@@ -1571,6 +1571,7 @@ void CWeaponMagazined::InitAddons()
 	}
 
 	inherited::InitAddons();
+	LoadSecondVPParams(cNameSect().c_str());
 }
 
 void CWeaponMagazined::LoadSilencerKoeffs()

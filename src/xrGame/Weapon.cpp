@@ -837,27 +837,7 @@ void CWeapon::Load(LPCSTR section)
 	else
 		m_bAutoSpawnAmmo = TRUE;
 
-	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, section, "scope_lense_fov", 0.0f);
-	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, section, "scope_lense_zoom_only", false);
-	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, section, "scope_lense_frame_delay", 2);
-	if (strstr(section, "wpn_ak107") &&
-		(strstr(section, "wpn_addon_scope") || strstr(section, "pso1m21") || strstr(section, "pso2")))
-	{
-		const bool forced = m_zoom_params.m_fSecondVPFovFactor <= 0.005f;
-		if (forced)
-		{
-			m_zoom_params.m_fSecondVPFovFactor = 12.0f;
-			m_zoom_params.m_bSecondVPLensZoomOnly = true;
-			m_zoom_params.m_u8SecondVPFrameDelay = 2;
-		}
-
-		Msg("[PIP_AK107] load section=%s lens_fov=%.3f zoom_only=%d frame_delay=%u forced=%d",
-			section,
-			m_zoom_params.m_fSecondVPFovFactor,
-			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
-			m_zoom_params.m_u8SecondVPFrameDelay,
-			forced ? 1 : 0);
-	}
+	LoadSecondVPParams(section);
 	m_zoom_params.m_bHideCrosshairInZoom = true;
 
 	if (pSettings->line_exist(hud_sect, "zoom_hide_crosshair"))
@@ -3307,6 +3287,38 @@ u32 CWeapon::Cost() const
 		res += iFloor(w * (iAmmoElapsed / bs));
 	}
 	return res;
+}
+
+void CWeapon::LoadSecondVPParams(LPCSTR section)
+{
+	LPCSTR base_section = section ? section : cNameSect().c_str();
+	shared_str scope_section;
+
+	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, base_section, "scope_lense_fov", 0.0f);
+	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
+	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
+
+	if (m_eScopeStatus == ALife::eAddonAttachable && IsScopeAttached() && m_scopes.size())
+	{
+		scope_section = GetScopeName();
+		if (scope_section.size())
+		{
+			LPCSTR lens_section = scope_section.c_str();
+			m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov", m_zoom_params.m_fSecondVPFovFactor);
+			m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_zoom_only", m_zoom_params.m_bSecondVPLensZoomOnly);
+			m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, lens_section, "scope_lense_frame_delay", m_zoom_params.m_u8SecondVPFrameDelay);
+		}
+	}
+
+	if (strstr(base_section, "wpn_ak107") || (scope_section.size() && strstr(scope_section.c_str(), "pso2")))
+	{
+		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d frame_delay=%u",
+			base_section,
+			scope_section.size() ? scope_section.c_str() : "nil",
+			m_zoom_params.m_fSecondVPFovFactor,
+			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
+			m_zoom_params.m_u8SecondVPFrameDelay);
+	}
 }
 
 float CWeapon::GetSecondVPFov() const

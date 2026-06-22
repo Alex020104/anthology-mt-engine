@@ -119,6 +119,7 @@ public:
 	virtual void HUD_VisualBulletUpdate(bool force = false, int force_idx = -1);
 
 	void UpdateSecondVP();
+	void LoadSecondVPParams(LPCSTR section);
 
 	virtual void UpdateCL();
 	virtual void shedule_Update(u32 dt);
