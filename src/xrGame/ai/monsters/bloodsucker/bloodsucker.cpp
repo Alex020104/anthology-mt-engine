@@ -287,6 +287,7 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 	                                             default_partial_visibility_radius);
 	m_visibility_state = unset;
 	m_heatvision_forced_visible = false;
+	m_heatvision_forced_predator_visual = false;
 	m_visibility_state_last_changed_time = 0;
 
 	PostLoad(section);
@@ -296,6 +297,7 @@ void CAI_Bloodsucker::reinit()
 {
 	m_force_visibility_state = unset;
 	m_heatvision_forced_visible = false;
+	m_heatvision_forced_predator_visual = false;
 
 	inherited::reinit();
 	CControlledActor::reinit();
@@ -516,8 +518,7 @@ CAI_Bloodsucker::visibility_t CAI_Bloodsucker::get_visibility_state() const
 //--DSR-- HeatVision_start
 float CAI_Bloodsucker::GetTransparency() 
 {
-	const bool heatvision_render = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && g_pip_svp_thermal);
-	return (m_visibility_state == no_visibility && !heatvision_render) ? 1.0f : 0.0f;
+	return (m_visibility_state == no_visibility && !heatvision_render_active()) ? 1.0f : 0.0f;
 }
 //--DSR-- HeatVision_end
 
@@ -615,32 +616,80 @@ void CAI_Bloodsucker::update_invisibility()
 	}
 }
 
-void CAI_Bloodsucker::UpdateCL()
+bool CAI_Bloodsucker::heatvision_render_active() const
 {
-	update_invisibility();
+	return ps_r2_heatvision > 0 || g_pip_svp_thermal || (Device.m_SecondViewport.IsSVPFrame() && g_pip_svp_thermal);
+}
 
-	const bool heatvision_active = ps_r2_heatvision > 0 || g_pip_svp_thermal;
-	const bool should_force_visible = heatvision_active && (state_invisible || m_visibility_state == no_visibility);
-	if (should_force_visible && !getVisible())
+void CAI_Bloodsucker::apply_heatvision_visibility_override()
+{
+	if (!g_Alive())
+		return;
+
+	const bool was_hidden = state_invisible || m_visibility_state != full_visibility || !getVisible();
+	if (was_hidden)
 	{
 		setVisible(TRUE);
 		m_heatvision_forced_visible = true;
-		Msg("[PIP_BLOODSUCKER] force visible id=%u state=%d invisible=%d heat=%d pip=%d",
+	}
+
+	if (m_predator && !m_heatvision_forced_predator_visual)
+	{
+		cNameVisual_set(*m_visual_default);
+		character_physics_support()->in_ChangeVisual();
+		control().animation().restart();
+		m_heatvision_forced_predator_visual = true;
+		Msg("[PIP_BLOODSUCKER] thermal default visual id=%u state=%d invisible=%d heat=%d pip=%d",
 			ID(),
 			int(m_visibility_state),
 			state_invisible ? 1 : 0,
 			ps_r2_heatvision > 0 ? 1 : 0,
 			g_pip_svp_thermal ? 1 : 0);
 	}
-	else if (m_heatvision_forced_visible && !should_force_visible)
+	else if (was_hidden)
 	{
-		setVisible(FALSE);
+		Msg("[PIP_BLOODSUCKER] thermal force visible id=%u state=%d invisible=%d heat=%d pip=%d",
+			ID(),
+			int(m_visibility_state),
+			state_invisible ? 1 : 0,
+			ps_r2_heatvision > 0 ? 1 : 0,
+			g_pip_svp_thermal ? 1 : 0);
+	}
+}
+
+void CAI_Bloodsucker::release_heatvision_visibility_override()
+{
+	if (m_heatvision_forced_predator_visual)
+	{
+		if (state_invisible || m_visibility_state != full_visibility)
+		{
+			cNameVisual_set(m_visual_predator);
+			character_physics_support()->in_ChangeVisual();
+			control().animation().restart();
+		}
+		m_heatvision_forced_predator_visual = false;
+	}
+
+	if (m_heatvision_forced_visible)
+	{
+		if (state_invisible || m_visibility_state == no_visibility)
+			setVisible(FALSE);
 		m_heatvision_forced_visible = false;
-		Msg("[PIP_BLOODSUCKER] restore invisible id=%u state=%d invisible=%d",
+		Msg("[PIP_BLOODSUCKER] thermal restore id=%u state=%d invisible=%d",
 			ID(),
 			int(m_visibility_state),
 			state_invisible ? 1 : 0);
 	}
+}
+
+void CAI_Bloodsucker::UpdateCL()
+{
+	update_invisibility();
+
+	if (heatvision_render_active())
+		apply_heatvision_visibility_override();
+	else
+		release_heatvision_visibility_override();
 
 	inherited::UpdateCL();
 	CControlledActor::frame_update();
@@ -658,33 +707,16 @@ void CAI_Bloodsucker::shedule_Update(u32 dt)
 {
 	inherited::shedule_Update(dt);
 
-	const bool heatvision_active = ps_r2_heatvision > 0 || g_pip_svp_thermal;
-	const bool should_force_visible = heatvision_active && (state_invisible || m_visibility_state == no_visibility);
-	if (should_force_visible && !getVisible())
-	{
-		setVisible(TRUE);
-		m_heatvision_forced_visible = true;
-		Msg("[PIP_BLOODSUCKER] schedule force visible id=%u state=%d invisible=%d heat=%d pip=%d",
-			ID(),
-			int(m_visibility_state),
-			state_invisible ? 1 : 0,
-			ps_r2_heatvision > 0 ? 1 : 0,
-			g_pip_svp_thermal ? 1 : 0);
-	}
-	else if (m_heatvision_forced_visible && !should_force_visible && (state_invisible || m_visibility_state == no_visibility))
-	{
-		setVisible(FALSE);
-		m_heatvision_forced_visible = false;
-		Msg("[PIP_BLOODSUCKER] schedule restore invisible id=%u state=%d invisible=%d",
-			ID(),
-			int(m_visibility_state),
-			state_invisible ? 1 : 0);
-	}
+	if (heatvision_render_active())
+		apply_heatvision_visibility_override();
+	else
+		release_heatvision_visibility_override();
 
 	if (!g_Alive())
 	{
 		setVisible(TRUE);
 		m_heatvision_forced_visible = false;
+		m_heatvision_forced_predator_visual = false;
 		if (state_invisible)
 		{
 			stop_invisible_predator();
@@ -919,6 +951,7 @@ void CAI_Bloodsucker::manual_activate()
 	state_invisible = true;
 	m_visibility_state = no_visibility;
 	m_heatvision_forced_visible = false;
+	m_heatvision_forced_predator_visual = false;
 	setVisible(FALSE);
 }
 
@@ -927,6 +960,7 @@ void CAI_Bloodsucker::manual_deactivate()
 	state_invisible = false;
 	m_visibility_state = full_visibility;
 	m_heatvision_forced_visible = false;
+	m_heatvision_forced_predator_visual = false;
 	setVisible(TRUE);
 }
 
@@ -940,8 +974,7 @@ void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 	//	inherited::renderable_Render();  
 	//}
 
-	const bool heatvision_render = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && g_pip_svp_thermal);
-	if (m_visibility_state != no_visibility || heatvision_render)
+	if (m_visibility_state != no_visibility || heatvision_render_active())
 		inherited::renderable_Render(DM);
 	//--DSR-- HeatVision_end
 }

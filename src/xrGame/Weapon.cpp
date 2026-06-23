@@ -3407,8 +3407,8 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 
 	auto read_lens_fov = [](LPCSTR lens_section, float fallback) -> float
 	{
-		const float alias_value = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lens_fov", fallback);
-		return READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov", alias_value);
+		const float legacy_value = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov", fallback);
+		return READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lens_fov", legacy_value);
 	};
 
 	m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(base_section, 0.0f);
