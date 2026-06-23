@@ -3442,8 +3442,12 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		}
 	}
 
-	if (!IsSecondVPZoomPresent() && TryResolveSecondVPLensRegistrySection(base_section, scope_section))
+	shared_str registry_section;
+	if (TryResolveSecondVPLensRegistrySection(base_section, registry_section))
+	{
+		scope_section = registry_section;
 		apply_lens_section(scope_section.c_str());
+	}
 
 	if (IsSecondVPDynamicLensZoom()) {
 		const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.0f, 100.f);
@@ -3459,21 +3463,27 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 
 	if (strstr(base_section, "wpn_ak107") || (scope_section.size() && strstr(scope_section.c_str(), "pso2")))
 	{
-		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d frame_delay=%u",
+		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d dynamic=%d scope_zoom=%.3f rt_zoom=%.3f frame_delay=%u",
 			base_section,
 			scope_section.size() ? scope_section.c_str() : "nil",
 			m_zoom_params.m_fSecondVPFovFactor,
 			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
+			m_zoom_params.m_bUseDynamicZoom ? 1 : 0,
+			m_zoom_params.m_fScopeZoomFactor,
+			m_fRTZoomFactor,
 			m_zoom_params.m_u8SecondVPFrameDelay);
 	}
 
 	if (m_zoom_params.m_bSecondVPThermal)
 	{
-		Msg("[PIP_THERMAL] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d frame_delay=%u",
+			Msg("[PIP_THERMAL] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d dynamic=%d scope_zoom=%.3f rt_zoom=%.3f frame_delay=%u",
 			base_section,
 			scope_section.size() ? scope_section.c_str() : "nil",
 			m_zoom_params.m_fSecondVPFovFactor,
 			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
+			m_zoom_params.m_bUseDynamicZoom ? 1 : 0,
+			m_zoom_params.m_fScopeZoomFactor,
+			m_fRTZoomFactor,
 			m_zoom_params.m_u8SecondVPFrameDelay);
 	}
 }

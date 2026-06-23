@@ -233,6 +233,7 @@ public:
 	void force_visibility_state(int state);
 	void update_invisibility();
 	bool heatvision_render_active() const;
+	void mark_heatvision_visual_hot();
 	void apply_heatvision_visibility_override();
 	void release_heatvision_visibility_override();
 
