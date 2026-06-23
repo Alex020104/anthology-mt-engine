@@ -3418,7 +3418,13 @@ float CWeapon::GetSecondVPTargetFov() const
 		return g_fov;
 
 	if (IsSecondVPDynamicLensZoom())
-		return clampr((m_fRTZoomFactor / 100.f) * g_fov, 1.0f, g_fov);
+	{
+		const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.0f, 100.f);
+		const float range = 100.f - min_zoom_factor;
+		const float zoom_t = range > EPS_L ? clampr((100.f - m_fRTZoomFactor) / range, 0.f, 1.f) : 1.f;
+		const float lens_fov = clampr(GetSecondVPZoomFactor(), 1.0f, g_fov);
+		return clampr(_lerp(g_fov, lens_fov, zoom_t), 1.0f, g_fov);
+	}
 
 	if (m_zoom_params.m_bSecondVPLensZoomOnly)
 		return clampr(GetSecondVPZoomFactor(), 1.0f, g_fov);
