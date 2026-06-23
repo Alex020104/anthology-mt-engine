@@ -3405,14 +3405,20 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 	LPCSTR base_section = section ? section : cNameSect().c_str();
 	shared_str scope_section;
 
-	m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, base_section, "scope_lense_fov", 0.0f);
+	auto read_lens_fov = [](LPCSTR lens_section, float fallback) -> float
+	{
+		const float alias_value = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lens_fov", fallback);
+		return READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov", alias_value);
+	};
+
+	m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(base_section, 0.0f);
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
 
-	auto apply_lens_section = [this](LPCSTR lens_section)
+	auto apply_lens_section = [this, read_lens_fov](LPCSTR lens_section)
 	{
-		m_zoom_params.m_fSecondVPFovFactor = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov", m_zoom_params.m_fSecondVPFovFactor);
+		m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(lens_section, m_zoom_params.m_fSecondVPFovFactor);
 		m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_zoom_only", m_zoom_params.m_bSecondVPLensZoomOnly);
 		m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_thermal", m_zoom_params.m_bSecondVPThermal) || IsSecondVPThermalSection(lens_section);
 		m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, lens_section, "scope_lense_frame_delay", m_zoom_params.m_u8SecondVPFrameDelay);
@@ -3516,17 +3522,11 @@ void CWeapon::UpdateSecondVP()
 	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > svp_activation_threshold;
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
 	if (svp_requested) {
-		if (IsSecondVPDynamicLensZoom() && m_zoom_params.m_fZoomRotationFactor > 0.95f)
-		{
+		const float blend_speed = IsSecondVPDynamicLensZoom() ? 18.f : 12.f;
+		const float blend = clampr(Device.fTimeDelta * blend_speed, 0.0f, 0.45f);
+		m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
+		if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
 			m_zoom_params.m_fSecondVPCurrentFov = target_fov;
-		}
-		else
-		{
-			const float blend = clampr(Device.fTimeDelta * 12.f, 0.0f, 1.0f);
-			m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
-			if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
-				m_zoom_params.m_fSecondVPCurrentFov = target_fov;
-		}
 	}
 	else {
 		m_zoom_params.m_fSecondVPCurrentFov = g_fov;
