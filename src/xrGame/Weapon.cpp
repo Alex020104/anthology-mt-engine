@@ -1041,6 +1041,7 @@ BOOL CWeapon::net_Spawn(CSE_Abstract* DC)
 			m_scopeItem->Load(m_scopes[m_cur_scope].c_str());
 		}
 	}
+	LoadSecondVPParams(cNameSect().c_str());
 
 	m_ammoType = E->ammo_type;
 	SetState(E->wpn_state);
@@ -1180,6 +1181,7 @@ void CWeapon::load(IReader& input_packet)
 	load_data(m_cur_scope, input_packet);
 	load_data(m_flagsAddOnState, input_packet);
 	UpdateAddonsVisibility();
+	LoadSecondVPParams(cNameSect().c_str());
 	load_data(m_ammoType, input_packet);
 	load_data(m_zoom_params.m_bIsZoomModeNow, input_packet);
 
@@ -3366,7 +3368,7 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
 
-	if (m_eScopeStatus == ALife::eAddonAttachable && IsScopeAttached() && m_scopes.size())
+	if (IsScopeAttached() && m_scopes.size())
 	{
 		scope_section = GetScopeName();
 		if (scope_section.size())
