@@ -658,6 +658,29 @@ void CAI_Bloodsucker::shedule_Update(u32 dt)
 {
 	inherited::shedule_Update(dt);
 
+	const bool heatvision_active = ps_r2_heatvision > 0 || g_pip_svp_thermal;
+	const bool should_force_visible = heatvision_active && (state_invisible || m_visibility_state == no_visibility);
+	if (should_force_visible && !getVisible())
+	{
+		setVisible(TRUE);
+		m_heatvision_forced_visible = true;
+		Msg("[PIP_BLOODSUCKER] schedule force visible id=%u state=%d invisible=%d heat=%d pip=%d",
+			ID(),
+			int(m_visibility_state),
+			state_invisible ? 1 : 0,
+			ps_r2_heatvision > 0 ? 1 : 0,
+			g_pip_svp_thermal ? 1 : 0);
+	}
+	else if (m_heatvision_forced_visible && !should_force_visible && (state_invisible || m_visibility_state == no_visibility))
+	{
+		setVisible(FALSE);
+		m_heatvision_forced_visible = false;
+		Msg("[PIP_BLOODSUCKER] schedule restore invisible id=%u state=%d invisible=%d",
+			ID(),
+			int(m_visibility_state),
+			state_invisible ? 1 : 0);
+	}
+
 	if (!g_Alive())
 	{
 		setVisible(TRUE);
