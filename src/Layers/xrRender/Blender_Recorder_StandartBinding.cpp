@@ -1163,7 +1163,7 @@ static class ssfx_jitter : public R_constant_setup
 		float JitterY = 0;
 
 #if defined(USE_DX11)
-		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa)
+		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !Device.m_SecondViewport.IsSVPFrame())
 		{
 			static Fvector2 TAA_Offset[4] = 
 			{

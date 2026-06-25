@@ -582,7 +582,7 @@ void CRenderTarget::phase_combine()
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0)
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !Device.m_SecondViewport.IsSVPFrame())
 	{
 		phase_ssfx_taa();
 	}
