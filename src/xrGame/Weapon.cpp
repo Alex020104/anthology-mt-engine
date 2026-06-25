@@ -3532,21 +3532,14 @@ void CWeapon::UpdateSecondVP()
 	}
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	const float svp_activation_threshold = IsZoomed() ? 0.001f : 0.85f;
-	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > svp_activation_threshold;
+	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
-	if (svp_requested) {
-		const float blend_speed = IsSecondVPDynamicLensZoom() ? 18.f : 12.f;
-		const float blend = clampr(Device.fTimeDelta * blend_speed, 0.0f, 0.45f);
-		m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
-		if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
-			m_zoom_params.m_fSecondVPCurrentFov = target_fov;
-	}
-	else {
-		m_zoom_params.m_fSecondVPCurrentFov = g_fov;
-	}
+	const float blend = clampr(Device.fTimeDelta * 10.f, 0.0f, 1.0f);
+	m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
+	if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
+		m_zoom_params.m_fSecondVPCurrentFov = target_fov;
 
-	const bool svp_active = svp_requested;
+	const bool svp_active = svp_requested || (IsSecondVPZoomPresent() && m_zoom_params.m_fSecondVPCurrentFov < g_fov - 0.05f);
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 	g_pip_svp_thermal = svp_active && m_zoom_params.m_bSecondVPThermal;
