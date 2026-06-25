@@ -2128,6 +2128,8 @@ void CWeapon::OnZoomIn()
 		if (m_fRTZoomFactor < min_zoom_factor || m_fRTZoomFactor > 100.f)
 			m_fRTZoomFactor = 100.f;
 		m_zoom_params.m_bSecondVPLensZoomInitialized = true;
+		SetZoomFactor(m_fRTZoomFactor);
+		m_zoom_params.m_fSecondVPCurrentFov = GetSecondVPTargetFov();
 	}
 	else if (!firstZoomDone) {
 		firstZoomDone = true;
@@ -2148,11 +2150,9 @@ void CWeapon::OnZoomIn()
 
 	//Msg("m_fRTZoomFactor %f, scope_scrollpower %f", m_fRTZoomFactor, scope_scrollpower);
 
-	if (IsSecondVPDynamicLensZoom())
-		SetZoomFactor(m_fRTZoomFactor);
-	else if (m_zoom_params.m_bUseDynamicZoom)
+	if (!IsSecondVPDynamicLensZoom() && m_zoom_params.m_bUseDynamicZoom)
 		SetZoomFactor(scope_radius > 0.0 ? m_fRTZoomFactor / scope_scrollpower : m_fRTZoomFactor);
-	else
+	else if (!IsSecondVPDynamicLensZoom())
 		SetZoomFactor(CurrentZoomFactor());
 
 	if (m_zoom_params.m_bZoomDofEnabled && !IsScopeAttached())
@@ -2193,7 +2193,10 @@ void CWeapon::OnZoomOut()
 		}
     }
     
-	m_zoom_params.m_fCurrentZoomFactor = g_fov;
+	if (IsSecondVPDynamicLensZoom())
+		SetZoomFactor(m_fRTZoomFactor);
+	else
+		m_zoom_params.m_fCurrentZoomFactor = g_fov;
 
 	GamePersistent().RestoreEffectorDOF();
 
@@ -3416,6 +3419,8 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
+	bool scope_lens_params_applied = false;
+	bool scope_is_generic_addon = false;
 
 	auto apply_lens_section = [this, read_lens_fov](LPCSTR lens_section)
 	{
@@ -3439,12 +3444,19 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		if (scope_section.size())
 		{
 			LPCSTR lens_section = scope_section.c_str();
+			scope_is_generic_addon = strstr(lens_section, "wpn_addon_scope") != nullptr;
+			scope_lens_params_applied =
+				pSettings->line_exist(lens_section, "scope_lense_fov") ||
+				pSettings->line_exist(lens_section, "scope_lens_fov") ||
+				pSettings->line_exist(lens_section, "scope_lense_thermal") ||
+				pSettings->line_exist(lens_section, "scope_lense_zoom_only") ||
+				IsSecondVPThermalSection(lens_section);
 			apply_lens_section(lens_section);
 		}
 	}
 
 	shared_str registry_section;
-	if (TryResolveSecondVPLensRegistrySection(base_section, registry_section))
+	if ((!scope_lens_params_applied || scope_is_generic_addon) && TryResolveSecondVPLensRegistrySection(base_section, registry_section))
 	{
 		scope_section = registry_section;
 		apply_lens_section(scope_section.c_str());
@@ -3533,6 +3545,9 @@ void CWeapon::UpdateSecondVP()
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
 	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
+	if (svp_requested && IsSecondVPDynamicLensZoom())
+		SetZoomFactor(m_fRTZoomFactor);
+
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
 	const float blend = clampr(Device.fTimeDelta * 10.f, 0.0f, 1.0f);
 	m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
@@ -3548,7 +3563,10 @@ void CWeapon::UpdateSecondVP()
 	ps_pip_svp_thermal = g_pip_svp_thermal;
 
 	if (svp_active)
-		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);
+	{
+		const u8 frame_delay = (IsSecondVPDynamicLensZoom() || m_zoom_params.m_bSecondVPThermal) ? 1 : m_zoom_params.m_u8SecondVPFrameDelay;
+		Device.m_SecondViewport.SetSVPFrameDelay(frame_delay);
+	}
 
 	if (strstr(cNameSect().c_str(), "wpn_ak107") && IsSecondVPZoomPresent())
 	{
