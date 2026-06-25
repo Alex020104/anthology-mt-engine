@@ -27,6 +27,7 @@
 
 extern int ps_r2_heatvision;
 extern bool g_pip_svp_thermal;
+extern u32 g_pip_svp_thermal_until;
 
 #ifdef DEBUG
 #	include <dinput.h>
@@ -618,7 +619,7 @@ void CAI_Bloodsucker::update_invisibility()
 
 bool CAI_Bloodsucker::heatvision_render_active() const
 {
-	return ps_r2_heatvision > 0 || g_pip_svp_thermal || (Device.m_SecondViewport.IsSVPFrame() && g_pip_svp_thermal);
+	return ps_r2_heatvision > 0 || g_pip_svp_thermal || Device.dwTimeGlobal <= g_pip_svp_thermal_until;
 }
 
 void CAI_Bloodsucker::mark_heatvision_visual_hot()

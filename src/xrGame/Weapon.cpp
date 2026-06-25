@@ -52,6 +52,7 @@ extern float n_zoom_step_count;
 float sens_multiple = 1.0f;
 float hud_fov_aim_multiplier = 1.0f;
 bool g_pip_svp_thermal = false;
+u32 g_pip_svp_thermal_until = 0;
 
 extern int g_nearwall;
 
@@ -3451,10 +3452,13 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 
 	if (IsSecondVPDynamicLensZoom()) {
 		const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.0f, 100.f);
-		if (!m_zoom_params.m_bSecondVPLensZoomInitialized)
-			m_fRTZoomFactor = 100.f;
-		else
+		if (!m_zoom_params.m_bSecondVPLensZoomInitialized) {
+			if (m_fRTZoomFactor < min_zoom_factor || m_fRTZoomFactor > 100.f)
+				m_fRTZoomFactor = 100.f;
+		}
+		else {
 			m_fRTZoomFactor = clampr(m_fRTZoomFactor, min_zoom_factor, 100.f);
+		}
 		m_zoom_params.m_bSecondVPLensZoomInitialized = true;
 	}
 	else {
@@ -3546,6 +3550,8 @@ void CWeapon::UpdateSecondVP()
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 	g_pip_svp_thermal = svp_active && m_zoom_params.m_bSecondVPThermal;
+	if (g_pip_svp_thermal)
+		g_pip_svp_thermal_until = Device.dwTimeGlobal + 250;
 	ps_pip_svp_thermal = g_pip_svp_thermal;
 
 	if (svp_active)
