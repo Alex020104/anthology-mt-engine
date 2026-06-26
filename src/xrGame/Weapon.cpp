@@ -3558,15 +3558,20 @@ void CWeapon::UpdateSecondVP()
 	}
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
+	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && IsZoomed() && m_zoom_params.m_fZoomRotationFactor > 0.985f;
 	if (svp_requested && IsSecondVPDynamicLensZoom())
 		SetZoomFactor(m_fRTZoomFactor);
 
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
 	if (svp_requested)
 	{
-		const float blend = clampr(Device.fTimeDelta * 12.f, 0.0f, 1.0f);
-		m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
+		if (!Device.m_SecondViewport.IsSVPActive())
+			m_zoom_params.m_fSecondVPCurrentFov = target_fov;
+		else
+		{
+			const float blend = clampr(Device.fTimeDelta * 12.f, 0.0f, 1.0f);
+			m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
+		}
 	}
 	else
 	{
