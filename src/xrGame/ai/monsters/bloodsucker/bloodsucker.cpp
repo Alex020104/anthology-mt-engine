@@ -29,6 +29,8 @@
 #	include <dinput.h>
 #endif // DEBUG
 
+extern int ps_r2_heatvision;
+extern bool ps_pip_svp_thermal;
 
 namespace detail
 {
@@ -62,6 +64,10 @@ CAI_Bloodsucker::CAI_Bloodsucker()
 	m_animated = false;
 	collision_off = false;
 	m_force_visibility_state = unset;
+	m_heatvision_saved_force_visibility_state = unset;
+	m_heatvision_forced_visible = false;
+	m_heatvision_forced_predator_visual = false;
+	m_heatvision_forced_visibility_state = false;
 	m_runaway_invisible_time = 0;
 
 	using namespace detail::bloodsucker;
@@ -283,6 +289,10 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 	                                             partial_visibility_radius_string,
 	                                             default_partial_visibility_radius);
 	m_visibility_state = unset;
+	m_heatvision_saved_force_visibility_state = unset;
+	m_heatvision_forced_visible = false;
+	m_heatvision_forced_predator_visual = false;
+	m_heatvision_forced_visibility_state = false;
 	m_visibility_state_last_changed_time = 0;
 
 	PostLoad(section);
@@ -291,6 +301,10 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 void CAI_Bloodsucker::reinit()
 {
 	m_force_visibility_state = unset;
+	m_heatvision_saved_force_visibility_state = unset;
+	m_heatvision_forced_visible = false;
+	m_heatvision_forced_predator_visual = false;
+	m_heatvision_forced_visibility_state = false;
 
 	inherited::reinit();
 	CControlledActor::reinit();
@@ -511,15 +525,7 @@ CAI_Bloodsucker::visibility_t CAI_Bloodsucker::get_visibility_state() const
 //--DSR-- HeatVision_start
 float CAI_Bloodsucker::GetTransparency() 
 {
-	if (m_visibility_state == no_visibility)
-	{
-		return 1.0f;
-	}
-	else
-	{
-		return 0.0f;
-	}
-
+	return (m_visibility_state == no_visibility && !heatvision_render_active()) ? 1.0f : 0.0f;
 }
 //--DSR-- HeatVision_end
 
@@ -617,9 +623,88 @@ void CAI_Bloodsucker::update_invisibility()
 	}
 }
 
+bool CAI_Bloodsucker::heatvision_render_active() const
+{
+	return ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && ps_pip_svp_thermal);
+}
+
+void CAI_Bloodsucker::mark_heatvision_visual_hot()
+{
+	if (renderable.visual)
+		renderable.visual->MarkAsHot(true);
+}
+
+void CAI_Bloodsucker::apply_heatvision_visibility_override()
+{
+	if (!g_Alive())
+		return;
+
+	if (!m_heatvision_forced_visibility_state)
+	{
+		m_heatvision_saved_force_visibility_state = m_force_visibility_state;
+		m_force_visibility_state = full_visibility;
+		m_heatvision_forced_visibility_state = true;
+	}
+
+	if (!getVisible())
+	{
+		setVisible(TRUE);
+		m_heatvision_forced_visible = true;
+	}
+
+	const bool needs_default_visual = m_visual_default.size() && cNameVisual() != m_visual_default;
+	if (m_predator || needs_default_visual)
+	{
+		if (needs_default_visual)
+		{
+			cNameVisual_set(*m_visual_default);
+			character_physics_support()->in_ChangeVisual();
+			OnChangeVisual();
+		}
+
+		m_heatvision_forced_predator_visual = true;
+	}
+
+	mark_heatvision_visual_hot();
+}
+
+void CAI_Bloodsucker::release_heatvision_visibility_override()
+{
+	if (m_heatvision_forced_visibility_state)
+	{
+		m_force_visibility_state = m_heatvision_saved_force_visibility_state;
+		m_heatvision_saved_force_visibility_state = unset;
+		m_heatvision_forced_visibility_state = false;
+	}
+
+	if (m_heatvision_forced_predator_visual)
+	{
+		if (state_invisible || m_visibility_state != full_visibility)
+		{
+			cNameVisual_set(m_visual_predator);
+			character_physics_support()->in_ChangeVisual();
+			OnChangeVisual();
+			control().animation().restart();
+		}
+		m_heatvision_forced_predator_visual = false;
+	}
+
+	if (m_heatvision_forced_visible)
+	{
+		if (state_invisible || m_visibility_state == no_visibility)
+			setVisible(FALSE);
+		m_heatvision_forced_visible = false;
+	}
+}
+
 void CAI_Bloodsucker::UpdateCL()
 {
 	update_invisibility();
+	if (heatvision_render_active())
+		apply_heatvision_visibility_override();
+	else
+		release_heatvision_visibility_override();
+
 	inherited::UpdateCL();
 	CControlledActor::frame_update();
 	character_physics_support()->movement()->CollisionEnable(!is_collision_off());
@@ -636,9 +721,18 @@ void CAI_Bloodsucker::shedule_Update(u32 dt)
 {
 	inherited::shedule_Update(dt);
 
+	if (heatvision_render_active())
+		apply_heatvision_visibility_override();
+	else
+		release_heatvision_visibility_override();
+
 	if (!g_Alive())
 	{
 		setVisible(TRUE);
+		m_heatvision_forced_visible = false;
+		m_heatvision_forced_predator_visual = false;
+		m_heatvision_forced_visibility_state = false;
+		m_heatvision_saved_force_visibility_state = unset;
 		if (state_invisible)
 		{
 			stop_invisible_predator();
@@ -650,6 +744,7 @@ void CAI_Bloodsucker::shedule_Update(u32 dt)
 
 void CAI_Bloodsucker::Die(CObject* who)
 {
+	release_heatvision_visibility_override();
 	inherited::Die(who);
 	stop_invisible_predator();
 }
@@ -871,12 +966,16 @@ void CAI_Bloodsucker::stop_invisible_predator()
 void CAI_Bloodsucker::manual_activate()
 {
 	state_invisible = true;
-	setVisible(FALSE);
+	if (heatvision_render_active())
+		apply_heatvision_visibility_override();
+	else
+		setVisible(FALSE);
 }
 
 void CAI_Bloodsucker::manual_deactivate()
 {
 	state_invisible = false;
+	release_heatvision_visibility_override();
 	setVisible(TRUE);
 }
 
@@ -892,6 +991,9 @@ void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 	//}
 
 	const bool heatvision_render = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && ps_pip_svp_thermal);
+	if (heatvision_render)
+		apply_heatvision_visibility_override();
+
 	if (m_visibility_state != no_visibility || heatvision_render)
 		inherited::renderable_Render(DM);
 	//--DSR-- HeatVision_end

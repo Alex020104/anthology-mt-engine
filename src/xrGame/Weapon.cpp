@@ -2076,7 +2076,9 @@ void CWeapon::OnZoomIn()
 		firstZoomDone = true;
 
 		if (IsSecondVPDynamicLensZoom()) {
-			m_fRTZoomFactor = 100.f;
+			const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.0f, 100.f);
+			if (m_fRTZoomFactor < min_zoom_factor || m_fRTZoomFactor > 100.f)
+				m_fRTZoomFactor = 100.f;
 		}
 		else if (m_zoom_params.m_bUseDynamicZoom) {
 			float delta, min_zoom_factor;
@@ -2134,7 +2136,13 @@ void CWeapon::OnZoomOut()
         m_fRTZoomFactor = IsSecondVPDynamicLensZoom() ? GetZoomFactor() : (scope_radius > 0.0 ? GetZoomFactor() * scope_scrollpower : GetZoomFactor()); //store current
     }
     
-	m_zoom_params.m_fCurrentZoomFactor = g_fov;
+	if (!IsSecondVPDynamicLensZoom())
+		m_zoom_params.m_fCurrentZoomFactor = g_fov;
+	else
+		SetZoomFactor(m_fRTZoomFactor);
+	m_zoom_params.m_fSecondVPCurrentFov = g_fov;
+	Device.m_SecondViewport.SetSVPActive(false);
+	ps_pip_svp_thermal = false;
 
 	GamePersistent().RestoreEffectorDOF();
 
@@ -3235,7 +3243,7 @@ bool CWeapon::IsHudModeNow()
 float CWeapon::GetMinScopeZoomFactor() const
 {
 	if (IsSecondVPDynamicLensZoom())
-		return 100.f;
+		return clampr(m_zoom_params.m_fScopeZoomFactor, 1.f, 100.f);
 
 	float delta, min_zoom_factor;
 	float power = scope_radius > 0.0 ? scope_scrollpower : 1;
@@ -3386,11 +3394,7 @@ float CWeapon::GetSecondVPTargetFov() const
 
 	if (IsSecondVPDynamicLensZoom())
 	{
-		const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.0f, 100.f);
-		const float range = 100.f - min_zoom_factor;
-		const float zoom_t = range > EPS_L ? clampr((100.f - m_fRTZoomFactor) / range, 0.f, 1.f) : 1.f;
-		const float lens_fov = clampr(GetSecondVPZoomFactor(), 1.0f, g_fov);
-		return clampr(_lerp(g_fov, lens_fov, zoom_t), 1.0f, g_fov);
+		return g_fov;
 	}
 
 	if (m_zoom_params.m_bSecondVPLensZoomOnly)
@@ -3419,14 +3423,14 @@ void CWeapon::UpdateSecondVP()
 	}
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
+	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && IsZoomed() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
-	const float blend = clampr(Device.fTimeDelta * 10.f, 0.0f, 1.0f);
+	const float blend = IsSecondVPDynamicLensZoom() ? 1.0f : clampr(Device.fTimeDelta * 10.f, 0.0f, 1.0f);
 	m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
 	if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
 		m_zoom_params.m_fSecondVPCurrentFov = target_fov;
 
-	const bool svp_active = svp_requested || (IsSecondVPZoomPresent() && m_zoom_params.m_fSecondVPCurrentFov < g_fov - 0.05f);
+	const bool svp_active = svp_requested;
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 	bool scope_thermal = READ_IF_EXISTS(pSettings, r_bool, cNameSect(), "scope_lense_thermal", false) || IsSecondVPThermalSection(cNameSect().c_str());
