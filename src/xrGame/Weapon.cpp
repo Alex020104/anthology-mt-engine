@@ -3590,7 +3590,7 @@ void CWeapon::UpdateSecondVP()
 
 	if (svp_active)
 	{
-		const u8 frame_delay = (IsSecondVPDynamicLensZoom() || m_zoom_params.m_bSecondVPThermal) ? 1 : m_zoom_params.m_u8SecondVPFrameDelay;
+		const u8 frame_delay = m_zoom_params.m_u8SecondVPFrameDelay;
 		Device.m_SecondViewport.SetSVPFrameDelay(frame_delay);
 	}
 
