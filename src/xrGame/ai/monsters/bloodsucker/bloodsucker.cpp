@@ -631,7 +631,11 @@ void CAI_Bloodsucker::update_invisibility()
 
 bool CAI_Bloodsucker::heatvision_render_active() const
 {
-	return ps_r2_heatvision > 0 || ps_pip_svp_thermal || g_pip_svp_thermal || Device.dwTimeGlobal <= g_pip_svp_thermal_until;
+	static u32 s_heatvision_until = 0;
+	if (ps_r2_heatvision > 0 || ps_pip_svp_thermal || g_pip_svp_thermal)
+		s_heatvision_until = Device.dwTimeGlobal + 1000;
+
+	return ps_r2_heatvision > 0 || ps_pip_svp_thermal || g_pip_svp_thermal || Device.dwTimeGlobal <= g_pip_svp_thermal_until || Device.dwTimeGlobal <= s_heatvision_until;
 }
 
 void CAI_Bloodsucker::mark_heatvision_visual_hot()
