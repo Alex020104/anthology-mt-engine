@@ -181,6 +181,7 @@ CWeapon::CWeapon()
 	m_zoom_params.m_pVision = NULL;
 	m_zoom_params.m_pNight_vision = NULL;
 	m_zoom_params.m_fSecondVPFovFactor = 0.0f;
+	m_zoom_params.m_fSecondVPBaseFovFactor = 0.0f;
 	m_zoom_params.m_fSecondVPCurrentFov = g_fov;
 	m_zoom_params.m_bSecondVPLensZoomOnly = false;
 	m_zoom_params.m_bSecondVPThermal = false;
@@ -3415,16 +3416,24 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		return READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lens_fov", legacy_value);
 	};
 
+	auto read_lens_base_fov = [](LPCSTR lens_section, float fallback) -> float
+	{
+		const float legacy_value = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_base_fov", fallback);
+		return READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lens_base_fov", legacy_value);
+	};
+
 	m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(base_section, 0.0f);
+	m_zoom_params.m_fSecondVPBaseFovFactor = read_lens_base_fov(base_section, 0.0f);
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
 	bool scope_lens_params_applied = false;
 	bool scope_is_generic_addon = false;
 
-	auto apply_lens_section = [this, read_lens_fov](LPCSTR lens_section)
+	auto apply_lens_section = [this, read_lens_fov, read_lens_base_fov](LPCSTR lens_section)
 	{
 		m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(lens_section, m_zoom_params.m_fSecondVPFovFactor);
+		m_zoom_params.m_fSecondVPBaseFovFactor = read_lens_base_fov(lens_section, m_zoom_params.m_fSecondVPBaseFovFactor);
 		m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_zoom_only", m_zoom_params.m_bSecondVPLensZoomOnly);
 		m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_thermal", m_zoom_params.m_bSecondVPThermal) || IsSecondVPThermalSection(lens_section);
 		m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, lens_section, "scope_lense_frame_delay", m_zoom_params.m_u8SecondVPFrameDelay);
@@ -3448,6 +3457,8 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 			scope_lens_params_applied =
 				pSettings->line_exist(lens_section, "scope_lense_fov") ||
 				pSettings->line_exist(lens_section, "scope_lens_fov") ||
+				pSettings->line_exist(lens_section, "scope_lense_base_fov") ||
+				pSettings->line_exist(lens_section, "scope_lens_base_fov") ||
 				pSettings->line_exist(lens_section, "scope_lense_thermal") ||
 				pSettings->line_exist(lens_section, "scope_lense_zoom_only") ||
 				IsSecondVPThermalSection(lens_section);
@@ -3479,10 +3490,11 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 
 	if (strstr(base_section, "wpn_ak107") || (scope_section.size() && strstr(scope_section.c_str(), "pso2")))
 	{
-		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d dynamic=%d scope_zoom=%.3f rt_zoom=%.3f frame_delay=%u",
+		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f base_fov=%.3f zoom_only=%d dynamic=%d scope_zoom=%.3f rt_zoom=%.3f frame_delay=%u",
 			base_section,
 			scope_section.size() ? scope_section.c_str() : "nil",
 			m_zoom_params.m_fSecondVPFovFactor,
+			m_zoom_params.m_fSecondVPBaseFovFactor,
 			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
 			m_zoom_params.m_bUseDynamicZoom ? 1 : 0,
 			m_zoom_params.m_fScopeZoomFactor,
@@ -3492,10 +3504,11 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 
 	if (m_zoom_params.m_bSecondVPThermal)
 	{
-			Msg("[PIP_THERMAL] lens_params base=%s scope=%s lens_fov=%.3f zoom_only=%d dynamic=%d scope_zoom=%.3f rt_zoom=%.3f frame_delay=%u",
+			Msg("[PIP_THERMAL] lens_params base=%s scope=%s lens_fov=%.3f base_fov=%.3f zoom_only=%d dynamic=%d scope_zoom=%.3f rt_zoom=%.3f frame_delay=%u",
 			base_section,
 			scope_section.size() ? scope_section.c_str() : "nil",
 			m_zoom_params.m_fSecondVPFovFactor,
+			m_zoom_params.m_fSecondVPBaseFovFactor,
 			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
 			m_zoom_params.m_bUseDynamicZoom ? 1 : 0,
 			m_zoom_params.m_fScopeZoomFactor,
@@ -3514,8 +3527,9 @@ float CWeapon::GetSecondVPTargetFov() const
 		const float min_zoom_factor = clampr(m_zoom_params.m_fScopeZoomFactor, 1.0f, 100.f);
 		const float range = 100.f - min_zoom_factor;
 		const float zoom_t = range > EPS_L ? clampr((100.f - m_fRTZoomFactor) / range, 0.f, 1.f) : 1.f;
-		const float lens_fov = clampr(GetSecondVPZoomFactor(), 1.0f, g_fov);
-		return clampr(_lerp(g_fov, lens_fov, zoom_t), 1.0f, g_fov);
+		const float base_fov = clampr(m_zoom_params.m_fSecondVPBaseFovFactor > 0.005f ? m_zoom_params.m_fSecondVPBaseFovFactor : g_fov, 1.0f, g_fov);
+		const float lens_fov = clampr(GetSecondVPZoomFactor(), 1.0f, base_fov);
+		return clampr(_lerp(base_fov, lens_fov, zoom_t), 1.0f, g_fov);
 	}
 
 	if (m_zoom_params.m_bSecondVPLensZoomOnly)
@@ -3549,18 +3563,25 @@ void CWeapon::UpdateSecondVP()
 		SetZoomFactor(m_fRTZoomFactor);
 
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
-	const float blend = clampr(Device.fTimeDelta * 10.f, 0.0f, 1.0f);
-	m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
+	if (svp_requested)
+	{
+		const float blend = clampr(Device.fTimeDelta * 12.f, 0.0f, 1.0f);
+		m_zoom_params.m_fSecondVPCurrentFov += (target_fov - m_zoom_params.m_fSecondVPCurrentFov) * blend;
+	}
+	else
+	{
+		m_zoom_params.m_fSecondVPCurrentFov = target_fov;
+	}
 	if (fis_zero(m_zoom_params.m_fSecondVPCurrentFov - target_fov, 0.01f))
 		m_zoom_params.m_fSecondVPCurrentFov = target_fov;
 
-	const bool svp_active = svp_requested || (IsSecondVPZoomPresent() && m_zoom_params.m_fSecondVPCurrentFov < g_fov - 0.05f);
+	const bool svp_active = svp_requested;
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 	g_pip_svp_thermal = svp_active && m_zoom_params.m_bSecondVPThermal;
 	if (g_pip_svp_thermal)
-		g_pip_svp_thermal_until = Device.dwTimeGlobal + 250;
-	ps_pip_svp_thermal = g_pip_svp_thermal;
+		g_pip_svp_thermal_until = Device.dwTimeGlobal + 1000;
+	ps_pip_svp_thermal = g_pip_svp_thermal || Device.dwTimeGlobal <= g_pip_svp_thermal_until;
 
 	if (svp_active)
 	{

@@ -26,6 +26,7 @@
 #include "../../../CharacterPhysicsSupport.h"
 
 extern int ps_r2_heatvision;
+extern bool ps_pip_svp_thermal;
 extern bool g_pip_svp_thermal;
 extern u32 g_pip_svp_thermal_until;
 
@@ -537,12 +538,16 @@ void CAI_Bloodsucker::set_visibility_state(visibility_t new_state)
 
 	if (m_visibility_state == new_state)
 	{
+		if (heatvision_render_active())
+			apply_heatvision_visibility_override();
 		return;
 	}
 
 	if (Device.dwTimeGlobal < m_visibility_state_last_changed_time +
 		get_visibility_state_change_min_delay())
 	{
+		if (heatvision_render_active())
+			apply_heatvision_visibility_override();
 		return;
 	}
 
@@ -568,6 +573,9 @@ void CAI_Bloodsucker::set_visibility_state(visibility_t new_state)
 	{
 		sound().play(CAI_Bloodsucker::eChangeVisibility);
 	}
+
+	if (heatvision_render_active())
+		apply_heatvision_visibility_override();
 }
 
 void CAI_Bloodsucker::force_visibility_state(int state)
@@ -619,7 +627,7 @@ void CAI_Bloodsucker::update_invisibility()
 
 bool CAI_Bloodsucker::heatvision_render_active() const
 {
-	return ps_r2_heatvision > 0 || g_pip_svp_thermal || Device.dwTimeGlobal <= g_pip_svp_thermal_until;
+	return ps_r2_heatvision > 0 || ps_pip_svp_thermal || g_pip_svp_thermal || Device.dwTimeGlobal <= g_pip_svp_thermal_until;
 }
 
 void CAI_Bloodsucker::mark_heatvision_visual_hot()
@@ -978,7 +986,10 @@ void CAI_Bloodsucker::manual_activate()
 	m_visibility_state = no_visibility;
 	m_heatvision_forced_visible = false;
 	m_heatvision_forced_predator_visual = false;
-	setVisible(FALSE);
+	if (heatvision_render_active())
+		apply_heatvision_visibility_override();
+	else
+		setVisible(FALSE);
 }
 
 void CAI_Bloodsucker::manual_deactivate()

@@ -392,6 +392,7 @@ protected:
 		float m_fScopeZoomFactor;
 		float m_fZoomRotationFactor;
 		float m_fSecondVPFovFactor;
+		float m_fSecondVPBaseFovFactor;
 		float m_fSecondVPCurrentFov;
 		bool m_bSecondVPLensZoomOnly;
 		bool m_bSecondVPThermal;
