@@ -290,6 +290,8 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 	m_visibility_state = unset;
 	m_heatvision_forced_visible = false;
 	m_heatvision_forced_predator_visual = false;
+	m_heatvision_forced_visibility_state = false;
+	m_heatvision_saved_force_visibility_state = unset;
 	m_visibility_state_last_changed_time = 0;
 
 	PostLoad(section);
@@ -300,6 +302,8 @@ void CAI_Bloodsucker::reinit()
 	m_force_visibility_state = unset;
 	m_heatvision_forced_visible = false;
 	m_heatvision_forced_predator_visual = false;
+	m_heatvision_forced_visibility_state = false;
+	m_heatvision_saved_force_visibility_state = unset;
 
 	inherited::reinit();
 	CControlledActor::reinit();
@@ -520,7 +524,7 @@ CAI_Bloodsucker::visibility_t CAI_Bloodsucker::get_visibility_state() const
 //--DSR-- HeatVision_start
 float CAI_Bloodsucker::GetTransparency() 
 {
-	return (m_visibility_state == no_visibility && !heatvision_render_active()) ? 1.0f : 0.0f;
+	return (get_visibility_state() == no_visibility && !heatvision_render_active()) ? 1.0f : 0.0f;
 }
 //--DSR-- HeatVision_end
 
@@ -642,6 +646,13 @@ void CAI_Bloodsucker::apply_heatvision_visibility_override()
 		return;
 
 	const bool was_hidden = state_invisible || m_visibility_state != full_visibility || !getVisible();
+	if (!m_heatvision_forced_visibility_state)
+	{
+		m_heatvision_saved_force_visibility_state = m_force_visibility_state;
+		m_force_visibility_state = full_visibility;
+		m_heatvision_forced_visibility_state = true;
+	}
+
 	if (was_hidden || !getVisible())
 	{
 		setVisible(TRUE);
@@ -684,6 +695,13 @@ void CAI_Bloodsucker::apply_heatvision_visibility_override()
 
 void CAI_Bloodsucker::release_heatvision_visibility_override()
 {
+	if (m_heatvision_forced_visibility_state)
+	{
+		m_force_visibility_state = m_heatvision_saved_force_visibility_state;
+		m_heatvision_saved_force_visibility_state = unset;
+		m_heatvision_forced_visibility_state = false;
+	}
+
 	if (m_heatvision_forced_predator_visual)
 	{
 		if (state_invisible || m_visibility_state != full_visibility)
@@ -743,6 +761,8 @@ void CAI_Bloodsucker::shedule_Update(u32 dt)
 		setVisible(TRUE);
 		m_heatvision_forced_visible = false;
 		m_heatvision_forced_predator_visual = false;
+		m_heatvision_forced_visibility_state = false;
+		m_heatvision_saved_force_visibility_state = unset;
 		if (state_invisible)
 		{
 			stop_invisible_predator();
@@ -986,6 +1006,8 @@ void CAI_Bloodsucker::manual_activate()
 	m_visibility_state = no_visibility;
 	m_heatvision_forced_visible = false;
 	m_heatvision_forced_predator_visual = false;
+	m_heatvision_forced_visibility_state = false;
+	m_heatvision_saved_force_visibility_state = unset;
 	if (heatvision_render_active())
 		apply_heatvision_visibility_override();
 	else
@@ -998,6 +1020,8 @@ void CAI_Bloodsucker::manual_deactivate()
 	m_visibility_state = full_visibility;
 	m_heatvision_forced_visible = false;
 	m_heatvision_forced_predator_visual = false;
+	m_heatvision_forced_visibility_state = false;
+	m_heatvision_saved_force_visibility_state = unset;
 	setVisible(TRUE);
 }
 
