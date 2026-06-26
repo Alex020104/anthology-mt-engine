@@ -458,8 +458,7 @@ static class cl_heatvision_steps : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		const int heatvision_mode = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && ps_pip_svp_thermal) ? 1 : 0;
-		RCache.set_c(C, heatvision_mode, heat_vision_steps.x, heat_vision_steps.y, heat_vision_steps.z);
+		RCache.set_c(C, ps_r2_heatvision, heat_vision_steps.x, heat_vision_steps.y, heat_vision_steps.z);
 	}
 } binder_heatvision_params1;
 
@@ -1163,7 +1162,7 @@ static class ssfx_jitter : public R_constant_setup
 		float JitterY = 0;
 
 #if defined(USE_DX11)
-		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !Device.m_SecondViewport.IsSVPFrame())
+		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa)
 		{
 			static Fvector2 TAA_Offset[4] = 
 			{

@@ -186,8 +186,7 @@ void CRenderTarget::phase_heatvision()
 	RCache.Vertex.Unlock(4, g_combine->vb_stride);
 
 	//Set pass
-	const int heatvision_mode = ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && ps_pip_svp_thermal) ? 1 : 0;
-	RCache.set_Element(s_heatvision->E[heatvision_mode]);
+	RCache.set_Element(s_heatvision->E[ps_r2_heatvision]);
 
 	//Set geometry
 	RCache.set_Geometry(g_combine);

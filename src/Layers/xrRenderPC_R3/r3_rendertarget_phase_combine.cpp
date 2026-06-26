@@ -403,7 +403,7 @@ void CRenderTarget::phase_combine()
 		phase_nightvision();
 
 	//--DSR-- HeatVision_start
-	if (ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && ps_pip_svp_thermal))
+	if (ps_r2_heatvision > 0)
 		phase_heatvision();
 	//--DSR-- HeatVision_end
 
