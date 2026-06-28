@@ -210,6 +210,7 @@ private:
 
 	visibility_t m_visibility_state;
 	visibility_t m_force_visibility_state;
+	bool m_pip_thermal_forced_visible;
 	TTime m_visibility_state_last_changed_time;
 
 	TTime m_runaway_invisible_time;

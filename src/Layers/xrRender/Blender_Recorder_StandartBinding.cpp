@@ -1180,8 +1180,11 @@ static class ssfx_jitter : public R_constant_setup
 				{  0.0f,  1.0f }
 			};
 
-			JitterX = TAA_Offset[ Device.dwFrame % 4 ].x / Device.dwWidth;
-			JitterY = TAA_Offset[ Device.dwFrame % 4 ].y / Device.dwHeight;
+			u32 taa_frame = Device.dwFrame;
+			if (Device.m_SecondViewport.IsSVPActive())
+				taa_frame /= std::max<u8>(Device.m_SecondViewport.GetSVPFrameDelay(), 2);
+			JitterX = TAA_Offset[taa_frame % 4].x / Device.dwWidth;
+			JitterY = TAA_Offset[taa_frame % 4].y / Device.dwHeight;
 		}
 #endif
 

@@ -93,6 +93,7 @@ public:
 	float CWeapon::GetSecondVPTargetFov() const;
 	IC float GetZRotatingFactor()    const { return m_zoom_params.m_fZoomRotationFactor; }
 	IC float GetSecondVPZoomFactor() const { return m_zoom_params.m_fSecondVPFovFactor; }
+	IC float GetSecondVPReticleZoomFactor() const { return m_zoom_params.m_fSecondVPRenderZoomFactor; }
 	IC float IsSecondVPZoomPresent() const { return GetSecondVPZoomFactor() > 0.005f; }
 	IC bool IsSecondVPLensZoomOnly() const { return m_zoom_params.m_bSecondVPLensZoomOnly && IsSecondVPZoomPresent(); }
 	IC bool IsSecondVPDynamicLensZoom() const { return IsSecondVPLensZoomOnly() && !!m_zoom_params.m_bUseDynamicZoom; }
@@ -392,7 +393,10 @@ protected:
 		float m_fScopeZoomFactor;
 		float m_fZoomRotationFactor;
 		float m_fSecondVPFovFactor;
+		float m_fSecondVPBaseFov;
 		float m_fSecondVPCurrentFov;
+		float m_fSecondVPZoomFactor;
+		float m_fSecondVPRenderZoomFactor;
 		bool m_bSecondVPLensZoomOnly;
 		bool m_bSecondVPThermal;
 		u8 m_u8SecondVPFrameDelay;

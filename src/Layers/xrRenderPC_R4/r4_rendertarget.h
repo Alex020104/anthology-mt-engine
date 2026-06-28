@@ -210,9 +210,15 @@ public:
 
 	ref_rt rt_ssfx_taa;
 	ref_rt rt_ssfx_prev_frame;
+	ref_rt rt_ssfx_prev_frame_main;
+	ref_rt rt_ssfx_prev_frame_svp;
 	ref_rt rt_ssfx_motion_vectors;
 
 	ref_rt rt_ssfx_prevPos;
+	ref_rt rt_ssfx_prevPos_main;
+	ref_rt rt_ssfx_prevPos_svp;
+	bool m_taaHistoryMainValid;
+	bool m_taaHistorySVPValid;
 
 	ref_shader s_ssfx_water;
 	ref_shader s_ssfx_water_blur;

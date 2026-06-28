@@ -350,6 +350,8 @@ void generate_jitter(DWORD* dest, u32 elem_count)
 CRenderTarget::CRenderTarget()
 {
 	u32 SampleCount = 1;
+	m_taaHistoryMainValid = false;
+	m_taaHistorySVPValid = false;
 
 	if (ps_r_ssao_mode != 2/*hdao*/)
 		ps_r_ssao = _min(ps_r_ssao, 3);
@@ -586,9 +588,17 @@ CRenderTarget::CRenderTarget()
 		rt_ssfx_taa.create(r2_RT_ssfx_taa, w, h, D3DFMT_A16B16G16R16F, SampleCount); // Temp RT
 
 		if (RImplementation.o.dx11_hdr10)
+		{
 			rt_ssfx_prev_frame.create(r2_RT_ssfx_prev_frame, w, h, D3DFMT_A16B16G16R16F); // Temp RT
+			rt_ssfx_prev_frame_main.create(r2_RT_ssfx_prev_frame_main, w, h, D3DFMT_A16B16G16R16F);
+			rt_ssfx_prev_frame_svp.create(r2_RT_ssfx_prev_frame_svp, w, h, D3DFMT_A16B16G16R16F);
+		}
 		else
+		{
 			rt_ssfx_prev_frame.create(r2_RT_ssfx_prev_frame, w, h, D3DFMT_A8R8G8B8); // Temp RT
+			rt_ssfx_prev_frame_main.create(r2_RT_ssfx_prev_frame_main, w, h, D3DFMT_A8R8G8B8);
+			rt_ssfx_prev_frame_svp.create(r2_RT_ssfx_prev_frame_svp, w, h, D3DFMT_A8R8G8B8);
+		}
 
 		rt_ssfx_motion_vectors.create(r2_RT_ssfx_motion_vectors, w, h, D3DFMT_A16B16G16R16F, SampleCount); // HUD mask & Velocity buffer
 		
@@ -636,6 +646,8 @@ CRenderTarget::CRenderTarget()
 		rt_ssfx_water_waves.create(r2_RT_ssfx_water_waves, 512, 512, D3DFMT_A8R8G8B8); // Water Waves
 
 		rt_ssfx_prevPos.create(r2_RT_ssfx_prevPos, w, h, D3DFMT_A16B16G16R16F, SampleCount);
+		rt_ssfx_prevPos_main.create(r2_RT_ssfx_prevPos_main, w, h, D3DFMT_A16B16G16R16F, SampleCount);
+		rt_ssfx_prevPos_svp.create(r2_RT_ssfx_prevPos_svp, w, h, D3DFMT_A16B16G16R16F, SampleCount);
 
 		//rt_ssfx_hud.create(r2_RT_ssfx_hud, w, h, D3DFMT_A16B16G16R16F); // Deprecated
 

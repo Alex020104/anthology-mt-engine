@@ -87,18 +87,15 @@ void CRenderTarget::phase_combine()
 	// Save previus and current matrices
 	Fvector2 m_blur_scale;
 	{
-		static Fmatrix m_saved_viewproj;
+		static Fmatrix m_saved_viewproj[2];
+		static Fvector3 saved_position[2];
+		const u32 view_index = Device.m_SecondViewport.IsSVPFrame() ? 1 : 0;
+		Position_previous.set(saved_position[view_index]);
+		saved_position[view_index].set(Device.vCameraPosition);
 
-		if (!Device.m_SecondViewport.IsSVPFrame())
-		{
-			static Fvector3 saved_position;
-			Position_previous.set(saved_position);
-			saved_position.set(Device.vCameraPosition);
-
-			Matrix_previous.mul(m_saved_viewproj, Device.mInvView);
-			Matrix_current.set(Device.mProject);
-			m_saved_viewproj.set(Device.mFullTransform);
-		}
+		Matrix_previous.mul(m_saved_viewproj[view_index], Device.mInvView);
+		Matrix_current.set(Device.mProject);
+		m_saved_viewproj[view_index].set(Device.mFullTransform);
 		float scale = ps_r2_mblur / 2.f;
 		m_blur_scale.set(scale, -scale).div(12.f);
 	}

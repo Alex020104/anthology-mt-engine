@@ -63,6 +63,7 @@ CAI_Bloodsucker::CAI_Bloodsucker()
 	m_animated = false;
 	collision_off = false;
 	m_force_visibility_state = unset;
+	m_pip_thermal_forced_visible = false;
 	m_runaway_invisible_time = 0;
 
 	using namespace detail::bloodsucker;
@@ -284,6 +285,7 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 	                                             partial_visibility_radius_string,
 	                                             default_partial_visibility_radius);
 	m_visibility_state = unset;
+	m_pip_thermal_forced_visible = false;
 	m_visibility_state_last_changed_time = 0;
 
 	PostLoad(section);
@@ -292,6 +294,7 @@ void CAI_Bloodsucker::Load(LPCSTR section)
 void CAI_Bloodsucker::reinit()
 {
 	m_force_visibility_state = unset;
+	m_pip_thermal_forced_visible = false;
 
 	inherited::reinit();
 	CControlledActor::reinit();
@@ -615,6 +618,22 @@ void CAI_Bloodsucker::update_invisibility()
 void CAI_Bloodsucker::UpdateCL()
 {
 	update_invisibility();
+	if (Device.m_SecondViewport.IsSVPThermal())
+	{
+		if (!getVisible())
+		{
+			setVisible(TRUE);
+			m_pip_thermal_forced_visible = true;
+		}
+		if (renderable.visual)
+			renderable.visual->MarkAsHot(true);
+	}
+	else if (m_pip_thermal_forced_visible)
+	{
+		if (state_invisible)
+			setVisible(FALSE);
+		m_pip_thermal_forced_visible = false;
+	}
 	inherited::UpdateCL();
 	CControlledActor::frame_update();
 	character_physics_support()->movement()->CollisionEnable(!is_collision_off());
@@ -645,6 +664,7 @@ void CAI_Bloodsucker::shedule_Update(u32 dt)
 
 void CAI_Bloodsucker::Die(CObject* who)
 {
+	m_pip_thermal_forced_visible = false;
 	inherited::Die(who);
 	stop_invisible_predator();
 }
@@ -872,6 +892,7 @@ void CAI_Bloodsucker::manual_activate()
 void CAI_Bloodsucker::manual_deactivate()
 {
 	state_invisible = false;
+	m_pip_thermal_forced_visible = false;
 	setVisible(TRUE);
 }
 
@@ -888,6 +909,8 @@ void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 
 	const bool heatvision_render = ps_r2_heatvision > 0 ||
 		(Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal());
+	if (heatvision_render && renderable.visual)
+		renderable.visual->MarkAsHot(true);
 
 	if (m_visibility_state != no_visibility || heatvision_render)
 		inherited::renderable_Render(DM);

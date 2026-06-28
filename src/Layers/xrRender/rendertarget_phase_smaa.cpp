@@ -106,6 +106,21 @@ void CRenderTarget::phase_ssfx_taa()
 {
 	u32 Offset = 0;
 	Fvector2 p0, p1;
+	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+	ref_rt& color_history = svp_frame ? rt_ssfx_prev_frame_svp : rt_ssfx_prev_frame_main;
+	ref_rt& depth_history = svp_frame ? rt_ssfx_prevPos_svp : rt_ssfx_prevPos_main;
+	bool& history_valid = svp_frame ? m_taaHistorySVPValid : m_taaHistoryMainValid;
+
+	if (history_valid)
+	{
+		HW.pContext->CopyResource(rt_ssfx_prev_frame->pTexture->surface_get(), color_history->pTexture->surface_get());
+		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), depth_history->pTexture->surface_get());
+	}
+	else
+	{
+		HW.pContext->CopyResource(rt_ssfx_prev_frame->pTexture->surface_get(), rt_Generic_0->pTexture->surface_get());
+		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
+	}
 
 	u32 C = color_rgba(255, 255, 255, 255);
 	float w = float(Device.dwWidth);
@@ -157,6 +172,9 @@ void CRenderTarget::phase_ssfx_taa()
 
 	// Accumulate
 	HW.pContext->CopyResource(rt_ssfx_prev_frame->pTexture->surface_get(), dest_rt->pTexture->surface_get());
+	HW.pContext->CopyResource(color_history->pTexture->surface_get(), rt_ssfx_prev_frame->pTexture->surface_get());
+	HW.pContext->CopyResource(depth_history->pTexture->surface_get(), rt_Position->pTexture->surface_get());
+	history_valid = true;
 
 	// Sharpening phase
 	u_setrt(rt_Generic_0, nullptr, nullptr, nullptr);
