@@ -1180,11 +1180,18 @@ static class ssfx_jitter : public R_constant_setup
 				{  0.0f,  1.0f }
 			};
 
-			u32 taa_frame = Device.dwFrame;
-			if (Device.m_SecondViewport.IsSVPActive())
-				taa_frame /= std::max<u8>(Device.m_SecondViewport.GetSVPFrameDelay(), 2);
-			JitterX = TAA_Offset[taa_frame % 4].x / Device.dwWidth;
-			JitterY = TAA_Offset[taa_frame % 4].y / Device.dwHeight;
+			if (Device.m_SecondViewport.IsSVPFrame())
+			{
+				// The lens is rendered at half-rate. Temporal projection jitter is
+				// visible as amplified texture shimmer at narrow PiP FOVs.
+				JitterX = 0.0f;
+				JitterY = 0.0f;
+			}
+			else
+			{
+				JitterX = TAA_Offset[Device.dwFrame % 4].x / Device.dwWidth;
+				JitterY = TAA_Offset[Device.dwFrame % 4].y / Device.dwHeight;
+			}
 		}
 #endif
 

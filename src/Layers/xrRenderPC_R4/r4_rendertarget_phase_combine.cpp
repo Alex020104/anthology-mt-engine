@@ -87,15 +87,18 @@ void CRenderTarget::phase_combine()
 	// Save previus and current matrices
 	Fvector2 m_blur_scale;
 	{
-		static Fmatrix m_saved_viewproj[2];
-		static Fvector3 saved_position[2];
-		const u32 view_index = Device.m_SecondViewport.IsSVPFrame() ? 1 : 0;
-		Position_previous.set(saved_position[view_index]);
-		saved_position[view_index].set(Device.vCameraPosition);
+		static Fmatrix m_saved_viewproj;
 
-		Matrix_previous.mul(m_saved_viewproj[view_index], Device.mInvView);
-		Matrix_current.set(Device.mProject);
-		m_saved_viewproj[view_index].set(Device.mFullTransform);
+		if (!Device.m_SecondViewport.IsSVPFrame())
+		{
+			static Fvector3 saved_position;
+			Position_previous.set(saved_position);
+			saved_position.set(Device.vCameraPosition);
+
+			Matrix_previous.mul(m_saved_viewproj, Device.mInvView);
+			Matrix_current.set(Device.mProject);
+			m_saved_viewproj.set(Device.mFullTransform);
+		}
 		float scale = ps_r2_mblur / 2.f;
 		m_blur_scale.set(scale, -scale).div(12.f);
 	}
@@ -571,20 +574,23 @@ void CRenderTarget::phase_combine()
 		phase_fakescope(); //crookr
 	}
 
-    //SMAA
-	if (ps_smaa_quality)
+	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+
+	// PiP is updated at half-rate, so temporal AA produces visible history
+	// judder and blur at high magnification. Use stable spatial AA for it.
+	if (ps_smaa_quality || svp_frame)
 	{
         //PIX_EVENT(SMAA);
         phase_smaa();
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0)
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !svp_frame)
 	{
 		phase_ssfx_taa();
 	}
 
-	if (ssfx_PrevPos_Requiered)
+	if (ssfx_PrevPos_Requiered && !svp_frame)
 		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
 
 	// PP enabled ?

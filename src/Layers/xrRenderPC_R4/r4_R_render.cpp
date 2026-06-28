@@ -218,11 +218,14 @@ void CRender::Render()
 	{
 		// Save previus and current matrices
 		{
-			static Fmatrix mm_saved_viewproj[2];
-			const u32 view_index = Device.m_SecondViewport.IsSVPFrame() ? 1 : 0;
-			Target->Matrix_previous.mul(mm_saved_viewproj[view_index], Device.mInvView);
-			Target->Matrix_current.set(Device.mProject);
-			mm_saved_viewproj[view_index].set(Device.mFullTransform);
+			static Fmatrix mm_saved_viewproj;
+
+			if (!Device.m_SecondViewport.IsSVPFrame())
+			{
+				Target->Matrix_previous.mul(mm_saved_viewproj, Device.mInvView);
+				Target->Matrix_current.set(Device.mProject);
+				mm_saved_viewproj.set(Device.mFullTransform);
+			}
 		}
 
 		if (RImplementation.o.ssfx_sss && !Device.m_SecondViewport.IsSVPFrame())

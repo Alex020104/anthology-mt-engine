@@ -1240,6 +1240,7 @@ void CActor::UpdateCL()
 
 			g_pGamePersistent->m_pGShaderConstants->hud_fov_params.x = pWeapon->IsSecondVPDynamicLensZoom() ? pWeapon->GetSecondVPReticleZoomFactor() : pWeapon->CurrentZoomFactor();
 			g_pGamePersistent->m_pGShaderConstants->hud_fov_params.y = pWeapon->GetMinScopeZoomFactor();
+			g_pGamePersistent->m_pGShaderConstants->hud_fov_params.z = pWeapon->GetSecondVPBaseFov();
 		}
 	}
 #ifdef STATIONARYMGUN_NEW
