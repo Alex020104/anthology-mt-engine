@@ -403,7 +403,7 @@ void CRenderTarget::phase_combine()
 		phase_nightvision();
 
 	//--DSR-- HeatVision_start
-	if (ps_r2_heatvision > 0)
+	if (ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal()))
 		phase_heatvision();
 	//--DSR-- HeatVision_end
 
@@ -553,7 +553,8 @@ void CRenderTarget::phase_combine()
 
 	//	if FP16-BLEND !not! supported - draw flares here, overwise they are already in the bloom target
 	/* if (!RImplementation.o.fp16_blend)*/
-	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0) //--DSR-- HeatVision
+	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0 &&
+		!(Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal())) //--DSR-- HeatVision
 		g_pGamePersistent->Environment().RenderFlares(); // lens-flares
 
 	//	PP-if required

@@ -185,8 +185,10 @@ void CRenderTarget::phase_heatvision()
 	pv->set(float(w), 0, d_Z, d_W, C, p1.x, p0.y); pv++;
 	RCache.Vertex.Unlock(4, g_combine->vb_stride);
 
-	//Set pass
-	RCache.set_Element(s_heatvision->E[ps_r2_heatvision]);
+	// Set the regular heatvision mode, or mode 1 for a thermal SecondVP frame.
+	const int heatvision_mode = ps_r2_heatvision > 0 ? ps_r2_heatvision :
+		(Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal() ? 1 : 0);
+	RCache.set_Element(s_heatvision->E[heatvision_mode]);
 
 	//Set geometry
 	RCache.set_Geometry(g_combine);

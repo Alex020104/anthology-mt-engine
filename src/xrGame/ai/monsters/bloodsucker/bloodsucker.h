@@ -210,10 +210,6 @@ private:
 
 	visibility_t m_visibility_state;
 	visibility_t m_force_visibility_state;
-	visibility_t m_heatvision_saved_force_visibility_state;
-	bool m_heatvision_forced_visible;
-	bool m_heatvision_forced_predator_visual;
-	bool m_heatvision_forced_visibility_state;
 	TTime m_visibility_state_last_changed_time;
 
 	TTime m_runaway_invisible_time;
@@ -234,10 +230,6 @@ public:
 	void set_visibility_state(visibility_t new_state);
 	void force_visibility_state(int state);
 	void update_invisibility();
-	bool heatvision_render_active() const;
-	void mark_heatvision_visual_hot();
-	void apply_heatvision_visibility_override();
-	void release_heatvision_visibility_override();
 
 	void force_stand_sleep_animation(u32 index);
 	void release_stand_sleep_animation();

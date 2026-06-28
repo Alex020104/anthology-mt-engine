@@ -446,6 +446,14 @@ extern Fvector4 heat_vision_blurring;
 extern Fvector4 heat_vision_args_1;
 extern Fvector4 heat_vision_args_2;
 
+static int active_heatvision_mode()
+{
+	if (ps_r2_heatvision > 0)
+		return ps_r2_heatvision;
+
+	return Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal() ? 1 : 0;
+}
+
 static class cl_heatvision_hotness : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
@@ -458,7 +466,7 @@ static class cl_heatvision_steps : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, ps_r2_heatvision, heat_vision_steps.x, heat_vision_steps.y, heat_vision_steps.z);
+		RCache.set_c(C, active_heatvision_mode(), heat_vision_steps.x, heat_vision_steps.y, heat_vision_steps.z);
 	}
 } binder_heatvision_params1;
 
