@@ -454,6 +454,14 @@ static int active_heatvision_mode()
 	return Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal() ? 1 : 0;
 }
 
+static float active_heatvision_palette_mode()
+{
+	if (Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal())
+		return float(Device.m_SecondViewport.GetSVPThermalMode());
+
+	return heat_vision_mode;
+}
+
 static bool is_thermal_svp_frame()
 {
 	return ps_r2_heatvision == 0 && Device.m_SecondViewport.IsSVPFrame() &&
@@ -480,7 +488,7 @@ static class cl_heatvision_blurring : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, heat_vision_blurring.x, heat_vision_blurring.y, heat_vision_blurring.z, heat_vision_mode);
+		RCache.set_c(C, heat_vision_blurring.x, heat_vision_blurring.y, heat_vision_blurring.z, active_heatvision_palette_mode());
 	}
 } binder_heatvision_params2;
 

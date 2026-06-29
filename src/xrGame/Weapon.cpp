@@ -141,6 +141,7 @@ CWeapon::CWeapon()
 	m_zoom_params.m_fSecondVPRenderZoomFactor = 100.0f;
 	m_zoom_params.m_bSecondVPLensZoomOnly = false;
 	m_zoom_params.m_bSecondVPThermal = false;
+	m_zoom_params.m_iSecondVPThermalMode = 0;
 	m_zoom_params.m_u8SecondVPFrameDelay = 2;
 
 	m_altAimPos = false;
@@ -2155,6 +2156,7 @@ void CWeapon::OnZoomOut()
 	m_zoom_params.m_fSecondVPCurrentFov = g_fov;
 	Device.m_SecondViewport.SetSVPActive(false);
 	Device.m_SecondViewport.SetSVPThermal(false);
+	Device.m_SecondViewport.SetSVPThermalMode(0);
 
 	GamePersistent().RestoreEffectorDOF();
 
@@ -3378,19 +3380,28 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		const float alias_value = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lens_fov_base", fallback);
 		return READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov_base", alias_value);
 	};
+	auto read_thermal_mode = [](LPCSTR lens_section, int fallback) -> int
+	{
+		int alias_value = READ_IF_EXISTS(pSettings, r_s32, lens_section, "scope_lens_thermal_mode", fallback);
+		alias_value = READ_IF_EXISTS(pSettings, r_s32, lens_section, "scope_lense_thermal_mode", alias_value);
+		clamp<int>(alias_value, 0, 1);
+		return alias_value;
+	};
 
 	m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(base_section, 0.0f);
 	m_zoom_params.m_fSecondVPBaseFov = read_lens_base_fov(base_section, m_zoom_params.m_fSecondVPFovFactor);
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
+	m_zoom_params.m_iSecondVPThermalMode = read_thermal_mode(base_section, 0);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
 
-	auto apply_lens_section = [this, read_lens_fov, read_lens_base_fov](LPCSTR lens_section)
+	auto apply_lens_section = [this, read_lens_fov, read_lens_base_fov, read_thermal_mode](LPCSTR lens_section)
 	{
 		m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(lens_section, m_zoom_params.m_fSecondVPFovFactor);
 		m_zoom_params.m_fSecondVPBaseFov = read_lens_base_fov(lens_section, m_zoom_params.m_fSecondVPBaseFov);
 		m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_zoom_only", m_zoom_params.m_bSecondVPLensZoomOnly);
 		m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_thermal", m_zoom_params.m_bSecondVPThermal) || IsSecondVPThermalSection(lens_section);
+		m_zoom_params.m_iSecondVPThermalMode = read_thermal_mode(lens_section, m_zoom_params.m_iSecondVPThermalMode);
 		m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, lens_section, "scope_lense_frame_delay", m_zoom_params.m_u8SecondVPFrameDelay);
 
 		if (m_zoomtype == 0 && m_zoom_params.m_bSecondVPLensZoomOnly)
@@ -3419,13 +3430,14 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 
 	if (strstr(base_section, "wpn_ak107") || (scope_section.size() && strstr(scope_section.c_str(), "pso2")))
 	{
-		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f base_fov=%.3f zoom_only=%d thermal=%d frame_delay=%u",
+		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f base_fov=%.3f zoom_only=%d thermal=%d thermal_mode=%d frame_delay=%u",
 			base_section,
 			scope_section.size() ? scope_section.c_str() : "nil",
 			m_zoom_params.m_fSecondVPFovFactor,
 			m_zoom_params.m_fSecondVPBaseFov,
 			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
 			m_zoom_params.m_bSecondVPThermal ? 1 : 0,
+			m_zoom_params.m_iSecondVPThermalMode,
 			m_zoom_params.m_u8SecondVPFrameDelay);
 	}
 }
@@ -3467,6 +3479,7 @@ void CWeapon::UpdateSecondVP()
 	if (!(ParentIsActor() && (m_pInventory != NULL) && (m_pInventory->ActiveItem() == this)))
 	{
 		Device.m_SecondViewport.SetSVPThermal(false);
+		Device.m_SecondViewport.SetSVPThermalMode(0);
 		return;
 	}
 
@@ -3498,6 +3511,7 @@ void CWeapon::UpdateSecondVP()
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 	Device.m_SecondViewport.SetSVPThermal(svp_active && m_zoom_params.m_bSecondVPThermal);
+	Device.m_SecondViewport.SetSVPThermalMode((svp_active && m_zoom_params.m_bSecondVPThermal) ? m_zoom_params.m_iSecondVPThermalMode : 0);
 
 	if (svp_active)
 		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);

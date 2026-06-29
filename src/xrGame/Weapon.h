@@ -400,6 +400,7 @@ protected:
 		float m_fSecondVPRenderZoomFactor;
 		bool m_bSecondVPLensZoomOnly;
 		bool m_bSecondVPThermal;
+		int m_iSecondVPThermalMode;
 		u8 m_u8SecondVPFrameDelay;
 		Fvector m_ZoomDof;
 		Fvector4 m_ReloadDof;

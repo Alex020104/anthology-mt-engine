@@ -148,6 +148,7 @@ public:
 	{
 		bool isActive; // Oeaa aeoeaaoee ?aiaa?a ai aoi?ie au?ii?o
 		bool isThermal;
+		int thermalMode;
 		u8 frameDelay;  // Ia eaeii eaa?a n iiiaioa i?ioeiai ?aiaa?a ai aoi?ie au?ii?o iu ia?i?i iiaue
 						  //(ia ii?ao auou iaiuoa 2 - ea?aue aoi?ie eaa?, ?ai aieuoa oai aieaa ieceee FPS ai aoi?ii au?ii?oa)
 
@@ -159,6 +160,12 @@ public:
 		bool    IsSVPFrame();
 		IC bool IsSVPThermal() const { return isThermal; }
 		IC void SetSVPThermal(bool bState) { isThermal = bState; }
+		IC int GetSVPThermalMode() const { return thermalMode; }
+		IC void SetSVPThermalMode(int mode)
+		{
+			thermalMode = mode;
+			clamp<int>(thermalMode, 0, 1);
+		}
 
 		IC u8 GetSVPFrameDelay() { return frameDelay; }
 		void  SetSVPFrameDelay(u8 iDelay)
@@ -304,6 +311,7 @@ public:
 		
 		m_SecondViewport.SetSVPActive(false);
 		m_SecondViewport.SetSVPThermal(false);
+		m_SecondViewport.SetSVPThermalMode(0);
 		m_SecondViewport.SetSVPFrameDelay(2);
 		m_SecondViewport.isCamReady = false;
 		mSVPCameraSaved = false;
