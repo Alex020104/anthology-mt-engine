@@ -352,6 +352,8 @@ CRenderTarget::CRenderTarget()
 	u32 SampleCount = 1;
 	m_taaHistoryMainValid = false;
 	m_taaHistorySVPValid = false;
+	m_taaSVPLastFrame = 0;
+	m_taaSVPLastFov = 0.0f;
 
 	if (ps_r_ssao_mode != 2/*hdao*/)
 		ps_r_ssao = _min(ps_r_ssao, 3);

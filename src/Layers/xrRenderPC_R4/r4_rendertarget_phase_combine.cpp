@@ -576,16 +576,14 @@ void CRenderTarget::phase_combine()
 
 	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
 
-	// PiP is updated at half-rate, so temporal AA produces visible history
-	// judder and blur at high magnification. Use stable spatial AA for it.
-	if (ps_smaa_quality || svp_frame)
+	if (ps_smaa_quality)
 	{
         //PIX_EVENT(SMAA);
         phase_smaa();
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !svp_frame)
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0)
 	{
 		phase_ssfx_taa();
 	}

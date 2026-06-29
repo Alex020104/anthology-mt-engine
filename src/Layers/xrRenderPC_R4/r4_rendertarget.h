@@ -219,6 +219,8 @@ public:
 	ref_rt rt_ssfx_prevPos_svp;
 	bool m_taaHistoryMainValid;
 	bool m_taaHistorySVPValid;
+	u32 m_taaSVPLastFrame;
+	float m_taaSVPLastFov;
 
 	ref_shader s_ssfx_water;
 	ref_shader s_ssfx_water_blur;

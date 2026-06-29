@@ -111,6 +111,18 @@ void CRenderTarget::phase_ssfx_taa()
 	ref_rt& depth_history = svp_frame ? rt_ssfx_prevPos_svp : rt_ssfx_prevPos_main;
 	bool& history_valid = svp_frame ? m_taaHistorySVPValid : m_taaHistoryMainValid;
 
+	if (svp_frame)
+	{
+		const u32 frame_delay = std::max<u8>(Device.m_SecondViewport.GetSVPFrameDelay(), 2);
+		const bool interrupted = m_taaSVPLastFrame == 0 || Device.dwFrame > m_taaSVPLastFrame + frame_delay;
+		const bool fov_changed = !fsimilar(Device.fFOV, m_taaSVPLastFov, 0.01f);
+		if (interrupted || fov_changed)
+			history_valid = false;
+
+		m_taaSVPLastFrame = Device.dwFrame;
+		m_taaSVPLastFov = Device.fFOV;
+	}
+
 	if (history_valid)
 	{
 		HW.pContext->CopyResource(rt_ssfx_prev_frame->pTexture->surface_get(), color_history->pTexture->surface_get());
@@ -191,7 +203,10 @@ void CRenderTarget::phase_ssfx_taa()
 	// Draw COLOR
 	RCache.set_Element(s_ssfx_taa->E[2]);
 	
-	RCache.set_c("taa_setup", ps_ssfx_taa);
+	Fvector4 taa_setup = ps_ssfx_taa;
+	if (svp_frame)
+		taa_setup.z = _max(taa_setup.z, 0.75f);
+	RCache.set_c("taa_setup", taa_setup);
 
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
