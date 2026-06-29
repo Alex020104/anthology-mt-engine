@@ -523,7 +523,10 @@ void CRenderTarget::phase_combine()
 		phase_ssfx_motion_blur();
 	}
 
-	if (scope_3D_fake_enabled)
+	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+	const bool defer_svp_reticle = scope_3D_fake_enabled && Device.m_SecondViewport.IsSVPActive();
+
+	if (scope_3D_fake_enabled && !defer_svp_reticle)
 	{
 		phase_3DSSReticle(); // Redotix99: for 3D Shader Based Scopes
 	}
@@ -574,8 +577,6 @@ void CRenderTarget::phase_combine()
 		phase_fakescope(); //crookr
 	}
 
-	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
-
 	// PiP is updated at half-rate, so temporal AA produces visible history
 	// judder and blur at high magnification. Use stable spatial AA for it.
 	if (ps_smaa_quality || svp_frame)
@@ -592,6 +593,12 @@ void CRenderTarget::phase_combine()
 
 	if (ssfx_PrevPos_Requiered && !svp_frame)
 		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
+
+	// Compose the live PiP surface after temporal AA. Its changing internal FOV
+	// has no screen-space motion vectors, so feeding it through TAA causes
+	// one-frame scale ghosts and amplified shimmer on high-contrast targets.
+	if (defer_svp_reticle && !svp_frame)
+		phase_3DSSReticle();
 
 	// PP enabled ?
 	//	Render to RT texture to be able to copy RT even in windowed mode.

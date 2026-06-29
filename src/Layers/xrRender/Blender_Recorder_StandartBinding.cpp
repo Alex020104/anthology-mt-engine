@@ -454,6 +454,12 @@ static int active_heatvision_mode()
 	return Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal() ? 1 : 0;
 }
 
+static bool is_thermal_svp_frame()
+{
+	return ps_r2_heatvision == 0 && Device.m_SecondViewport.IsSVPFrame() &&
+		Device.m_SecondViewport.IsSVPThermal();
+}
+
 static class cl_heatvision_hotness : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
@@ -482,6 +488,14 @@ static class cl_heatvision_args1 : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
+		if (is_thermal_svp_frame())
+		{
+			// The 2D heatvision script clears these values when the goggles are off.
+			// PiP still needs a centered mask so its thermal pass does not render black.
+			RCache.set_c(C, 0.1f, 0.0f, 5.0f, 0.0f);
+			return;
+		}
+
 		RCache.set_c(C, heat_vision_args_1.x, heat_vision_args_1.y, heat_vision_args_1.z, heat_vision_args_1.w);
 	}
 } binder_heatvision_args1;
@@ -490,6 +504,12 @@ static class cl_heatvision_args2 : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
+		if (is_thermal_svp_frame())
+		{
+			RCache.set_c(C, 100.0f, 0.99f, 0.0f, 0.0f);
+			return;
+		}
+
 		RCache.set_c(C, heat_vision_args_2.x, heat_vision_args_2.y, heat_vision_args_2.z, heat_vision_args_2.w);
 	}
 } binder_heatvision_args2;
