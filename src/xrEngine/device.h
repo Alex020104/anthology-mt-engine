@@ -100,6 +100,10 @@ public:
 	Fmatrix mView_saved;
 	Fmatrix mProject_saved;
 	Fmatrix mFullTransform_saved;
+	Fmatrix mView_saved_svp;
+	Fmatrix mProject_saved_svp;
+	bool mSVPCameraSaved;
+	u32 mSVPCameraFrame;
 
 	float fFOV;
 	float fASPECT;
@@ -302,6 +306,8 @@ public:
 		m_SecondViewport.SetSVPThermal(false);
 		m_SecondViewport.SetSVPFrameDelay(2);
 		m_SecondViewport.isCamReady = false;
+		mSVPCameraSaved = false;
+		mSVPCameraFrame = 0;
 	};
 
 	void Pause(BOOL bOn, BOOL bTimer, BOOL bSound, LPCSTR reason);

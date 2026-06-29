@@ -427,9 +427,24 @@ void CRenderDevice::on_idle()
 	mProjectCam_prev = mProjectCam;
 	mFullTransformCam_prev = mFullTransformCam;
 
-	// Previous frame data -- 
-	mView_prev = mView_saved;
-	mProject_prev = mProject_saved;
+	// Keep previous camera transforms per viewport. SecondVP alternates with the
+	// main view, so sharing one previous transform makes its TAA reproject across
+	// unrelated FOVs.
+	const bool svp_frame = m_SecondViewport.IsSVPFrame();
+	if (svp_frame)
+	{
+		const u32 frame_delay = std::max<u8>(m_SecondViewport.GetSVPFrameDelay(), 2);
+		const bool svp_camera_valid = mSVPCameraSaved && dwFrame <= mSVPCameraFrame + frame_delay;
+		mView_prev = svp_camera_valid ? mView_saved_svp : mView;
+		mProject_prev = svp_camera_valid ? mProject_saved_svp : mProject;
+	}
+	else
+	{
+		mView_prev = mView_saved;
+		mProject_prev = mProject_saved;
+		if (!m_SecondViewport.IsSVPActive())
+			mSVPCameraSaved = false;
+	}
 	mFullTransform_prev = mFullTransform_saved; // Unused?
 
 	m_pRender->SetCacheXform_prev(mView_prev, mProject_prev);
@@ -462,11 +477,20 @@ void CRenderDevice::on_idle()
 	//RCache.set_xform_project ( mProject );
 	D3DXMatrixInverse((D3DXMATRIX*)&mInvFullTransform, 0, (D3DXMATRIX*)&mFullTransform);
 
-	vCameraPosition_saved = vCameraPosition;
-	mFullTransform_saved = mFullTransform;
-	mView_saved = mView;
-	mProject_saved = mProject;
-
+	if (svp_frame)
+	{
+		mView_saved_svp = mView;
+		mProject_saved_svp = mProject;
+		mSVPCameraSaved = true;
+		mSVPCameraFrame = dwFrame;
+	}
+	else
+	{
+		vCameraPosition_saved = vCameraPosition;
+		mFullTransform_saved = mFullTransform;
+		mView_saved = mView;
+		mProject_saved = mProject;
+	}
 	STOP_PROFILE;
 
     // TODO: Try to move this upper
