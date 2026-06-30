@@ -1147,6 +1147,16 @@ static class ssfx_issvp : public R_constant_setup
 	}
 }    ssfx_issvp;
 
+static class scope_svp_active : public R_constant_setup
+{
+	virtual void setup(R_constant* C)
+	{
+		// The scope material is drawn on main-view frames and must keep sampling
+		// the most recently rendered SecondVP texture between SVP updates.
+		RCache.set_c(C, Device.m_SecondViewport.IsSVPActive(), 0, 0, 0);
+	}
+} scope_svp_active;
+
 static class ssfx_bloom_1 : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
@@ -1472,7 +1482,7 @@ void CBlender_Compile::SetMapping()
 	r_Constant("m_hud_fov_params", &binder_hud_fov_params);
 	r_Constant("m_script_params", &binder_script_params); //--#SM+#--
 	r_Constant("m_blender_mode", &binder_blend_mode);	//--#SM+#--
-	r_Constant("scope_svp", &ssfx_issvp);
+	r_Constant("scope_svp", &scope_svp_active);
 	
 	// Rain
 	r_Constant("rain_params", &binder_rain_params);
