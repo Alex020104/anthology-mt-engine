@@ -486,6 +486,12 @@ EGameActions get_binded_action(int _dik)
 void GetActionAllBinding(LPCSTR _action, char* dst_buff, int dst_buff_sz)
 {
 	int action_id = action_name_to_id(_action);
+	if (action_id == kNOTBINDED)
+	{
+		xr_sprintf(dst_buff, dst_buff_sz, "%s", _action ? _action : "");
+		return;
+	}
+
 	_binding* pbinding = &g_key_bindings[action_id];
 
 	string128 prim;
