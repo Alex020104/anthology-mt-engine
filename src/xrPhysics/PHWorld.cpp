@@ -582,6 +582,11 @@ void CPHWorld::RemoveUpdateObject(PH_UPDATE_OBJECT_I i)
 	m_update_objects.erase(i);
 }
 
+void CPHWorld::RemoveUpdateObject(CPHUpdateObject* object)
+{
+	RemoveUpdateObject(PH_UPDATE_OBJECT_I(object));
+}
+
 void CPHWorld::RemoveObject(PH_OBJECT_I i)
 {
 	m_objects.erase((i));

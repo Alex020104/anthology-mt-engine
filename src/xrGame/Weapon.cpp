@@ -142,7 +142,7 @@ CWeapon::CWeapon()
 	m_zoom_params.m_bSecondVPLensZoomOnly = false;
 	m_zoom_params.m_bSecondVPThermal = false;
 	m_zoom_params.m_iSecondVPThermalMode = 0;
-	m_zoom_params.m_u8SecondVPFrameDelay = 3;
+	m_zoom_params.m_u8SecondVPFrameDelay = 2;
 
 	m_altAimPos = false;
 	m_zoomtype = 0;
@@ -3393,7 +3393,7 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
 	m_zoom_params.m_iSecondVPThermalMode = read_thermal_mode(base_section, 0);
-	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 3);
+	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
 
 	auto apply_lens_section = [this, read_lens_fov, read_lens_base_fov, read_thermal_mode](LPCSTR lens_section)
 	{
