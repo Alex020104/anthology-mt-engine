@@ -480,15 +480,6 @@ void CCameraManager::ApplyDevice(float _viewport_near)
 	{
 		// For the second viewport, set FOV from HUD shader constants
 		Device.fFOV = g_pGamePersistent->m_pGShaderConstants->hud_params.y;
-		static u32 last_svp_fov_log_time = 0;
-		if (Device.dwTimeGlobal > last_svp_fov_log_time + 1000)
-		{
-			Msg("[PIP_SVP_CAMERA] frame=%u fov=%.3f hud_y=%.3f",
-				Device.dwFrame,
-				Device.fFOV,
-				g_pGamePersistent->m_pGShaderConstants->hud_params.y);
-			last_svp_fov_log_time = Device.dwTimeGlobal;
-		}
 
 		// Mark the second viewport camera as ready
 		Device.m_SecondViewport.isCamReady = true;

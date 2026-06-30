@@ -142,7 +142,7 @@ CWeapon::CWeapon()
 	m_zoom_params.m_bSecondVPLensZoomOnly = false;
 	m_zoom_params.m_bSecondVPThermal = false;
 	m_zoom_params.m_iSecondVPThermalMode = 0;
-	m_zoom_params.m_u8SecondVPFrameDelay = 2;
+	m_zoom_params.m_u8SecondVPFrameDelay = 3;
 
 	m_altAimPos = false;
 	m_zoomtype = 0;
@@ -3393,7 +3393,7 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
 	m_zoom_params.m_bSecondVPThermal = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_thermal", false) || IsSecondVPThermalSection(base_section);
 	m_zoom_params.m_iSecondVPThermalMode = read_thermal_mode(base_section, 0);
-	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
+	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 3);
 
 	auto apply_lens_section = [this, read_lens_fov, read_lens_base_fov, read_thermal_mode](LPCSTR lens_section)
 	{
@@ -3428,18 +3428,6 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		m_fRTZoomFactor = m_zoom_params.m_fSecondVPZoomFactor;
 	}
 
-	if (strstr(base_section, "wpn_ak107") || (scope_section.size() && strstr(scope_section.c_str(), "pso2")))
-	{
-		Msg("[PIP_AK107] lens_params base=%s scope=%s lens_fov=%.3f base_fov=%.3f zoom_only=%d thermal=%d thermal_mode=%d frame_delay=%u",
-			base_section,
-			scope_section.size() ? scope_section.c_str() : "nil",
-			m_zoom_params.m_fSecondVPFovFactor,
-			m_zoom_params.m_fSecondVPBaseFov,
-			m_zoom_params.m_bSecondVPLensZoomOnly ? 1 : 0,
-			m_zoom_params.m_bSecondVPThermal ? 1 : 0,
-			m_zoom_params.m_iSecondVPThermalMode,
-			m_zoom_params.m_u8SecondVPFrameDelay);
-	}
 }
 
 float CWeapon::GetSecondVPTargetFov() const
@@ -3516,28 +3504,6 @@ void CWeapon::UpdateSecondVP()
 	if (svp_active)
 		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);
 
-	if (strstr(cNameSect().c_str(), "wpn_ak107") && IsSecondVPZoomPresent())
-	{
-		static bool last_svp_active = false;
-		static u32 last_log_time = 0;
-		const bool should_log = last_svp_active != svp_active || Device.dwTimeGlobal > last_log_time + 1000;
-		if (should_log)
-		{
-			Msg("[PIP_AK107] update section=%s zoomed=%d rot=%.3f lens_fov=%.3f svp_fov=%.3f zoom_target=%.3f zoom_render=%.3f active=%d thermal=%d frame=%d",
-				cNameSect().c_str(),
-				IsZoomed() ? 1 : 0,
-				m_zoom_params.m_fZoomRotationFactor,
-				m_zoom_params.m_fSecondVPFovFactor,
-				GetSecondVPFov(),
-				m_zoom_params.m_fSecondVPZoomFactor,
-				m_zoom_params.m_fSecondVPRenderZoomFactor,
-				svp_active ? 1 : 0,
-				Device.m_SecondViewport.IsSVPThermal() ? 1 : 0,
-				Device.m_SecondViewport.IsSVPFrame() ? 1 : 0);
-			last_svp_active = svp_active;
-			last_log_time = Device.dwTimeGlobal;
-		}
-	}
 }
 
 Fmatrix CWeapon::RayTransform()

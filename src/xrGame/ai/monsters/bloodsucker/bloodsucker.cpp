@@ -631,8 +631,6 @@ void CAI_Bloodsucker::UpdateCL()
 			m_pip_thermal_restore_predator = m_predator;
 			m_pip_thermal_restore_hidden = !getVisible();
 			m_pip_thermal_forced_visible = true;
-			Msg("[PIP_THERMAL_BLOODSUCKER] id=%u active=1 predator=%d hidden=%d",
-				ID(), m_pip_thermal_restore_predator ? 1 : 0, m_pip_thermal_restore_hidden ? 1 : 0);
 		}
 
 		if (m_predator && cNameVisual() != m_visual_default)
@@ -659,7 +657,6 @@ void CAI_Bloodsucker::UpdateCL()
 		}
 		if (m_pip_thermal_restore_hidden && state_invisible)
 			setVisible(FALSE);
-		Msg("[PIP_THERMAL_BLOODSUCKER] id=%u active=0", ID());
 		m_pip_thermal_forced_visible = false;
 		m_pip_thermal_restore_predator = false;
 		m_pip_thermal_restore_hidden = false;
@@ -931,7 +928,6 @@ void CAI_Bloodsucker::manual_deactivate()
 }
 
 extern int ps_r2_heatvision;
-extern bool ps_pip_svp_thermal;
 void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 {
 	//--DSR-- HeatVision_start

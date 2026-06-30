@@ -1140,7 +1140,10 @@ static class ssfx_issvp : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, Device.m_SecondViewport.IsSVPActive(), 0, 0, 0);
+		// Keep SSFX's special scope behavior local to the actual SVP pass.
+		// IsSVPActive() also covers main-view frames and disables their water
+		// reflections and sun/grass shadows while the weapon is aimed.
+		RCache.set_c(C, Device.m_SecondViewport.IsSVPFrame(), 0, 0, 0);
 	}
 }    ssfx_issvp;
 
