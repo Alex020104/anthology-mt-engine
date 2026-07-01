@@ -455,7 +455,17 @@ void CActor::IR_OnMouseMove(int dx, int dy)
 	const float LookFactor = GetLookFactor();
 
 	CCameraBase* C = cameras[cam_active];
-    float scale = (C->f_fov / g_fov) * (psMouseSens * sens_multiple) * psMouseSensScale / 50.f / LookFactor;
+	float scale = (C->f_fov / g_fov) * (psMouseSens * sens_multiple) * psMouseSensScale / 50.f / LookFactor;
+
+	// The main camera keeps its normal FOV while PiP magnification changes only the
+	// second viewport. Compensate with the rendered lens FOV so every zoom step has
+	// the same apparent mouse response as a 1x lens.
+	if (Device.m_SecondViewport.IsSVPActive())
+	{
+		CWeapon* weapon = iitem ? iitem->cast_weapon() : nullptr;
+		if (weapon && weapon->IsSecondVPZoomPresent())
+			scale *= clampr(weapon->GetSecondVPFov() / g_fov, 0.01f, 1.0f);
+	}
 	if (dx)
 	{
 		float d = float(dx) * scale;
