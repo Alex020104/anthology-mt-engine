@@ -685,9 +685,15 @@ void CActor::cam_Update(float dt, float fFOV)
 	if (Level().CurrentEntity() == this)
 	{
 		Level().Cameras().UpdateFromCamera(C);
-		if (eacFirstEye == cam_active && !Level().Cameras().GetCamEffector(cefDemo) && !Device.m_SecondViewport.IsSVPActive())
+		if (eacFirstEye == cam_active && !Level().Cameras().GetCamEffector(cefDemo))
 		{
 			Cameras().ApplyDevice(_viewport_near);
+
+			// Keep actor anomaly, psi and damage effectors alive while PiP is active.
+			// The SVP pass must stay neutral; the effect is applied once after the
+			// lens has been composed into the main frame.
+			if (Device.m_SecondViewport.IsSVPFrame())
+				CCameraManager::ResetPP();
 		}
 	}
 }

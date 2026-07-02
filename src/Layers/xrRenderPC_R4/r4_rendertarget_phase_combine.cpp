@@ -741,7 +741,7 @@ void CRenderTarget::phase_combine()
 		g_pGamePersistent->Environment().RenderFlares(); // lens-flares
 
 	//	PP-if required
-	if (PP_Complex)
+	if (PP_Complex && !svp_frame)
 	{
 		PIX_EVENT(phase_pp);
 		phase_pp();
