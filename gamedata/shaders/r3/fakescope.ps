@@ -1,8 +1,8 @@
+#include "night_vision.h"
 #include "common.h"
 
 Texture2D s_scope;
-uniform float4 m_hud_params;
-uniform float4 shader_param_6; // x: local NV enabled, y: generation
+uniform float4 m_hud_params; // zoom_rotate_factor, secondVP_zoom_factor, hud_fov, NULL
 float4 eye_direction_lerp;
 float4 eye_position_lerp;
 float4 fakescope_params1; // power, inner blur, outer blur, brightness
@@ -18,24 +18,7 @@ float getparallax(float d)
 
 float2 clampMagnitude(float2 v, float l)
 {
-	float len = length(v);
-	return len > 0.00001f ? v / len * min(len, l) : 0.0f;
-}
-
-float2 scope_aspect_correction(float2 tc)
-{
-	tc.x = (tc.x - 0.5f) * (screen_res.x / screen_res.y) + 0.5f;
-	return tc;
-}
-
-float3 apply_scope_nightvision(float3 image, float2 tc)
-{
-	float generation = shader_param_6.y;
-	float3 color = generation > 1.5f ? float3(0.12f, 1.0f, 0.32f) : float3(0.08f, 1.0f, 0.12f);
-	float gain = generation > 1.5f ? 2.35f : 1.85f;
-	float luminance = dot(image, LUMINANCE_VECTOR);
-	float noise = frac(sin(dot(tc, float2(12.9898f, 78.233f)) + timers.x * 17.0f) * 43758.5453f);
-	return color * (luminance * gain + noise * 0.025f);
+	return normalize(v) * min(length(v), l);
 }
 
 float4 main(p_screen I,  float4 pos2d : SV_POSITION) : SV_Target
@@ -43,7 +26,7 @@ float4 main(p_screen I,  float4 pos2d : SV_POSITION) : SV_Target
 	if(m_hud_params.x > 0 && fakescope_params3.x > 0)
 	{
 		float3 image;
-		float2 corrected_texturecoords = scope_aspect_correction(I.tc0);
+		float2 corrected_texturecoords = aspect_ratio_correction(I.tc0);
 		
 		// get velocity
 		float2 eye_velocity = clampMagnitude((mul(m_VP, eye_direction_lerp) * fakescope_params2.y) + (mul(m_VP, eye_position_lerp) * fakescope_params2.z), fakescope_params2.w);
@@ -55,43 +38,25 @@ float4 main(p_screen I,  float4 pos2d : SV_POSITION) : SV_Target
 		// scope offset
 		float2 scope_center = float2(0.5f, 0.5f);
 		float distToCenter = distance(corrected_texturecoords, scope_center);
-		float2 scope_tc = saturate(I.tc0 * float2(1, 0.5625f));
-		float4 scope = s_scope.Sample(smp_nofilter, scope_tc);
+		float4 scope = s_scope.Sample(smp_nofilter, (I.tc0 * float2(1, 0.5625f)));
 
-		// The XML/DDS alpha is the authoritative aperture shape. A fixed
-		// fakescope radius does not match every reticle and leaves a grey ring
-		// between the procedural circle and the transparent lens opening.
-		// Neighbour samples ignore thin opaque reticle strokes while keeping the
-		// solid exterior mask outside the lens.
-		float2 scope_texel = float2(1.0f / screen_res.x, 0.5625f / screen_res.y) * 2.0f;
-		float aperture_alpha = scope.a;
-		aperture_alpha = min(aperture_alpha, s_scope.Sample(smp_nofilter, saturate(scope_tc + float2( scope_texel.x, 0.0f))).a);
-		aperture_alpha = min(aperture_alpha, s_scope.Sample(smp_nofilter, saturate(scope_tc + float2(-scope_texel.x, 0.0f))).a);
-		aperture_alpha = min(aperture_alpha, s_scope.Sample(smp_nofilter, saturate(scope_tc + float2(0.0f,  scope_texel.y))).a);
-		aperture_alpha = min(aperture_alpha, s_scope.Sample(smp_nofilter, saturate(scope_tc + float2(0.0f, -scope_texel.y))).a);
+		float3 half_res_blur = s_blur_2.Sample(smp_base, I.tc0).rgb;
 		
-		if(aperture_alpha < 0.5f && m_hud_params.x >= 1.0)
+		if(step(distToCenter, fakescope_params3.x) == 1 && m_hud_params.x >= 1.0)
 		{
-			// Keep the zoom around the screen centre. The previous -0.5 offset
-			// sampled outside the scene and produced bright circular artefacts.
-			float2 scene_tc = saturate((I.tc0 - 0.5f) * fakescope_params1.x + 0.5f);
-			float3 half_res_blur = s_blur_2.Sample(smp_base, scene_tc).rgb;
+			I.tc0 = (I.tc0 - 0.5) * fakescope_params1.x - 0.5;
 			
-			float2 chroma = float2(fakescope_params2.x * distToCenter, 0.0f);
-			image.r = s_image.Sample(smp_base, saturate(scene_tc - chroma)).r;
-			image.b = s_image.Sample(smp_base, saturate(scene_tc + chroma)).b;
-			image.g = s_image.Sample(smp_base, scene_tc).g;
+			image.r = s_image.Sample(smp_base, I.tc0 + (float3(-fakescope_params2.x, 0, 0) * distToCenter)).r;
+			image.b = s_image.Sample(smp_base, I.tc0 + (float3( fakescope_params2.x, 0, 0) * distToCenter)).b;
+			image.g = s_image.Sample(smp_base, I.tc0).g;
 
 			image = lerp(image, half_res_blur, fakescope_params1.y);
 			
 			image.rgb *= getparallax(distToParallax);
-			if (shader_param_6.x > 0.5f)
-				image = apply_scope_nightvision(image, scene_tc);
 		}
 		else
 		{	
 			image = s_image.Sample(smp_base, I.tc0).xyz;
-			float3 half_res_blur = s_blur_2.Sample(smp_base, I.tc0).rgb;
 			image = lerp(image, half_res_blur, m_hud_params.x * fakescope_params1.z) * (1 - (m_hud_params.x * (1 - fakescope_params1.w)));
 		}
 		
