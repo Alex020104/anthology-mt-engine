@@ -97,6 +97,7 @@ void CBlender_fakescope::Compile(CBlender_Compile& C) //crookr
 	C.r_dx10Texture("s_blur_2", r2_RT_blur_2);
 	C.r_dx10Texture("s_blur_4", r2_RT_blur_4);
 	C.r_dx10Texture("s_blur_8", r2_RT_blur_8);
+	C.r_dx10Texture("s_heat", r2_RT_heat);
 	//C.r_dx10Texture("s_scope", "wpn\\wpn_crosshair_pso1");
 	//C.r_dx10Texture("s_scope", scope_fake_texture);
 	C.r_dx10Texture("s_scope", r2_RT_scopert);

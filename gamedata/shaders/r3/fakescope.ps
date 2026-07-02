@@ -1,4 +1,5 @@
 #include "common.h"
+#include "infrared.h"
 
 Texture2D s_scope;
 uniform float4 m_hud_params;
@@ -38,21 +39,11 @@ float3 apply_scope_nightvision(float3 image, float2 tc)
 	return color * (luminance * gain + noise * 0.025f);
 }
 
-float3 apply_scope_thermal(float3 image, float2 tc, float monochrome)
+float3 apply_scope_thermal(float2 tc, float monochrome)
 {
-	// Lens-local approximation of Heat Vision's blue/green/yellow/red palette.
-	float luminance = saturate(dot(image, LUMINANCE_VECTOR) * 1.35f);
-	float3 cold = float3(0.0f, 0.10f, 0.35f);
-	float3 cool = float3(0.0f, 0.74f, 1.0f);
-	float3 warm = float3(1.0f, 0.80f, 0.0f);
-	float3 hot = float3(1.0f, 0.20f, 0.0f);
-	float3 thermal = luminance < 0.35f
-		? lerp(cold, cool, smoothstep(0.0f, 0.35f, luminance))
-		: (luminance < 0.70f
-			? lerp(cool, warm, smoothstep(0.35f, 0.70f, luminance))
-			: lerp(warm, hot, smoothstep(0.70f, 1.0f, luminance)));
-	float noise = frac(sin(dot(tc, float2(12.9898f, 78.233f)) + timers.x * 11.0f) * 43758.5453f) * 0.025f;
-	thermal += noise;
+	float2 hpos = tc * screen_res.xy;
+	gbuffer_data gbd = gbuffer_load_data(tc, hpos, 0);
+	float3 thermal = infrared(gbd, hpos, tc);
 	if (monochrome > 0.5f)
 	{
 		float grey = dot(thermal, LUMINANCE_VECTOR);
@@ -98,7 +89,7 @@ float4 main(p_screen I,  float4 pos2d : SV_POSITION) : SV_Target
 		center_alpha = min(center_alpha, s_scope.Sample(smp_nofilter, aperture_probe + float2( 0.0f, -0.04f)).a);
 		float texture_has_aperture = 1.0f - step(0.5f, center_alpha);
 		float texture_inside = 1.0f - step(0.5f, aperture_alpha);
-		float radial_inside = step(distToCenter, fakescope_params3.x);
+		float radial_inside = step(distToCenter, fakescope_params3.x * 0.985f);
 		float lens_inside = lerp(radial_inside, texture_inside, texture_has_aperture);
 		
 		if(lens_inside > 0.5f && m_hud_params.x >= 1.0)
@@ -119,7 +110,7 @@ float4 main(p_screen I,  float4 pos2d : SV_POSITION) : SV_Target
 			if (shader_param_6.x > 0.5f)
 			{
 				if (shader_param_6.z > 0.5f)
-					image = apply_scope_thermal(image, scene_tc, step(1.5f, shader_param_6.z));
+					image = apply_scope_thermal(scene_tc, step(1.5f, shader_param_6.z));
 				else
 					image = apply_scope_nightvision(image, scene_tc);
 			}
