@@ -340,7 +340,7 @@ void CRenderTarget::phase_combine()
 	}
 
 	// [SSFX] - Water SSR rendering
-	if (RImplementation.o.ssfx_water)
+	if (RImplementation.o.ssfx_water && !Device.m_SecondViewport.IsSVPFrame())
 	{
 		FLOAT ColorRGBA[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 		HW.pContext->ClearRenderTargetView(rt_ssfx_temp->pRT, ColorRGBA);
