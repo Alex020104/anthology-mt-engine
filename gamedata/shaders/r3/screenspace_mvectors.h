@@ -20,7 +20,7 @@
 		float2 motion_vectors = (current.xy / current.w) - (previous.xy / previous.w);
 		motion_vectors *= (1.0f - saturate(IsHUD));
 
-		return float4(float2(motion_vectors.x, -motion_vectors.y) * 0.5f, IsHUD, TAAMask);
+		return float4(float2(motion_vectors.x, -motion_vectors.y) * 0.5f, IsHUD, max(TAAMask, saturate(IsHUD)));
 	}
 
 	float2 ssfx_taa_jitter(float4 hpos)
