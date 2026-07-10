@@ -121,6 +121,10 @@ void CRenderTarget::phase_ssfx_taa()
 
 		m_taaSVPLastFrame = Device.dwFrame;
 		m_taaSVPLastFov = Device.fFOV;
+
+		// PiP scopes do not present every frame and amplify temporal mismatch on
+		// water/foliage, so keep the SVP pass current-frame only.
+		history_valid = false;
 	}
 
 	if (history_valid)
