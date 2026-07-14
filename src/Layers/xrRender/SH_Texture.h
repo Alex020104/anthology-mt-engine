@@ -79,6 +79,7 @@ private:
 
 	//	Class data
 public: //	Public class members (must be encapsulated furthur)
+	xrCriticalSection loadGuard;
 	struct
 	{
 		u32 bLoaded : 1;
