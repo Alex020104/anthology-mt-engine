@@ -87,6 +87,8 @@
 
 #define		r2_RT_ssfx_ssr			"$user$ssfx_ssr" // SSR Acc
 #define		r2_RT_ssfx_water		"$user$ssfx_water" // Water Acc
+#define		r2_RT_ssfx_water_main	"$user$ssfx_water_main" // Main-view Water Acc backup for SVP restore
+#define		r2_RT_ssfx_water_blur_main	"$user$ssfx_water_blur_main" // Main-view blurred Water Acc backup for SVP restore
 #define		r2_RT_ssfx_water_waves	"$user$ssfx_water_waves"
 #define		r2_RT_ssfx_ao			"$user$ssfx_ao" // AO Acc
 #define		r2_RT_ssfx_il			"$user$ssfx_il" // IL Acc

@@ -181,6 +181,8 @@ public:
 	//ref_rt rt_ssfx_hud; // DEPRECATED
 	ref_rt rt_ssfx_ssr;
 	ref_rt rt_ssfx_water;
+	ref_rt rt_ssfx_water_main;
+	ref_rt rt_ssfx_water_blur_main;
 	ref_rt rt_ssfx_water_waves;
 	ref_rt rt_ssfx_ao;
 	ref_rt rt_ssfx_il;

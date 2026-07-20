@@ -376,11 +376,11 @@ static void full_memory_stats(bool assert = true)
 
 	Msg("* [x-ray]: shared memory: memory[%ld K]", _eco_smem);
 
-	u64 DLTX_total_bytes = 0;
-	u64 DLTX_section_count = 0;
-	u64 DLTX_files_cached = 0;
-	CInifile::GetCacheStats(DLTX_files_cached, DLTX_total_bytes, DLTX_section_count);
-	Msg("* [x-ray]: DLTX Cache: Files Cached: %zu, Sections Total %zu, Usage: %.2f MB", DLTX_files_cached, DLTX_section_count, (double)DLTX_total_bytes / 1024 / 1024);
+	// Avoid doing a full DLTX cache walk from stat_memory during level load.
+	// Huge mod stacks can contain hundreds of thousands of cached strings and
+	// sections; collecting unique shared_str stats here is diagnostic-only and
+	// can fail while LoadEnd calls stat_memory automatically.
+	Msg("* [x-ray]: DLTX Cache: detailed stats skipped");
 
 	/*if (Console)
 	{

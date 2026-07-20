@@ -400,4 +400,10 @@ void CRender::RenderToTarget(RRT target)
 	HW.m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBuffer);
 	HW.pContext->CopyResource((*RT)->pSurface, pBuffer);
 	pBuffer->Release();
+
+	if (target == rtSVP && RImplementation.o.ssfx_water)
+	{
+		HW.pContext->CopyResource(Target->rt_ssfx_water->pTexture->surface_get(), Target->rt_ssfx_water_main->pTexture->surface_get());
+		HW.pContext->CopyResource(Target->rt_ssfx_temp->pTexture->surface_get(), Target->rt_ssfx_water_blur_main->pTexture->surface_get());
+	}
 }

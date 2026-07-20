@@ -612,6 +612,8 @@ CRenderTarget::CRenderTarget()
 		rt_ssfx_accum.create(r2_RT_ssfx_accum, w, h, D3DFMT_A16B16G16R16F, SampleCount); // Volumetric Acc
 		rt_ssfx_ssr.create(r2_RT_ssfx_ssr, w, h, D3DFMT_A8R8G8B8); // SSR Acc
 		rt_ssfx_water.create(r2_RT_ssfx_water, w, h, D3DFMT_A8R8G8B8); // Water Acc
+		rt_ssfx_water_main.create(r2_RT_ssfx_water_main, w, h, D3DFMT_A8R8G8B8); // Main-view Water Acc backup
+		rt_ssfx_water_blur_main.create(r2_RT_ssfx_water_blur_main, w, h, D3DFMT_A8R8G8B8); // Main-view blurred Water Acc backup
 		rt_ssfx_ao.create(r2_RT_ssfx_ao, w, h, D3DFMT_A8R8G8B8); // AO Acc
 		rt_ssfx_il.create(r2_RT_ssfx_il, w, h, D3DFMT_A8R8G8B8); // IL Acc
 

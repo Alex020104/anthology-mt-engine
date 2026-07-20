@@ -364,6 +364,10 @@ void CDSGraphManager::r_dsgraph_render_water()
 		if (RImplementation.o.ssfx_water)
 		{
 			RCache.set_Shader(RImplementation.Target->s_ssfx_water);
+			if (Device.m_SecondViewport.IsSVPFrame())
+			{
+				RCache.set_c("ssfx_issvp", 1.0f, 0.0f, 0.0f, 0.0f);
+			}
 		}
 #endif
 

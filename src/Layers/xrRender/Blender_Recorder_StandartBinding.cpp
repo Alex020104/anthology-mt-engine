@@ -1211,7 +1211,7 @@ static class ssfx_jitter : public R_constant_setup
 		float JitterY = 0;
 
 #if defined(USE_DX11)
-		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa)
+		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !Device.m_SecondViewport.IsSVPActive())
 		{
 			static Fvector2 TAA_Offset[4] = 
 			{
@@ -1222,8 +1222,6 @@ static class ssfx_jitter : public R_constant_setup
 			};
 
 			u32 taa_frame = Device.dwFrame;
-			if (Device.m_SecondViewport.IsSVPFrame())
-				taa_frame /= std::max<u8>(Device.m_SecondViewport.GetSVPFrameDelay(), 2);
 
 			JitterX = TAA_Offset[taa_frame % 4].x / Device.dwWidth;
 			JitterY = TAA_Offset[taa_frame % 4].y / Device.dwHeight;

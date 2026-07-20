@@ -42,7 +42,6 @@ void CRenderTarget::phase_combine()
 	PIX_EVENT(phase_combine);
 	
 	bool ssfx_PrevPos_Requiered = false;
-
 	//	TODO: DX10: Remove half poxel offset
 	bool _menu_pp = g_pGamePersistent ? g_pGamePersistent->OnRenderPPUI_query() : false;
 
@@ -88,7 +87,6 @@ void CRenderTarget::phase_combine()
 	Fvector2 m_blur_scale;
 	{
 		static Fmatrix m_saved_viewproj;
-
 		if (!Device.m_SecondViewport.IsSVPFrame())
 		{
 			static Fvector3 saved_position;
@@ -340,7 +338,7 @@ void CRenderTarget::phase_combine()
 	}
 
 	// [SSFX] - Water SSR rendering
-	if (RImplementation.o.ssfx_water && !Device.m_SecondViewport.IsSVPFrame())
+	if (RImplementation.o.ssfx_water)
 	{
 		FLOAT ColorRGBA[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 		HW.pContext->ClearRenderTargetView(rt_ssfx_temp->pRT, ColorRGBA);
@@ -372,6 +370,12 @@ void CRenderTarget::phase_combine()
 
 		// Water waves
 		phase_ssfx_water_waves();
+
+		if (!Device.m_SecondViewport.IsSVPFrame())
+		{
+			HW.pContext->CopyResource(rt_ssfx_water_main->pTexture->surface_get(), rt_ssfx_water->pTexture->surface_get());
+			HW.pContext->CopyResource(rt_ssfx_water_blur_main->pTexture->surface_get(), rt_ssfx_temp->pTexture->surface_get());
+		}
 	}
 
 	if (!RImplementation.o.dx10_msaa)
@@ -518,7 +522,7 @@ void CRenderTarget::phase_combine()
 		phase_ssfx_fog_scattering();
 	}
 
-	if (RImplementation.o.ssfx_motionblur && ps_ssfx_motionblur.y > 0)
+	if (RImplementation.o.ssfx_motionblur && ps_ssfx_motionblur.y > 0 && !Device.m_SecondViewport.IsSVPActive())
 	{
 		phase_ssfx_motion_blur();
 	}
@@ -583,7 +587,7 @@ void CRenderTarget::phase_combine()
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0)
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !Device.m_SecondViewport.IsSVPActive())
 	{
 		phase_ssfx_taa();
 	}

@@ -122,9 +122,10 @@ void CRenderTarget::phase_ssfx_taa()
 		m_taaSVPLastFrame = Device.dwFrame;
 		m_taaSVPLastFov = Device.fFOV;
 
-		// PiP scopes do not present every frame and amplify temporal mismatch on
-		// water/foliage, so keep the SVP pass current-frame only.
-		history_valid = false;
+		// Keep a separate SVP history. It is reset only when the SVP stream is
+		// interrupted or the lens FOV changes; forcing current-frame-only here
+		// makes SSS TAA lose its temporal resolve and turns the lens into a soft,
+		// jittery image.
 	}
 
 	if (history_valid)
