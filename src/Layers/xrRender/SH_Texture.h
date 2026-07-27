@@ -54,7 +54,6 @@ public:
 		LoadKindOgm,
 		LoadKindAvi,
 		LoadKindSequence,
-		LoadKindGif,
 	};
 	void SetLoadSource(LPCSTR logical_name, LPCSTR resolved_path, ELoadKind kind);
 #endif

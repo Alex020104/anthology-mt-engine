@@ -810,8 +810,6 @@ void CResourceManager::ResolveTextureSource(LPCSTR name, LPCSTR canonical_level_
 				sourceInfo.loadKind = CTexture::LoadKindAvi;
 			else if (FS.exist(path, "$game_textures$", name, ".seq"))
 				sourceInfo.loadKind = CTexture::LoadKindSequence;
-			else if (FS.exist(path, "$game_textures$", name, ".gif"))
-				sourceInfo.loadKind = CTexture::LoadKindGif;
 
 			if (sourceInfo.loadKind != CTexture::LoadKindDds)
 				sourceInfo.resolvedPath = path;

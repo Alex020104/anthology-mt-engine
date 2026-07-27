@@ -161,23 +161,9 @@ void CTexture::apply_seq(u32 dwStage)
 	CHK_DX(HW.pDevice->SetTexture(dwStage,pSurface));
 };
 
-void CTexture::apply_gif(u32 dwStage)
-{
-	wait_for_loading();
-	if (gifPlayer->UpdateFrame())
-	{
-		const CGIFAnimationPlayer::Frame* const gifFrame = gifPlayer->GetActiveFrame();
-		R_ASSERT(gifFrame);
-
-		pSurface = gifFrame->surface;
-	}
-	CHK_DX(HW.pDevice->SetTexture(dwStage, pSurface));
-}
-
 void CTexture::apply_normal(u32 dwStage)
 {
 	wait_for_loading();
-	dwLastUsedFrame = Device.dwFrame;
 	CHK_DX(HW.pDevice->SetTexture(dwStage,pSurface));
 };
 

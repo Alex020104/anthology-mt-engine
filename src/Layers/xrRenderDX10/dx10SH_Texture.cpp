@@ -243,7 +243,6 @@ void CTexture::ProcessStaging()
 void CTexture::Apply(u32 dwStage)
 {
 	wait_for_loading();
-	dwLastUsedFrame = RDEVICE.dwFrame;
 
 	if (flags.bLoadedAsStaging)
 		ProcessStaging();
@@ -385,20 +384,6 @@ void CTexture::apply_seq(u32 dwStage)
 	Apply(dwStage);
 };
 
-void CTexture::apply_gif(u32 dwStage)
-{
-	wait_for_loading();
-	if (gifPlayer->UpdateFrame())
-	{
-		const CGIFAnimationPlayer::Frame* const gifFrame = gifPlayer->GetActiveFrame();
-		R_ASSERT(gifFrame);
-
-		pSurface = gifFrame->surface;
-		m_pSRView = gifFrame->srv;
-	}
-	Apply(dwStage);
-}
-
 void CTexture::apply_normal(u32 dwStage)
 {
 	wait_for_loading();
@@ -450,8 +435,6 @@ bool CTexture::CanLoadAsync() const
 			kind = LoadKindAvi;
 		else if (FS.exist(path, "$game_textures$", name.c_str(), ".seq"))
 			kind = LoadKindSequence;
-		else if (FS.exist(path, "$game_textures$", name.c_str(), ".gif"))
-			kind = LoadKindGif;
 		else
 			kind = LoadKindDds;
 		loadKind.store(kind, std::memory_order_release);
@@ -713,28 +696,6 @@ void CTexture::Load(bool queued)
 		}
 		pSurface = 0;
 		FS.r_close(_fs);
-	}
-	else if (kind == LoadKindGif || (kind == LoadKindUnknown && FS.exist(fn, "$game_textures$", name.c_str(), ".gif")))
-	{
-		if (kind == LoadKindGif)
-			xr_strcpy(fn, resolvedSource);
-		gifPlayer = xr_new<CGIFAnimationPlayer>();
-		if (!gifPlayer->Load(fn))
-		{
-			xr_delete(gifPlayer);
-			pSurface = nullptr;
-			m_pSRView = nullptr;
-		}
-		else
-		{
-			flags.MemoryUsage = gifPlayer->GetUsedMemory();
-
-			gifPlayer->Play();
-
-			const CGIFAnimationPlayer::Frame* const gifFrame = gifPlayer->GetActiveFrame();
-			pSurface = gifFrame->surface;
-			m_pSRView = gifFrame->srv;
-		}
 	}
 	else
 	{
