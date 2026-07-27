@@ -59,6 +59,8 @@ private:
 		u32 client_event_count;
 		u32 precache_frames;
 		u32 precache_level_calls;
+		u32 precache_world_rendered;
+		u32 precache_world_skipped;
 		u32 precache_loadscreen_calls;
 		u32 precache_present_calls;
 		u64 precache_wall_ticks;
@@ -112,9 +114,10 @@ public:
 	void LoadSessionPhaseEnd(ELoadSessionPhase phase);
 	void LoadSessionPrecacheBegin();
 	bool LoadSessionMeasurePrecache() const;
+	bool LoadSessionShouldRenderPrecacheWorld(u32 remaining, u32 total) const;
 	void LoadSessionRecordPrecacheFrame(u64 wall_ticks, u64 frame_move_ticks, u64 seq_render_ticks,
 		u64 end_ticks, u64 secondary_wait_ticks);
-	void LoadSessionRecordPrecacheLevel(u64 calculate_ticks, u64 render_ticks);
+	void LoadSessionRecordPrecacheLevel(u64 calculate_ticks, u64 render_ticks, bool world_rendered);
 	void LoadSessionRecordPrecacheLoadscreen(u64 ticks);
 	void LoadSessionRecordPrecachePresent(u64 ticks);
 	void LoadSessionRecordClientEvent(bool spawn, u16 destination, u16 type, const void* packet_data, u32 packet_size);

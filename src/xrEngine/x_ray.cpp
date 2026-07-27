@@ -1754,6 +1754,8 @@ void CApplication::LoadSessionPrecacheBegin()
 	m_load_session.precache_started_at = Device.TimerAsync();
 	m_load_session.precache_frames = 0;
 	m_load_session.precache_level_calls = 0;
+	m_load_session.precache_world_rendered = 0;
+	m_load_session.precache_world_skipped = 0;
 	m_load_session.precache_loadscreen_calls = 0;
 	m_load_session.precache_present_calls = 0;
 	m_load_session.precache_wall_ticks = 0;
@@ -1773,6 +1775,27 @@ bool CApplication::LoadSessionMeasurePrecache() const
 		Device.dwPrecacheFrame && Device.dwPrecacheTotal == 60;
 }
 
+bool CApplication::LoadSessionShouldRenderPrecacheWorld(u32 remaining, u32 total) const
+{
+	if (!m_load_session.active || !m_load_session.precache_started || !remaining || total != 60)
+		return true;
+
+	if (!xr_strcmp(m_load_session.scenario, "quickload") ||
+		!xr_strcmp(m_load_session.scenario, "visited-transition"))
+	{
+		return remaining == 1;
+	}
+
+	if (!xr_strcmp(m_load_session.scenario, "menu-save") ||
+		!xr_strcmp(m_load_session.scenario, "unseen-transition") ||
+		!xr_strcmp(m_load_session.scenario, "new-game"))
+	{
+		return (remaining - 1) % 5 == 0;
+	}
+
+	return true;
+}
+
 void CApplication::LoadSessionRecordPrecacheFrame(u64 wall_ticks, u64 frame_move_ticks,
 	u64 seq_render_ticks, u64 end_ticks, u64 secondary_wait_ticks)
 {
@@ -1787,12 +1810,17 @@ void CApplication::LoadSessionRecordPrecacheFrame(u64 wall_ticks, u64 frame_move
 	m_load_session.precache_secondary_wait_ticks += secondary_wait_ticks;
 }
 
-void CApplication::LoadSessionRecordPrecacheLevel(u64 calculate_ticks, u64 render_ticks)
+void CApplication::LoadSessionRecordPrecacheLevel(
+	u64 calculate_ticks, u64 render_ticks, bool world_rendered)
 {
 	if (!m_load_session.active || !m_load_session.precache_started)
 		return;
 
 	++m_load_session.precache_level_calls;
+	if (world_rendered)
+		++m_load_session.precache_world_rendered;
+	else
+		++m_load_session.precache_world_skipped;
 	m_load_session.precache_level_calculate_ticks += calculate_ticks;
 	m_load_session.precache_level_render_ticks += render_ticks;
 }
@@ -1918,11 +1946,13 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 	const u64 render_other_ticks = m_load_session.precache_seq_render_ticks > measured_render_ticks ?
 		m_load_session.precache_seq_render_ticks - measured_render_ticks : 0;
 	Msg("* [load-session] precache perf: frames=%u, calls(level/loadscreen/present)=%u/%u/%u, "
+		"world(rendered/skipped)=%u/%u, "
 		"wall=%.2f ms, frame move=%.2f ms, seq render=%.2f ms, level calculate/render=%.2f/%.2f ms, "
 		"loadscreen=%.2f ms, render other=%.2f ms, end/present=%.2f/%.2f ms, "
 		"secondary wait=%.2f ms, serial other=%.2f ms",
 		m_load_session.precache_frames, m_load_session.precache_level_calls,
 		m_load_session.precache_loadscreen_calls, m_load_session.precache_present_calls,
+		m_load_session.precache_world_rendered, m_load_session.precache_world_skipped,
 		to_ms(m_load_session.precache_wall_ticks), to_ms(m_load_session.precache_frame_move_ticks),
 		to_ms(m_load_session.precache_seq_render_ticks),
 		to_ms(m_load_session.precache_level_calculate_ticks),

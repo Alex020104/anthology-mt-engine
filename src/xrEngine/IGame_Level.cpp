@@ -267,6 +267,8 @@ void IGame_Level::OnRender()
 	if (!g_dedicated_server)
 	{
 		const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
+		const bool render_world = !measure_precache ||
+			pApp->LoadSessionShouldRenderPrecacheWorld(Device.dwPrecacheFrame, Device.dwPrecacheTotal);
 		u64 calculate_ticks = 0;
 		u64 render_ticks = 0;
 		{
@@ -276,6 +278,7 @@ void IGame_Level::OnRender()
 			if (measure_precache)
 				calculate_ticks = CPU::QPC() - started_at;
 		}
+		if (render_world)
 		{
 			PROF_EVENT("IGame_Level::OnRender: Render");
 			const u64 started_at = measure_precache ? CPU::QPC() : 0;
@@ -284,7 +287,7 @@ void IGame_Level::OnRender()
 				render_ticks = CPU::QPC() - started_at;
 		}
 		if (measure_precache)
-			pApp->LoadSessionRecordPrecacheLevel(calculate_ticks, render_ticks);
+			pApp->LoadSessionRecordPrecacheLevel(calculate_ticks, render_ticks, render_world);
 	}
 	else
 	{
