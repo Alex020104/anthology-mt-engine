@@ -155,6 +155,7 @@ void CMainMenu::ReadTextureInfo()
 {
 	FS_FileSet fset;
 	FS.file_list(fset, "$game_config$", FS_ListFiles, "ui\\textures_descr\\*.xml");
+	Msg("* [UI] texture descriptors: %u", static_cast<u32>(fset.size()));
 	FS_FileSetIt fit = fset.begin();
 	FS_FileSetIt fit_e = fset.end();
 
@@ -166,6 +167,7 @@ void CMainMenu::ReadTextureInfo()
 
 		CUITextureMaster::ParseShTexInfo(fn3);
 	}
+	Msg("* [UI] texture atlas entries: %u", CUITextureMaster::GetTextureCount());
 }
 
 extern ENGINE_API BOOL bShowPauseString;

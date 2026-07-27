@@ -666,7 +666,11 @@ void CResourceManager::QueueTextureLoad(const ref_texture& texture)
 			return;
 	}
 
-	const bool async = texture->CanLoadAsync();
+	// Keep regular UI, PiP/render-target and runtime texture creation on the
+	// render-owner path. Background DDS loading is only enabled inside the
+	// explicit level-load generation, where lifetime and the final barrier are
+	// controlled by the load session.
+	const bool async = generation && texture->CanLoadAsync();
 	const DWORD originThread = GetCurrentThreadId();
 	xrCriticalSectionGuard guard(textureLoadGuard);
 	if (resourceLoadGenerationStarting)

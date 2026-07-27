@@ -424,10 +424,13 @@ void CTexture::CancelQueuedLoad()
 
 bool CTexture::CanLoadAsync() const
 {
+	const shared_str& name = m_loadName.size() ? m_loadName : cName;
+	if (strstr(name.c_str(), "$user$"))
+		return false;
+
 	u32 kind = loadKind.load(std::memory_order_acquire);
 	if (!kind)
 	{
-		const shared_str& name = m_loadName.size() ? m_loadName : cName;
 		string_path path;
 		if (FS.exist(path, "$game_textures$", name.c_str(), ".ogm"))
 			kind = LoadKindOgm;

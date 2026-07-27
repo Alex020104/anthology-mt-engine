@@ -1266,10 +1266,6 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 	size_t M1 = Memory.mem_usage();
 
 	m_Flags.set(flags, TRUE);
-	m_initial_build = true;
-	m_initial_archive_index_ms = 0;
-	m_initial_files.clear_not_free();
-	const u64 initial_scan_started_at = GetTickCount64();
 	// scan root directory
 	bNoRecurse = TRUE;
 	string4096 buf;
@@ -1294,8 +1290,6 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 		const char *lp_add, *lp_def, *lp_capt;
 		string16 b_v;
 		string4096 temp;
-		xr_vector<xr_string> recursive_roots;
-		u32 skipped_scans = 0;
 
 		while (!pFSltx->eof())
 		{
@@ -1345,23 +1339,7 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 
 			FS_Path* P = new FS_Path((p_it != pathes.end()) ? p_it->second->m_Path : root, lp_add, lp_def, lp_capt, fl);
 			bNoRecurse = !(fl & FS_Path::flRecurse);
-			bool already_scanned = false;
-			for (const xr_string& scanned_root : recursive_roots)
-			{
-				if (!_strnicmp(P->m_Path, scanned_root.c_str(), scanned_root.size()))
-				{
-					already_scanned = true;
-					break;
-				}
-			}
-			if (already_scanned)
-				++skipped_scans;
-			else
-			{
-				Recurse(P->m_Path, bNoRecurse ? 0 : 1);
-				if (fl & FS_Path::flRecurse)
-					recursive_roots.emplace_back(P->m_Path);
-			}
+			Recurse(P->m_Path);
 			auto I = pathes.insert(std::make_pair(xr_strdup(id), P));
 #ifndef DEBUG
 			m_Flags.set(flCacheFiles, FALSE);
@@ -1369,12 +1347,10 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 
 			//CHECK_OR_EXIT		(I.second,"The file 'fsgame.ltx' is corrupted (it contains duplicated lines).\nPlease reinstall the game or fix the problem manually.");
 		}
-		Msg("FS: skipped %u duplicate alias scans", skipped_scans);
 		r_close(pFSltx);
 		R_ASSERT(path_exist("$app_data_root$"));
 	};
 
-	CommitInitialFiles(initial_scan_started_at);
 	Msg("File System Ready...");
 	size_t M2 = Memory.mem_usage();
 	Msg("FS: %d files cached %d archives, %lldKb memory used.", m_files.size(), m_archives.size(), (M2 - M1) / 1024);
@@ -1406,12 +1382,10 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 	{
 		xrLogger::OpenLogFile();
 	}
-	StartStartupLooseCache();
 }
 
 void CLocatorAPI::_destroy()
 {
-	StopStartupLooseCache();
 	xrLogger::CloseLog();
 
 	for (files_it I = m_files.begin(); I != m_files.end(); I++)
