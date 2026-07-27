@@ -194,8 +194,11 @@ void CHOM::Resume(StaticData& data)
 	data.tris = nullptr;
 	data.enabled = FALSE;
 	MT_frame_rendered.store(0, std::memory_order_release);
-	if (m_pModel && ps_r2_ls_flags.test(R2FLAG_EXP_MT_CALC))
-		Device.seqParallelRender.push_back(xr_make_delegate(this, &CHOM::MT_RENDER));
+
+	// HOM data is still prepared in parallel during level loading. Runtime HOM
+	// rendering stays on the main renderer thread: R4 calls Render() every frame,
+	// so registering MT_RENDER here duplicates the same work and races the shared
+	// collider/rasterizer state during the first frame after loading.
 }
 
 class pred_fb
