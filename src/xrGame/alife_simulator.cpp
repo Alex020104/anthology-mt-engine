@@ -121,6 +121,7 @@ CALifeSimulator::CALifeSimulator(xrServer* server, shared_str* command_line) :
 	load_part_timer.Start();
 	functor();
 	Msg("* [load-session/lua] start_game_callback=%u ms", load_part_timer.GetElapsed_ms());
+	ai().script_engine().LogSourcePrefetchStats();
 
 	load(p.m_game_or_spawn, !xr_strcmp(p.m_new_or_load, "load") ? false : true, !xr_strcmp(p.m_new_or_load, "new"));
 }
