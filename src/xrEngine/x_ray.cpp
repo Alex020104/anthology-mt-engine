@@ -1636,6 +1636,24 @@ extern ENGINE_API BOOL g_appLoaded = FALSE;
 extern ENGINE_API BOOL g_bootComplete = FALSE;
 //-AVO
 
+void CApplication::LoadSessionEnsureResourceGeneration()
+{
+	if (!Device.m_pRender || m_load_session.resource_generation)
+		return;
+
+	Msg("* [load-session] resource generation request");
+	const u64 generation = Device.m_pRender->ResourcesBeginLoadGeneration();
+	if (!generation)
+	{
+		Msg("* [load-session] resource generation deferred to render owner");
+		return;
+	}
+
+	m_load_session.resource_generation = generation;
+	Msg("* [load-session] resource generation=%llu ready",
+		static_cast<unsigned long long>(m_load_session.resource_generation));
+}
+
 void CApplication::LoadSessionBegin(LPCSTR scenario)
 {
 	if (m_load_session.active)
@@ -1657,13 +1675,7 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 		Msg("* [load-session] native generation=%llu ready workers=%u physical=%u logical=%u",
 			static_cast<unsigned long long>(m_load_session.native_generation),
 			native_executor.WorkerLimit(), physical_cores, logical_threads);
-		if (Device.m_pRender)
-		{
-			Msg("* [load-session] resource generation request");
-			m_load_session.resource_generation = Device.m_pRender->ResourcesBeginLoadGeneration();
-			Msg("* [load-session] resource generation=%llu ready",
-				static_cast<unsigned long long>(m_load_session.resource_generation));
-		}
+		LoadSessionEnsureResourceGeneration();
 	}
 	catch (...)
 	{
@@ -1687,6 +1699,8 @@ void CApplication::LoadSessionContinue(LPCSTR scenario)
 {
 	if (!m_load_session.active)
 		LoadSessionBegin(scenario);
+	else
+		LoadSessionEnsureResourceGeneration();
 }
 
 void CApplication::LoadSessionExpectReconnect()
@@ -1700,6 +1714,7 @@ void CApplication::LoadSessionStartEvent(LPCSTR scenario)
 	if (m_load_session.active && m_load_session.reconnect_pending)
 	{
 		m_load_session.reconnect_pending = false;
+		LoadSessionEnsureResourceGeneration();
 		return;
 	}
 	LoadSessionBegin(scenario);
@@ -2003,6 +2018,9 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 
 void CApplication::LoadBegin()
 {
+	if (m_load_session.active)
+		LoadSessionEnsureResourceGeneration();
+
 	ll_dwReference++;
 	if (1 == ll_dwReference)
 	{

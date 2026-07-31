@@ -303,6 +303,11 @@ void dxRenderDeviceRender::ResourcesPrefetchCreateTexture(LPCSTR name, LPCSTR ca
 
 u64 dxRenderDeviceRender::ResourcesBeginLoadGeneration()
 {
+	// Level-change and quickload requests originate on the game thread. The
+	// resource generation adopts queued owner textures, so it must be opened by
+	// the render owner later when the corresponding engine event is handled.
+	if (!Resources->IsTextureOwnerThread())
+		return 0;
 	return Resources->BeginLoadGeneration();
 }
 

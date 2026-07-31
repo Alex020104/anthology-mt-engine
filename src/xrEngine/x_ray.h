@@ -85,6 +85,7 @@ private:
 	EVENT eStartMPDemo;
 
 	void Level_Append(LPCSTR lname);
+	void LoadSessionEnsureResourceGeneration();
 public:
 	CGameFont* pFontSystem;
 
