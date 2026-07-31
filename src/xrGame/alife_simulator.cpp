@@ -118,9 +118,12 @@ CALifeSimulator::CALifeSimulator(xrServer* server, shared_str* command_line) :
 	::luabind::functor<void> functor;
 	R_ASSERT2(ai().script_engine().functor(start_game_callback,functor), "failed to get start game callback");
 	ai().script_engine().LogSourcePrefetchStats();
+	ai().script_engine().ResetLoadProfile();
 	load_part_timer.Start();
 	functor();
-	Msg("* [load-session/lua] start_game_callback=%u ms", load_part_timer.GetElapsed_ms());
+	const u32 start_game_callback_ms = load_part_timer.GetElapsed_ms();
+	Msg("* [load-session/lua] start_game_callback=%u ms", start_game_callback_ms);
+	ai().script_engine().LogLoadProfile(start_game_callback_ms);
 
 	load(p.m_game_or_spawn, !xr_strcmp(p.m_new_or_load, "load") ? false : true, !xr_strcmp(p.m_new_or_load, "new"));
 }

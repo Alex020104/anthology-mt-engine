@@ -335,7 +335,7 @@ void CSheduler::Pop()
 	PopImpl();
 }
 
-int SchedulerBatchSize = 128;
+int SchedulerBatchSize = 256;
 BOOL SchedulerLog = FALSE;
 void CSheduler::ProcessStep()
 {

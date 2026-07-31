@@ -91,10 +91,8 @@ CDetailManager::CDetailManager()
 	m_time_rot_2 = 0;
 	m_time_pos = 0;
 	m_global_time_old = 0;
-	m_frame_calc_started = 0;
 	m_frame_calc = 0;
-	m_frame_rendered = 0;
-	bWait = false;
+	m_frame_rendered.store(0, std::memory_order_relaxed);
 
 #ifdef DETAIL_RADIUS
 	// KD: variable detail radius
@@ -582,25 +580,9 @@ void CDetailManager::Render()
 	if (!psDeviceFlags.is(rsDetails)) return;
 #endif
 
-	if (m_frame_calc != RDEVICE.dwFrame)
-	{
-		if (m_frame_calc_started != RDEVICE.dwFrame)
-		{
-			MT_CALC();
-		}
-
-		while (m_frame_calc != RDEVICE.dwFrame && m_frame_calc_started == RDEVICE.dwFrame)
-		{
-			PROF_EVENT("Wait details");
-			Sleep(0);
-		}
-	}
-
-	while (bWait)
-	{
-		PROF_EVENT("Wait details");
-		Sleep(0);
-	}
+	// Whichever thread reaches this first prepares the frame. The critical
+	// section is also the render-side barrier when the worker is already busy.
+	MT_CALC();
 
 	RDEVICE.Statistic->RenderDUMP_DT_Render.Begin();
 	g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = 1.0f; //--#SM+#-- Флaa нaчaлa ?aндa?a o?aвu [begin of grass render]
@@ -621,7 +603,7 @@ void CDetailManager::Render()
 	g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = 0.0f; //--#SM+#-- Флaa eонцa ?aндa?a o?aвu [end of grass render]	
 	
 	RDEVICE.Statistic->RenderDUMP_DT_Render.End();
-	m_frame_rendered = RDEVICE.dwFrame;
+	m_frame_rendered.store(RDEVICE.dwFrame, std::memory_order_release);
 }
 
 void __stdcall CDetailManager::MT_CALC()
@@ -634,29 +616,11 @@ void __stdcall CDetailManager::MT_CALC()
 	if (!psDeviceFlags.is(rsDetails)) return;
 #endif
 
-	const u32 frame = RDEVICE.dwFrame;
-	if (m_frame_calc == frame)
-		return;
+	xrCriticalSectionGuard guard(m_mt_calc_guard);
+	const u32 current_frame = RDEVICE.dwFrame;
+	const u32 frame_rendered = m_frame_rendered.load(std::memory_order_acquire);
 
-	for (;;)
-	{
-		const u32 started = m_frame_calc_started;
-		if (started == frame)
-			return;
-
-		const LONG previous = InterlockedCompareExchange(
-			reinterpret_cast<volatile LONG*>(&m_frame_calc_started),
-			static_cast<LONG>(frame),
-			static_cast<LONG>(started)
-		);
-
-		if (previous == static_cast<LONG>(started))
-			break;
-	}
-
-	bWait = true;
-
-	if ((m_frame_rendered + 1) == frame)
+	if (m_frame_calc != current_frame && (frame_rendered + 1) == current_frame)
 	{
 		Fvector EYE = RDEVICE.vCameraPosition_saved;
 
@@ -668,10 +632,8 @@ void __stdcall CDetailManager::MT_CALC()
 		RDEVICE.Statistic->RenderDUMP_DT_Cache.End();
 
 		UpdateVisibleM();
+		m_frame_calc = current_frame;
 	}
-
-	m_frame_calc = frame;
-	bWait = false;
 }
 
 void CDetailManager::details_clear()

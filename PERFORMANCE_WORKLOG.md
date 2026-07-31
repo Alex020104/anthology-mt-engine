@@ -97,3 +97,22 @@ architecture, so it cannot be merged or copied wholesale into Anomaly. The
 safe route is the one used by Monolith: backport isolated algorithms and their
 follow-up fixes. Current candidates are limited to compatible containers,
 allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
+
+## Candidate v45 — runtime barrier and load profiler
+
+- Adapted the current Monolith details barrier: one guarded per-frame
+  calculation replaces overlapping volatile flags and two `Sleep(0)` loops.
+  Anthology's load/unload `Suspend`/`Publish` protection is retained.
+- Updated the scheduler default to 256 and exposed the upstream-compatible
+  upper range. RT objects remain on the main thread.
+- Backported IX-Ray particle-action capacity reservation (source commit
+  `04459cdaf9665857a2353351ac8bd928d12306a8`).
+- Added owner-thread Lua load profiling. Each load session reports aggregate
+  script self-time and the 20 slowest modules without changing callback order.
+- Routine per-script debug spam is now opt-in with `-script_load_log`; errors,
+  load-session diagnostics, and the rest of `-dbg` remain enabled.
+- `DX11-AVX` build completed successfully. Candidate hashes:
+  - EXE: `E9940BD3F601F6F6F368A361BE7DF51D39EA07344AB3068FC3AC4F5E8B4CDEC1`;
+  - PDB: `9FDACAD822543CAE5743B50BED03BE55FFCA1E19AAD2B74555C93B5C0FAAC925`.
+- Local `user.ltx` still contains `scheduler_batch_size 128`; installation of
+  this candidate will back it up and set it to the upstream default of 256.

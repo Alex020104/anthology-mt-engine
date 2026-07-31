@@ -102,6 +102,7 @@ enum class ECoreParams : u8
 	savescreenshots,
 	lua_studio,
 	clear_cs_constants,
+	script_load_log,
 
     //.peak volumetrics
     volumetric1,

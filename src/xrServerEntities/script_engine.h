@@ -81,6 +81,23 @@ private:
 	string128 m_last_no_file;
 	u32 m_last_no_file_length;
 
+	struct ScriptLoadProfileEntry
+	{
+		xr_string name;
+		u64 total_ticks = 0;
+		u64 self_ticks = 0;
+	};
+
+	struct ActiveScriptLoad
+	{
+		u64 started_at = 0;
+		u64 child_ticks = 0;
+	};
+
+	xr_vector<ScriptLoadProfileEntry> m_script_load_profile;
+	xr_vector<ActiveScriptLoad> m_active_script_loads;
+	bool m_script_load_profile_active;
+
 #ifdef USE_LUA_FUNCTOR_CACHE
 
 	// Functor cache
@@ -148,6 +165,8 @@ public:
 	void process_file(LPCSTR file_name, bool reload_modules);
 	bool function_object(LPCSTR function_to_call, ::luabind::object& object, int type = LUA_TFUNCTION);
 	void register_script_classes();
+	void ResetLoadProfile();
+	void LogLoadProfile(u32 callback_time_ms);
 	IC void parse_script_namespace(LPCSTR function_to_call, LPSTR name_space, u32 const namespace_size, LPSTR function,
 	                               u32 const function_size);
 

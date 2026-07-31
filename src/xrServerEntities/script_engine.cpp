@@ -17,6 +17,14 @@
 #include <set>
 #include <luabind/class_info.hpp>
 
+namespace
+{
+double script_ticks_to_ms(u64 ticks)
+{
+	return CPU::qpc_freq ? (1000.0 * static_cast<double>(ticks) / static_cast<double>(CPU::qpc_freq)) : 0.0;
+}
+}
+
 #ifdef USE_DEBUGGER
 #	ifndef USE_LUA_STUDIO
 #		include "script_debugger.h"
@@ -141,6 +149,7 @@ CScriptEngine::CScriptEngine()
 	m_reload_modules = false;
 	m_last_no_file_length = 0;
 	*m_last_no_file = 0;
+	m_script_load_profile_active = false;
 
 #ifdef USE_LUA_FUNCTOR_CACHE
 	m_cache_valid = true;
@@ -530,12 +539,72 @@ void CScriptEngine::process_file_if_exists(LPCSTR file_name, bool warn_if_not_ex
 			return;
 		}
 		//#ifndef MASTER_GOLD
-		if (Core.isDebug())
+		if (Core.isDebug() && Core.ParamsData.test(ECoreParams::script_load_log))
 			Msg("* loading script %s", S1);
 		//#endif // MASTER_GOLD
 		m_reload_modules = false;
+
+		if (!m_script_load_profile_active)
+		{
+			load_file_into_namespace(S, *file_name ? file_name : "_G");
+			return;
+		}
+
+		ActiveScriptLoad active;
+		active.started_at = CPU::QPC();
+		m_active_script_loads.push_back(active);
+
 		load_file_into_namespace(S, *file_name ? file_name : "_G");
+
+		const u64 elapsed_ticks = CPU::QPC() - m_active_script_loads.back().started_at;
+		const u64 child_ticks = m_active_script_loads.back().child_ticks;
+		m_active_script_loads.pop_back();
+		if (!m_active_script_loads.empty())
+			m_active_script_loads.back().child_ticks += elapsed_ticks;
+
+		ScriptLoadProfileEntry entry;
+		entry.name = *file_name ? file_name : "_G";
+		entry.total_ticks = elapsed_ticks;
+		entry.self_ticks = elapsed_ticks > child_ticks ? elapsed_ticks - child_ticks : 0;
+		m_script_load_profile.push_back(std::move(entry));
 	}
+}
+
+void CScriptEngine::ResetLoadProfile()
+{
+	m_script_load_profile.clear_not_free();
+	m_active_script_loads.clear_not_free();
+	m_script_load_profile_active = true;
+}
+
+void CScriptEngine::LogLoadProfile(u32 callback_time_ms)
+{
+	m_script_load_profile_active = false;
+
+	u64 self_ticks = 0;
+	for (const ScriptLoadProfileEntry& entry : m_script_load_profile)
+		self_ticks += entry.self_ticks;
+
+	const double script_self_ms = script_ticks_to_ms(self_ticks);
+	const double callback_other_ms = std::max(0.0, static_cast<double>(callback_time_ms) - script_self_ms);
+	Msg("* [load-session/lua-profile] modules=%zu script-self=%.2f ms callback-other=%.2f ms",
+		m_script_load_profile.size(), script_self_ms, callback_other_ms);
+
+	std::sort(m_script_load_profile.begin(), m_script_load_profile.end(),
+		[](const ScriptLoadProfileEntry& left, const ScriptLoadProfileEntry& right)
+		{
+			return left.self_ticks > right.self_ticks;
+		});
+
+	const size_t top_count = std::min<size_t>(20, m_script_load_profile.size());
+	for (size_t index = 0; index < top_count; ++index)
+	{
+		const ScriptLoadProfileEntry& entry = m_script_load_profile[index];
+		Msg("* [load-session/lua-profile] #%02zu self=%.2f ms total=%.2f ms module=%s",
+			index + 1, script_ticks_to_ms(entry.self_ticks), script_ticks_to_ms(entry.total_ticks), entry.name.c_str());
+	}
+
+	m_active_script_loads.clear_not_free();
 }
 
 void CScriptEngine::process_file(LPCSTR file_name)
