@@ -455,10 +455,6 @@ void CScriptEngine::init()
 	// Lua execution remains owned by this VM thread. Only immutable source
 	// bytes are read and decompressed ahead of the first save load.
 	CScriptStorage::StartSourcePrefetch();
-	// Compile, but do not execute, cached script chunks on this VM owner thread.
-	// The process-local bytecode cache moves parser work before the main menu
-	// without creating the unsafe parallel Lua states used by the old experiment.
-	CScriptStorage::PrepareSourceBytecode(lua());
 }
 
 void CScriptEngine::remove_script_process(const EScriptProcessors& process_id)

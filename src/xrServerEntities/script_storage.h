@@ -93,7 +93,6 @@ public:
 	static bool print_output(lua_State* L, LPCSTR caScriptName, int iErorCode = 0);
 	static void print_error(lua_State* L, int iErrorCode);
 	static void StartSourcePrefetch();
-	static void PrepareSourceBytecode(lua_State* L);
 	static void LogSourcePrefetchStats();
 	virtual void on_error(lua_State* L) = 0;
     void DebuggerAttach();

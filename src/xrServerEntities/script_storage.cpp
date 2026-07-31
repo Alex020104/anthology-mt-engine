@@ -16,8 +16,6 @@
 #include <sstream>
 #include <regex>
 
-extern LPCSTR file_header;
-
 namespace
 {
 struct ScriptSourceEntry
@@ -25,40 +23,18 @@ struct ScriptSourceEntry
 	std::mutex guard;
 	std::condition_variable ready;
 	xr_vector<char> source;
-	xr_vector<char> bytecode;
-	xr_string bytecode_namespace;
 	bool loading = false;
 	bool complete = false;
 	bool success = false;
-	bool bytecode_complete = false;
 };
-
-struct ScriptPrefetchItem
-{
-	xr_string path;
-	xr_string name_space;
-};
-
-int ScriptBytecodeWriter(lua_State*, const void* data, size_t size, void* context)
-{
-	if (!size)
-		return 0;
-
-	xr_vector<char>& bytecode = *static_cast<xr_vector<char>*>(context);
-	const size_t offset = bytecode.size();
-	bytecode.resize(offset + size);
-	CopyMemory(bytecode.data() + offset, data, size);
-	return 0;
-}
 
 class ScriptSourceCache final : xray::noncopyable
 {
 	std::mutex entries_guard;
 	xr_map<xr_string, std::shared_ptr<ScriptSourceEntry>> entries;
-	xr_vector<ScriptPrefetchItem> prefetch_queue;
+	xr_vector<xr_string> prefetch_queue;
 	xr_task_group prefetch_tasks;
 	std::atomic_bool started{false};
-	std::atomic_bool bytecode_started{false};
 	std::atomic_uint32_t next_file{0};
 	std::atomic_uint32_t total_files{0};
 	std::atomic_uint32_t ready_files{0};
@@ -66,12 +42,7 @@ class ScriptSourceCache final : xray::noncopyable
 	std::atomic_uint32_t active_workers{0};
 	std::atomic_uint32_t demand_misses{0};
 	std::atomic_uint32_t demand_waits{0};
-	std::atomic_uint32_t bytecode_ready{0};
-	std::atomic_uint32_t bytecode_failed{0};
-	std::atomic_uint32_t bytecode_hits{0};
-	std::atomic_uint32_t bytecode_misses{0};
 	std::atomic_uint64_t ready_bytes{0};
-	std::atomic_uint64_t bytecode_bytes{0};
 	u64 started_at = 0;
 
 	std::shared_ptr<ScriptSourceEntry> FindOrCreate(LPCSTR path)
@@ -138,74 +109,6 @@ class ScriptSourceCache final : xray::noncopyable
 		return success;
 	}
 
-	bool CompileBytecode(const ScriptPrefetchItem& item, const std::shared_ptr<ScriptSourceEntry>& entry,
-		lua_State* compiler)
-	{
-		if (!compiler || !file_header)
-			return false;
-
-		xr_vector<char> compile_source;
-		if (!xr_strcmp(item.name_space.c_str(), "_G"))
-			compile_source.assign(entry->source.begin(), entry->source.end());
-		else
-		{
-			string512 name_space, prefix, suffix, header;
-			xr_strcpy(name_space, item.name_space.c_str());
-			prefix[0] = 0;
-			suffix[0] = 0;
-
-			LPSTR segment = name_space;
-			for (u32 depth = 0;; ++depth)
-			{
-				LPSTR separator = strchr(segment, '.');
-				if (separator)
-					*separator = 0;
-				if (!segment[0])
-					return false;
-				if (depth)
-					xr_strcat(prefix, sizeof(prefix), "{");
-				xr_strcat(prefix, sizeof(prefix), segment);
-				xr_strcat(prefix, sizeof(prefix), "=");
-				if (depth)
-					xr_strcat(suffix, sizeof(suffix), "}");
-				if (!separator)
-					break;
-				segment = separator + 1;
-			}
-
-			xr_sprintf(header, file_header, item.name_space.c_str(), prefix, suffix);
-			const size_t header_size = xr_strlen(header);
-			compile_source.reserve(header_size + entry->source.size());
-			compile_source.insert(compile_source.end(), header, header + header_size);
-			compile_source.insert(compile_source.end(), entry->source.begin(), entry->source.end());
-		}
-
-		xr_string chunk_name = "@";
-		chunk_name += item.path;
-		const int stack_top = lua_gettop(compiler);
-		if (luaL_loadbuffer(compiler, compile_source.data(), compile_source.size(), chunk_name.c_str()))
-		{
-			lua_settop(compiler, stack_top);
-			std::lock_guard<std::mutex> lock(entry->guard);
-			entry->bytecode_complete = true;
-			return false;
-		}
-
-		xr_vector<char> compiled;
-		const bool success = !lua_dump(compiler, ScriptBytecodeWriter, &compiled) && !compiled.empty();
-		lua_settop(compiler, stack_top);
-		{
-			std::lock_guard<std::mutex> lock(entry->guard);
-			if (success)
-			{
-				entry->bytecode.swap(compiled);
-				entry->bytecode_namespace = item.name_space;
-			}
-			entry->bytecode_complete = true;
-		}
-		return success;
-	}
-
 	void Worker()
 	{
 		for (;;)
@@ -214,9 +117,9 @@ class ScriptSourceCache final : xray::noncopyable
 			if (index >= prefetch_queue.size())
 				break;
 
-			const ScriptPrefetchItem& item = prefetch_queue[index];
-			const auto entry = FindOrCreate(item.path.c_str());
-			EnsureLoaded(item.path.c_str(), entry, false);
+			const xr_string& path = prefetch_queue[index];
+			const auto entry = FindOrCreate(path.c_str());
+			EnsureLoaded(path.c_str(), entry, false);
 		}
 
 		if (active_workers.fetch_sub(1, std::memory_order_acq_rel) == 1)
@@ -251,23 +154,6 @@ public:
 		return EnsureLoaded(path, result, true);
 	}
 
-	bool TryGetBytecode(const std::shared_ptr<ScriptSourceEntry>& entry, LPCSTR name_space,
-		LPCSTR& data, size_t& size)
-	{
-		std::lock_guard<std::mutex> lock(entry->guard);
-		if (entry->bytecode_complete && !entry->bytecode.empty() && name_space &&
-			!_stricmp(entry->bytecode_namespace.c_str(), name_space))
-		{
-			data = entry->bytecode.data();
-			size = entry->bytecode.size();
-			bytecode_hits.fetch_add(1, std::memory_order_relaxed);
-			return true;
-		}
-
-		bytecode_misses.fetch_add(1, std::memory_order_relaxed);
-		return false;
-	}
-
 	void StartPrefetch()
 	{
 		bool expected = false;
@@ -281,13 +167,7 @@ public:
 		{
 			string_path path;
 			FS.update_path(path, "$game_scripts$", script.name.c_str());
-			xr_string name_space = script.name;
-			const size_t extension = name_space.rfind(".script");
-			if (extension != xr_string::npos)
-				name_space.erase(extension);
-			if (!_stricmp(name_space.c_str(), "_g"))
-				name_space = "_G";
-			prefetch_queue.push_back({path, name_space});
+			prefetch_queue.emplace_back(path);
 		}
 
 		total_files.store(static_cast<u32>(prefetch_queue.size()), std::memory_order_release);
@@ -302,50 +182,16 @@ public:
 			prefetch_tasks.run([this] { Worker(); });
 	}
 
-	void PrepareBytecode(lua_State* compiler)
-	{
-		bool expected = false;
-		if (!compiler || !bytecode_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
-			return;
-
-		prefetch_tasks.wait();
-		CTimer timer;
-		timer.Start();
-		for (const ScriptPrefetchItem& item : prefetch_queue)
-		{
-			const auto entry = FindOrCreate(item.path.c_str());
-			if (!EnsureLoaded(item.path.c_str(), entry, false) || !CompileBytecode(item, entry, compiler))
-			{
-				bytecode_failed.fetch_add(1, std::memory_order_relaxed);
-				continue;
-			}
-
-			bytecode_ready.fetch_add(1, std::memory_order_relaxed);
-			bytecode_bytes.fetch_add(entry->bytecode.size(), std::memory_order_relaxed);
-		}
-
-		Msg("* [lua-bytecode-cache] ready=%u/%u failed=%u bytes=%llu KB elapsed=%u ms mode=main-thread",
-			bytecode_ready.load(std::memory_order_relaxed), total_files.load(std::memory_order_relaxed),
-			bytecode_failed.load(std::memory_order_relaxed),
-			static_cast<unsigned long long>(bytecode_bytes.load(std::memory_order_relaxed) / 1024),
-			timer.GetElapsed_ms());
-	}
-
 	void LogStats() const
 	{
-		Msg("* [lua-source-cache] status ready=%u/%u failed=%u active=%u demand-misses=%u demand-waits=%u bytes=%llu KB bytecode=%u failed=%u hits=%u misses=%u bytecode-bytes=%llu KB",
+		Msg("* [lua-source-cache] status ready=%u/%u failed=%u active=%u demand-misses=%u demand-waits=%u bytes=%llu KB",
 			ready_files.load(std::memory_order_relaxed),
 			total_files.load(std::memory_order_relaxed),
 			failed_files.load(std::memory_order_relaxed),
 			active_workers.load(std::memory_order_relaxed),
 			demand_misses.load(std::memory_order_relaxed),
 			demand_waits.load(std::memory_order_relaxed),
-			static_cast<unsigned long long>(ready_bytes.load(std::memory_order_relaxed) / 1024),
-			bytecode_ready.load(std::memory_order_relaxed),
-			bytecode_failed.load(std::memory_order_relaxed),
-			bytecode_hits.load(std::memory_order_relaxed),
-			bytecode_misses.load(std::memory_order_relaxed),
-			static_cast<unsigned long long>(bytecode_bytes.load(std::memory_order_relaxed) / 1024));
+			static_cast<unsigned long long>(ready_bytes.load(std::memory_order_relaxed) / 1024));
 	}
 };
 } // namespace
@@ -649,11 +495,6 @@ CScriptStorage::~CScriptStorage()
 void CScriptStorage::StartSourcePrefetch()
 {
 	ScriptSourceCache::Instance().StartPrefetch();
-}
-
-void CScriptStorage::PrepareSourceBytecode(lua_State* L)
-{
-	ScriptSourceCache::Instance().PrepareBytecode(L);
 }
 
 void CScriptStorage::LogSourcePrefetchStats()
@@ -1338,21 +1179,11 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 	strconcat(sizeof(l_caLuaFileName), l_caLuaFileName, "@", caScriptName);
 
 	bool bufferLoaded = false;
-	if (!unlocalPerformed)
-	{
-		LPCSTR bytecode = nullptr;
-		size_t bytecodeSize = 0;
-		if (ScriptSourceCache::Instance().TryGetBytecode(cached_source, caNameSpaceName, bytecode, bytecodeSize))
-		{
-			const int bytecodeError = luaL_loadbuffer(lua(), bytecode, bytecodeSize, l_caLuaFileName);
-			if (!bytecodeError)
-				bufferLoaded = true;
-			else
-				lua_pop(lua(), 1);
-		}
-	}
-	if (!bufferLoaded)
+	if (unlocalPerformed) {
 		bufferLoaded = load_buffer(lua(), scriptContents, scriptLength, l_caLuaFileName, caNameSpaceName);
+	} else {
+		bufferLoaded = load_buffer(lua(), scriptContents, scriptLength, l_caLuaFileName, caNameSpaceName);
+	}
 
 	if (!bufferLoaded)
 	{
