@@ -28,7 +28,11 @@ IGame_Level::IGame_Level()
 	bReady = false;
 	pCurrentEntity = NULL;
 	pCurrentViewEntity = NULL;
-	Device.DumpResourcesMemoryUsage();
+	// A full registry dump emits thousands of lines on large modpacks and can
+	// race level-load workers reading resource metadata. It is diagnostic-only,
+	// so keep it outside an active save/level load session.
+	if (!pApp || !pApp->LoadSessionActive())
+		Device.DumpResourcesMemoryUsage();
 }
 
 //#include "resourcemanager.h"

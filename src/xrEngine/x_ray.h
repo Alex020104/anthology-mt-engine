@@ -124,7 +124,6 @@ public:
 	void LoadSessionTryFinish(bool level_ready, bool control_ready, bool queues_drained);
 	bool LoadSessionActive() const { return m_load_session.active; }
 	bool LoadSessionPrecacheStarted() const { return m_load_session.precache_started; }
-	bool LoadSessionCanReuseMenuLua() const;
 
 	virtual void OnEvent(EVENT E, u64 P1, u64 P2);
 

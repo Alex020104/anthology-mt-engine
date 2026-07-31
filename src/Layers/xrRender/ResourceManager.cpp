@@ -893,17 +893,17 @@ u64 CResourceManager::BeginLoadGeneration()
 	xr_vector<ref_texture> adoptedRequests;
 	xr_vector<ref_texture> crossedRequests;
 	ResourceLoadGenerationPtr startedGeneration;
+	u32 adoptedCount;
 	u64 result;
 	{
 		xrCriticalSectionGuard guard(textureLoadGuard);
 		R_ASSERT2(!activeResourceLoadGeneration && !resourceLoadGenerationStarting,
 			"Previous texture load generation is still active");
 
-		// Textures requested by the main menu used to be drained synchronously here.
-		// On large modpacks that can stall a save load before the loading session has
-		// even started. Move those requests into the explicit load generation instead:
-		// regular DDS files become generation-owned worker jobs, while video, sequence
-		// and runtime ($user$) textures still stay on the render-owner queue.
+		// Do not drain the main-menu queue before the measured load session and do
+		// not reclassify its live texture objects as worker jobs. The loading screen
+		// and resource registry can still reference those objects. Adopt them into
+		// the generation's owner queue; new level DDS requests remain parallel.
 		resourceLoadGenerationStarting = true;
 		if (++nextResourceLoadGeneration == 0)
 			++nextResourceLoadGeneration;
@@ -922,18 +922,20 @@ u64 CResourceManager::BeginLoadGeneration()
 		resourceLoadGenerationStarting = false;
 		adoptedRequests.swap(m_ownerTextureLoads);
 		crossedRequests.swap(m_generationStartingTextureLoads);
+		adoptedCount = static_cast<u32>(adoptedRequests.size());
 		textureLoadSerial = 0;
 		result = nextResourceLoadGeneration;
 	}
 	try
 	{
-		for (const ref_texture& texture : adoptedRequests)
+		if (adoptedCount)
 		{
-			// These references are already in the queued state because they came
-			// from m_ownerTextureLoads. Reset only that state, then let the normal
-			// generation-aware path classify and schedule them safely.
-			texture->CancelQueuedLoad();
-			QueueTextureLoad(texture);
+			xrCriticalSectionGuard guard(textureLoadGuard);
+			startedGeneration->ownerTextureLoads.swap(adoptedRequests);
+			startedGeneration->pending += adoptedCount;
+			startedGeneration->serial += adoptedCount;
+			ResetEvent(startedGeneration->completed);
+			SetEvent(startedGeneration->ownerWorkAvailable);
 		}
 		for (const ref_texture& texture : crossedRequests)
 			QueueTextureLoad(texture);
@@ -950,7 +952,7 @@ u64 CResourceManager::BeginLoadGeneration()
 		std::rethrow_exception(failure);
 	}
 	Msg("* [load-session/resource] generation=%llu adopted=%u crossed=%u",
-		static_cast<unsigned long long>(result), static_cast<u32>(adoptedRequests.size()),
+		static_cast<unsigned long long>(result), adoptedCount,
 		static_cast<u32>(crossedRequests.size()));
 	return result;
 }

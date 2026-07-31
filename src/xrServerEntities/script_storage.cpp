@@ -30,6 +30,35 @@ extern "C"
 	int luaopen_marshal(lua_State* L);
 
 }
+
+static xr_map<xr_string, xr_vector<char>> g_script_bytecode_cache;
+static u32 g_script_bytecode_cache_hits = 0;
+static u32 g_script_bytecode_cache_misses = 0;
+
+static int script_bytecode_writer(lua_State*, const void* data, size_t size, void* context)
+{
+	if (!size)
+		return 0;
+
+	xr_vector<char>& bytecode = *static_cast<xr_vector<char>*>(context);
+	const size_t offset = bytecode.size();
+	bytecode.resize(offset + size);
+	CopyMemory(bytecode.data() + offset, data, size);
+	return 0;
+}
+
+void reset_script_bytecode_cache_stats()
+{
+	g_script_bytecode_cache_hits = 0;
+	g_script_bytecode_cache_misses = 0;
+}
+
+void get_script_bytecode_cache_stats(u32& hits, u32& misses)
+{
+	hits = g_script_bytecode_cache_hits;
+	misses = g_script_bytecode_cache_misses;
+}
+
 struct luajit
 {
 	static void open_lib(lua_State* L, pcstr module_name, lua_CFunction function)
@@ -713,6 +742,40 @@ bool CScriptStorage::parse_namespace(LPCSTR caNamespaceName, LPSTR b, u32 const 
 bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LPCSTR caScriptName,
                                  LPCSTR caNameSpaceName)
 {
+	u64 sourceHash = 1469598103934665603ull;
+	for (size_t index = 0; index < tSize; ++index)
+	{
+		sourceHash ^= static_cast<u8>(caBuffer[index]);
+		sourceHash *= 1099511628211ull;
+	}
+
+	string64 sourceIdentity;
+	xr_sprintf(sourceIdentity, "%llu:%llu", static_cast<unsigned long long>(tSize),
+		static_cast<unsigned long long>(sourceHash));
+	xr_string bytecodeKey = caScriptName ? caScriptName : "";
+	bytecodeKey += "\x1f";
+	bytecodeKey += caNameSpaceName ? caNameSpaceName : "_G";
+	bytecodeKey += "\x1f";
+	bytecodeKey += sourceIdentity;
+
+	auto cachedBytecode = g_script_bytecode_cache.find(bytecodeKey);
+	if (cachedBytecode != g_script_bytecode_cache.end() && !cachedBytecode->second.empty())
+	{
+		const int cachedError = luaL_loadbuffer(L, cachedBytecode->second.data(), cachedBytecode->second.size(),
+			caScriptName);
+		if (!cachedError)
+		{
+			++g_script_bytecode_cache_hits;
+			return true;
+		}
+
+		// A cache entry is process-local, but fall back to source if LuaJIT
+		// rejects it instead of turning a recoverable cache miss into a crash.
+		lua_pop(L, 1);
+		g_script_bytecode_cache.erase(cachedBytecode);
+	}
+
+	++g_script_bytecode_cache_misses;
 	int l_iErrorCode;
 	if (caNameSpaceName && xr_strcmp("_G", caNameSpaceName))
 	{
@@ -782,6 +845,10 @@ bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LP
 		on_error(L);
 		return (false);
 	}
+
+	xr_vector<char> bytecode;
+	if (!lua_dump(L, script_bytecode_writer, &bytecode) && !bytecode.empty())
+		g_script_bytecode_cache[bytecodeKey].swap(bytecode);
 	return (true);
 }
 
