@@ -179,3 +179,23 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The active R.A.K. script was backed up before installation under
   `webcache/modpack_v46_patch_backup_20260731_213517`.
 - The game executable was not launched during validation.
+
+### v46 installation
+
+- Full pre-install engine/config backup:
+  `webcache/engine_v46_install_backup_20260731_213743` (17 files,
+  663,901,214 bytes). It contains the complete previous `bin` and `user.ltx`.
+- Installed only `AnomalyDX11AVX.exe` and `AnomalyDX11AVX.pdb`; installed hashes
+  match the candidate hashes above. Other renderer executables and DLLs were
+  not changed.
+- Enabled the existing owner-thread Lua functor lookup cache with
+  `lua_use_functor_cache 1`. The setting is backed up and remains a one-line
+  runtime fallback; `lua_busy_hands_debug 1` is retained for object safety.
+- Kept `mt_level_call`, `mt_task_manager`, and `mt_ui` disabled. The standard
+  engine MT mask, `r2_mt`, parallel Lua GC, and scheduler batch 256 remain
+  enabled.
+- Installed active R.A.K. script hash:
+  `AE0C06BC2DA335AE3022039D0C9D66A59A5346E9117113CC25CC01D91D1825D4`.
+- Installed `user.ltx` hash:
+  `C0B08776F2E0872580B922E07EBEAFC09F3C085BCDDAACDED1E382C0D944369C`.
+- The game was not launched; runtime/load/FPS validation is left to the user.
