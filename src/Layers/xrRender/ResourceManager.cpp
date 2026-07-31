@@ -890,29 +890,21 @@ void CResourceManager::WaitForTextureLoads()
 u64 CResourceManager::BeginLoadGeneration()
 {
 	R_ASSERT2(textureOwnerThread == GetCurrentThreadId(), "Texture generation must begin on the render owner thread");
-	{
-		xrCriticalSectionGuard guard(textureLoadGuard);
-		R_ASSERT2(!activeResourceLoadGeneration && !resourceLoadGenerationStarting,
-			"Previous texture load generation is still active");
-		resourceLoadGenerationStarting = true;
-	}
-
-	try
-	{
-		WaitForTextureLoads();
-	}
-	catch (...)
-	{
-		xrCriticalSectionGuard guard(textureLoadGuard);
-		resourceLoadGenerationStarting = false;
-		throw;
-	}
-
+	xr_vector<ref_texture> adoptedRequests;
 	xr_vector<ref_texture> crossedRequests;
 	ResourceLoadGenerationPtr startedGeneration;
 	u64 result;
 	{
 		xrCriticalSectionGuard guard(textureLoadGuard);
+		R_ASSERT2(!activeResourceLoadGeneration && !resourceLoadGenerationStarting,
+			"Previous texture load generation is still active");
+
+		// Textures requested by the main menu used to be drained synchronously here.
+		// On large modpacks that can stall a save load before the loading session has
+		// even started. Move those requests into the explicit load generation instead:
+		// regular DDS files become generation-owned worker jobs, while video, sequence
+		// and runtime ($user$) textures still stay on the render-owner queue.
+		resourceLoadGenerationStarting = true;
 		if (++nextResourceLoadGeneration == 0)
 			++nextResourceLoadGeneration;
 		try
@@ -928,21 +920,38 @@ u64 CResourceManager::BeginLoadGeneration()
 			throw;
 		}
 		resourceLoadGenerationStarting = false;
+		adoptedRequests.swap(m_ownerTextureLoads);
 		crossedRequests.swap(m_generationStartingTextureLoads);
+		textureLoadSerial = 0;
 		result = nextResourceLoadGeneration;
 	}
 	try
 	{
+		for (const ref_texture& texture : adoptedRequests)
+		{
+			// These references are already in the queued state because they came
+			// from m_ownerTextureLoads. Reset only that state, then let the normal
+			// generation-aware path classify and schedule them safely.
+			texture->CancelQueuedLoad();
+			QueueTextureLoad(texture);
+		}
 		for (const ref_texture& texture : crossedRequests)
 			QueueTextureLoad(texture);
 	}
 	catch (...)
 	{
 		const std::exception_ptr failure = std::current_exception();
+		for (const ref_texture& texture : adoptedRequests)
+			texture->CancelQueuedLoad();
+		for (const ref_texture& texture : crossedRequests)
+			texture->CancelQueuedLoad();
 		NativeLoadExecutor::Instance().CancelGeneration(startedGeneration->native_generation);
 		AbortLoadGeneration(result);
 		std::rethrow_exception(failure);
 	}
+	Msg("* [load-session/resource] generation=%llu adopted=%u crossed=%u",
+		static_cast<unsigned long long>(result), static_cast<u32>(adoptedRequests.size()),
+		static_cast<u32>(crossedRequests.size()));
 	return result;
 }
 

@@ -1645,13 +1645,21 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 	m_load_session.started_at = Device.TimerAsync();
 	m_load_session.client_event_hash = 14695981039346656037ULL;
 	xr_strcpy(m_load_session.scenario, scenario ? scenario : "unknown");
+	Msg("* [load-session] begin request scenario=%s", m_load_session.scenario);
 	try
 	{
 		NativeLoadExecutor& native_executor = NativeLoadExecutor::Instance();
 		native_executor.SetEnabled(!Core.ParamsData.test(ECoreParams::serial_level_load));
 		m_load_session.native_generation = native_executor.BeginGeneration();
+		Msg("* [load-session] native generation=%llu ready",
+			static_cast<unsigned long long>(m_load_session.native_generation));
 		if (Device.m_pRender)
+		{
+			Msg("* [load-session] resource generation request");
 			m_load_session.resource_generation = Device.m_pRender->ResourcesBeginLoadGeneration();
+			Msg("* [load-session] resource generation=%llu ready",
+				static_cast<unsigned long long>(m_load_session.resource_generation));
+		}
 	}
 	catch (...)
 	{
