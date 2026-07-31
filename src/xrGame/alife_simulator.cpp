@@ -19,6 +19,7 @@
 #include "level.h"
 #include "../xrEngine/xr_ioconsole.h"
 #include "../xrEngine/Render.h"
+#include "../xrEngine/x_ray.h"
 
 #ifdef DEBUG
 #	include "moving_objects.h"
@@ -31,8 +32,19 @@ extern void destroy_lua_wpn_params();
 void restart_all()
 {
 	PROF_EVENT("restart_all");
-	if (Core.ParamsData.test(ECoreParams::keep_lua))
+	// The VM created during startup has not held level/ALife state yet, so the
+	// first save loaded directly from the main menu can reuse it safely. Never
+	// reuse a played session's VM: quickloads and later menu loads still take
+	// the original full reset path.
+	static bool startup_lua_available = true;
+	const bool forced_reuse = Core.ParamsData.test(ECoreParams::keep_lua);
+	const bool menu_reuse = startup_lua_available && pApp && pApp->LoadSessionCanReuseMenuLua();
+	startup_lua_available = false;
+	if (forced_reuse || menu_reuse)
+	{
+		Msg("* [load-session/lua] VM reused mode=%s", forced_reuse ? "forced" : "startup-menu");
 		return;
+	}
 
 	destroy_lua_wpn_params();
 	MainMenu()->DestroyInternal(true);

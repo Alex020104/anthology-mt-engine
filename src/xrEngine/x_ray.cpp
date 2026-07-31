@@ -1751,6 +1751,12 @@ void CApplication::LoadSessionSetScenario(LPCSTR scenario)
 		xr_strcpy(m_load_session.scenario, scenario);
 }
 
+bool CApplication::LoadSessionCanReuseMenuLua() const
+{
+	return m_load_session.active && !xr_strcmp(m_load_session.scenario, "menu-save") &&
+		!strstr(Core.Params, "-reload_menu_lua");
+}
+
 void CApplication::LoadSessionPhaseBegin(ELoadSessionPhase phase)
 {
 	if (!m_load_session.active || phase >= LoadSessionPhaseCount || m_load_session.phase_running[phase])
