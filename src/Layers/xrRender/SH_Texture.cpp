@@ -192,11 +192,22 @@ bool CTexture::CanLoadAsync() const
 	u32 kind = loadKind.load(std::memory_order_acquire);
 	if (!kind)
 	{
+		LPCSTR name = *cName;
+		// Dynamic render targets ($user$), null resources and UI atlases are
+		// renderer-owned even when they happen to have a DDS-like name. Keeping
+		// them out of workers protects PiP and live UI recreation.
+		if (!name || !name[0] || name[0] == '$' ||
+			!_strnicmp(name, "ui\\", 3) || !_strnicmp(name, "ui/", 3))
+		{
+			loadKind.store(2u, std::memory_order_release);
+			return false;
+		}
+
 		string_path path;
-		kind = FS.exist(path, "$game_textures$", *cName, ".ogm") ||
-			FS.exist(path, "$game_textures$", *cName, ".avi") ||
-			FS.exist(path, "$game_textures$", *cName, ".seq") ||
-			FS.exist(path, "$game_textures$", *cName, ".gif") ? 2u : 1u;
+		kind = FS.exist(path, "$game_textures$", name, ".ogm") ||
+			FS.exist(path, "$game_textures$", name, ".avi") ||
+			FS.exist(path, "$game_textures$", name, ".seq") ||
+			FS.exist(path, "$game_textures$", name, ".gif") ? 2u : 1u;
 		loadKind.store(kind, std::memory_order_release);
 	}
 	return kind == 1;

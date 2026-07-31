@@ -232,6 +232,7 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 	CALifeObjectRegistry::OBJECT_REGISTRY::iterator B = objects().objects().begin();
 	CALifeObjectRegistry::OBJECT_REGISTRY::iterator E = objects().objects().end();
 	CALifeObjectRegistry::OBJECT_REGISTRY::iterator I;
+	phase_started = load_part_timer.GetElapsed_ms();
 	for (I = B; I != E; ++I)
 	{
 		CSE_ALifeCreatureActor* actor = smart_cast<CSE_ALifeCreatureActor*>((*I).second);
@@ -242,6 +243,7 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 		}
 	}
 	VERIFY(I != E);
+	const u32 level_prepare_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
 	phase_started = load_part_timer.GetElapsed_ms();
 	for (I = B; I != E; ++I)
@@ -264,9 +266,9 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 		(*I).second->on_register();
 	const u32 on_register_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
-	Msg("* [load-session/save] callback=%u ms spawns=%u ms graph=%u ms objects=%u ms register=%u ms "
+	Msg("* [load-session/save] callback=%u ms spawns=%u ms graph=%u ms objects=%u ms level-prepare=%u ms register=%u ms "
 		"registry=%u ms on-register=%u ms total=%u ms count=%u",
-		callback_ms, spawns_ms, graph_ms, objects_ms, register_ms, registry_ms, on_register_ms,
+		callback_ms, spawns_ms, graph_ms, objects_ms, level_prepare_ms, register_ms, registry_ms, on_register_ms,
 		load_part_timer.GetElapsed_ms(), static_cast<u32>(objects().objects().size()));
 
 	if (!g_pGameLevel)
