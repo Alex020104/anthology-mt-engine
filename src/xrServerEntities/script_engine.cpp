@@ -451,6 +451,10 @@ void CScriptEngine::init()
 	if (strstr(Core.Params, "-ldbg")) {
         CScriptStorage::DebuggerAttach();
     }
+
+	// Lua execution remains owned by this VM thread. Only immutable source
+	// bytes are read and decompressed ahead of the first save load.
+	CScriptStorage::StartSourcePrefetch();
 }
 
 void CScriptEngine::remove_script_process(const EScriptProcessors& process_id)

@@ -1650,9 +1650,13 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 	{
 		NativeLoadExecutor& native_executor = NativeLoadExecutor::Instance();
 		native_executor.SetEnabled(!Core.ParamsData.test(ECoreParams::serial_level_load));
+		const u32 physical_cores = std::max(1u, CPU::ID.n_cores);
+		const u32 logical_threads = std::max(1u, CPU::ID.n_threads);
+		native_executor.SetWorkerLimit(physical_cores > 1 ? physical_cores - 1 : 1u);
 		m_load_session.native_generation = native_executor.BeginGeneration();
-		Msg("* [load-session] native generation=%llu ready",
-			static_cast<unsigned long long>(m_load_session.native_generation));
+		Msg("* [load-session] native generation=%llu ready workers=%u physical=%u logical=%u",
+			static_cast<unsigned long long>(m_load_session.native_generation),
+			native_executor.WorkerLimit(), physical_cores, logical_threads);
 		if (Device.m_pRender)
 		{
 			Msg("* [load-session] resource generation request");

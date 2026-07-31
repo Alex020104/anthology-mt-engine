@@ -117,6 +117,7 @@ CALifeSimulator::CALifeSimulator(xrServer* server, shared_str* command_line) :
 	LPCSTR start_game_callback = pSettings->r_string(alife_section, "start_game_callback");
 	::luabind::functor<void> functor;
 	R_ASSERT2(ai().script_engine().functor(start_game_callback,functor), "failed to get start game callback");
+	ai().script_engine().LogSourcePrefetchStats();
 	load_part_timer.Start();
 	functor();
 	Msg("* [load-session/lua] start_game_callback=%u ms", load_part_timer.GetElapsed_ms());

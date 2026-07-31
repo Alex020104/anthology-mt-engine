@@ -666,10 +666,11 @@ void CResourceManager::QueueTextureLoad(const ref_texture& texture)
 			return;
 	}
 
-	// Regular DDS resources can be prepared while the menu is still active.
-	// CanLoadAsync keeps video, sequences and runtime/PiP ($user$) textures on
-	// the render-owner path, and Bind() waits for an in-flight DDS when needed.
-	const bool async = texture->CanLoadAsync();
+	// DDS preparation is safe only while the explicit load generation owns the
+	// resource lifetime and its final barrier. Runtime and PiP textures stay on
+	// the render-owner path so background I/O cannot steal frame time or race a
+	// dynamic texture update.
+	const bool async = generation && texture->CanLoadAsync();
 	const DWORD originThread = GetCurrentThreadId();
 	xrCriticalSectionGuard guard(textureLoadGuard);
 	if (resourceLoadGenerationStarting)

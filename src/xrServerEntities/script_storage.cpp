@@ -16,6 +16,186 @@
 #include <sstream>
 #include <regex>
 
+namespace
+{
+struct ScriptSourceEntry
+{
+	std::mutex guard;
+	std::condition_variable ready;
+	xr_vector<char> source;
+	bool loading = false;
+	bool complete = false;
+	bool success = false;
+};
+
+class ScriptSourceCache final : xray::noncopyable
+{
+	std::mutex entries_guard;
+	xr_map<xr_string, std::shared_ptr<ScriptSourceEntry>> entries;
+	xr_vector<xr_string> prefetch_queue;
+	xr_task_group prefetch_tasks;
+	std::atomic_bool started{false};
+	std::atomic_uint32_t next_file{0};
+	std::atomic_uint32_t total_files{0};
+	std::atomic_uint32_t ready_files{0};
+	std::atomic_uint32_t failed_files{0};
+	std::atomic_uint32_t active_workers{0};
+	std::atomic_uint32_t demand_misses{0};
+	std::atomic_uint32_t demand_waits{0};
+	std::atomic_uint64_t ready_bytes{0};
+	u64 started_at = 0;
+
+	std::shared_ptr<ScriptSourceEntry> FindOrCreate(LPCSTR path)
+	{
+		std::lock_guard<std::mutex> lock(entries_guard);
+		auto found = entries.find(path);
+		if (found != entries.end())
+			return found->second;
+
+		auto entry = std::make_shared<ScriptSourceEntry>();
+		entries.emplace(path, entry);
+		return entry;
+	}
+
+	bool EnsureLoaded(LPCSTR path, const std::shared_ptr<ScriptSourceEntry>& entry, bool demand)
+	{
+		{
+			std::unique_lock<std::mutex> lock(entry->guard);
+			if (entry->complete)
+				return entry->success;
+
+			if (entry->loading)
+			{
+				if (demand)
+					demand_waits.fetch_add(1, std::memory_order_relaxed);
+				entry->ready.wait(lock, [&entry] { return entry->complete; });
+				return entry->success;
+			}
+
+			entry->loading = true;
+		}
+
+		if (demand)
+			demand_misses.fetch_add(1, std::memory_order_relaxed);
+
+		xr_vector<char> loaded_source;
+		IReader* reader = FS.r_open(path);
+		const bool success = reader != nullptr;
+		if (reader)
+		{
+			loaded_source.resize(reader->length());
+			if (!loaded_source.empty())
+				CopyMemory(loaded_source.data(), reader->pointer(), reader->length());
+			FS.r_close(reader);
+		}
+
+		{
+			std::lock_guard<std::mutex> lock(entry->guard);
+			if (success)
+				entry->source.swap(loaded_source);
+			entry->success = success;
+			entry->complete = true;
+			entry->loading = false;
+		}
+		entry->ready.notify_all();
+
+		if (success)
+		{
+			ready_files.fetch_add(1, std::memory_order_relaxed);
+			ready_bytes.fetch_add(entry->source.size(), std::memory_order_relaxed);
+		}
+		else
+			failed_files.fetch_add(1, std::memory_order_relaxed);
+		return success;
+	}
+
+	void Worker()
+	{
+		for (;;)
+		{
+			const u32 index = next_file.fetch_add(1, std::memory_order_relaxed);
+			if (index >= prefetch_queue.size())
+				break;
+
+			const xr_string& path = prefetch_queue[index];
+			const auto entry = FindOrCreate(path.c_str());
+			EnsureLoaded(path.c_str(), entry, false);
+		}
+
+		if (active_workers.fetch_sub(1, std::memory_order_acq_rel) == 1)
+		{
+			const u64 elapsed = CPU::QPC() - started_at;
+			const u64 elapsed_ms = CPU::qpc_freq ? elapsed * 1000 / CPU::qpc_freq : 0;
+			Msg("* [lua-source-cache] ready=%u/%u failed=%u bytes=%llu KB elapsed=%llu ms",
+				ready_files.load(std::memory_order_relaxed),
+				total_files.load(std::memory_order_relaxed),
+				failed_files.load(std::memory_order_relaxed),
+				static_cast<unsigned long long>(ready_bytes.load(std::memory_order_relaxed) / 1024),
+				static_cast<unsigned long long>(elapsed_ms));
+		}
+	}
+
+public:
+	~ScriptSourceCache()
+	{
+		if (started.load(std::memory_order_acquire))
+			prefetch_tasks.wait();
+	}
+
+	static ScriptSourceCache& Instance()
+	{
+		static ScriptSourceCache cache;
+		return cache;
+	}
+
+	bool Get(LPCSTR path, std::shared_ptr<ScriptSourceEntry>& result)
+	{
+		result = FindOrCreate(path);
+		return EnsureLoaded(path, result, true);
+	}
+
+	void StartPrefetch()
+	{
+		bool expected = false;
+		if (!started.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+			return;
+
+		FS_FileSet scripts;
+		FS.file_list(scripts, "$game_scripts$", FS_ListFiles | FS_RootOnly, "*.script");
+		prefetch_queue.reserve(scripts.size());
+		for (const FS_File& script : scripts)
+		{
+			string_path path;
+			FS.update_path(path, "$game_scripts$", script.name.c_str());
+			prefetch_queue.emplace_back(path);
+		}
+
+		total_files.store(static_cast<u32>(prefetch_queue.size()), std::memory_order_release);
+		started_at = CPU::QPC();
+		const u32 available_workers = CPU::ID.n_cores > 1 ? CPU::ID.n_cores - 1 : 1u;
+		const u32 worker_count = std::min(4u, available_workers);
+		active_workers.store(worker_count, std::memory_order_release);
+		Msg("* [lua-source-cache] start files=%u workers=%u",
+			total_files.load(std::memory_order_relaxed), worker_count);
+
+		for (u32 i = 0; i < worker_count; ++i)
+			prefetch_tasks.run([this] { Worker(); });
+	}
+
+	void LogStats() const
+	{
+		Msg("* [lua-source-cache] status ready=%u/%u failed=%u active=%u demand-misses=%u demand-waits=%u bytes=%llu KB",
+			ready_files.load(std::memory_order_relaxed),
+			total_files.load(std::memory_order_relaxed),
+			failed_files.load(std::memory_order_relaxed),
+			active_workers.load(std::memory_order_relaxed),
+			demand_misses.load(std::memory_order_relaxed),
+			demand_waits.load(std::memory_order_relaxed),
+			static_cast<unsigned long long>(ready_bytes.load(std::memory_order_relaxed) / 1024));
+	}
+};
+} // namespace
+
 #if !defined(DEBUG) && defined(USE_LUAJIT_ONE)
 #	include "opt.lua.h"
 #	include "opt_inline.lua.h"
@@ -310,6 +490,16 @@ CScriptStorage::~CScriptStorage()
 {
 	if (m_virtual_machine)
 		lua_close(m_virtual_machine);
+}
+
+void CScriptStorage::StartSourcePrefetch()
+{
+	ScriptSourceCache::Instance().StartPrefetch();
+}
+
+void CScriptStorage::LogSourcePrefetchStats()
+{
+	ScriptSourceCache::Instance().LogStats();
 }
 
 extern int luaopen_lua_extensions(lua_State* L, bool IsDebug = false);
@@ -819,7 +1009,6 @@ static bool unlocalRegex(xr_set<xr_string>& unlocals, xr_string& s, const std::r
 
 bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 {
-	static xr_map<xr_string, xr_vector<char>> script_source_cache;
 	if (!unlocalizerPassed) {
 		auto file_list = FS.file_list_open("$game_config$", "unlocalizers\\", FS_RootOnly | FS_ListFiles);
 		if (!file_list) {
@@ -876,26 +1065,16 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 	}
 	int start = lua_gettop(lua());
 	string_path l_caLuaFileName;
-	auto cached_source = script_source_cache.find(caScriptName);
-	if (cached_source == script_source_cache.end())
+	std::shared_ptr<ScriptSourceEntry> cached_source;
+	if (!ScriptSourceCache::Instance().Get(caScriptName, cached_source))
 	{
-		IReader* reader = FS.r_open(caScriptName);
-		if (!reader)
-		{
-			script_log(eLuaMessageTypeError, "Cannot open file \"%s\"", caScriptName);
-			return (false);
-		}
-
-		xr_vector<char>& source = script_source_cache[caScriptName];
-		source.resize(reader->length());
-		CopyMemory(source.data(), reader->pointer(), reader->length());
-		FS.r_close(reader);
-		cached_source = script_source_cache.find(caScriptName);
+		script_log(eLuaMessageTypeError, "Cannot open file \"%s\"", caScriptName);
+		return (false);
 	}
 
 	// Unlocalize variables in the script defined by unlocalizers map
-	LPCSTR scriptContents = cached_source->second.data();
-	auto scriptLength = cached_source->second.size();
+	LPCSTR scriptContents = cached_source->source.data();
+	auto scriptLength = cached_source->source.size();
 	bool unlocalPerformed = false;
 	xr_string unlocalizerResult;
 	xr_string loweredNameSpaceName = caNameSpaceName;

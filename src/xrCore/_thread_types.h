@@ -256,7 +256,11 @@ public:
         return state && TryExecuteOne(state);
     }
 
-    u32 WorkerLimit() const { return worker_limit; }
+    u32 WorkerLimit() const { return worker_limit.load(std::memory_order_acquire); }
+    void SetWorkerLimit(u32 value)
+    {
+        worker_limit.store(std::max(1u, value), std::memory_order_release);
+    }
     void SetEnabled(bool value) { enabled.store(value, std::memory_order_release); }
     bool Enabled() const { return enabled.load(std::memory_order_acquire); }
 
@@ -299,7 +303,7 @@ private:
     std::array<std::deque<WorkItem>, PriorityCount> queues;
     std::shared_ptr<GenerationState> current_generation;
     GenerationId next_generation = 0;
-    const u32 worker_limit;
+    std::atomic_uint32_t worker_limit;
     std::atomic_bool enabled{true};
 
     NativeLoadExecutor()
@@ -377,7 +381,9 @@ private:
 
     void SchedulePumpsLocked(const std::shared_ptr<GenerationState>& generation)
     {
-        u32 pumps_to_start = std::min(worker_limit - generation->active_pumps, generation->queued);
+        const u32 limit = worker_limit.load(std::memory_order_acquire);
+        u32 pumps_to_start = std::min(limit > generation->active_pumps ?
+            limit - generation->active_pumps : 0u, generation->queued);
         while (pumps_to_start--)
         {
             ++generation->active_pumps;
