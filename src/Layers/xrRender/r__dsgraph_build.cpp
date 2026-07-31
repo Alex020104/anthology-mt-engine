@@ -172,7 +172,10 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 		return;
 
 	// strict-sorting selection
-	if (sh->flags.bStrictB2F)
+	// Particle visuals have their own render path. Putting strict B2F particles
+	// into the generic sorted queue renders them twice and wastes both CPU and
+	// GPU time, especially on particle-heavy locations.
+	if (sh->flags.bStrictB2F && !pVisual->dcast_ParticleCustom())
 	{
 		RGraph.mapDynamicSorted.Sorted.emplace_back(distSQ, SSA, val_pObject, pVisual, xform, sh, i_mask[CDSGraphManager::fl_hud]);
 		return;

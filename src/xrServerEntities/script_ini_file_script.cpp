@@ -12,6 +12,7 @@
 #include "string_table.h"
 #include "script_engine.h"
 #include "ai_space.h"
+#include <luabind/error.hpp>
 
 using namespace luabind;
 
@@ -32,16 +33,67 @@ CScriptIniFile* reload_system_ini()
 	return ((CScriptIniFile*)pSettings);
 }
 
-void section_for_each(CScriptIniFile* self, ::luabind::functor<bool> functor)
+namespace
+{
+bool invoke_section_callback(lua_State* lua, const ::luabind::functor<bool>& functor, LPCSTR section)
+{
+	::luabind::detail::stack_pop result_guard(lua, 1);
+	functor.pushvalue();
+	lua_pushstring(lua, section);
+	if (::luabind::detail::pcall(lua, 1, 1))
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw ::luabind::error(lua);
+#else
+		::luabind::error_callback_fun error_callback = ::luabind::get_error_callback();
+		if (error_callback)
+			error_callback(lua);
+		R_ASSERT2(false, "section_for_each Lua callback failed");
+		return true;
+#endif
+	}
+
+	return !!lua_toboolean(lua, -1);
+}
+}
+
+void section_for_each(CScriptIniFile* self, const ::luabind::functor<bool>& functor)
 {
 	typedef CInifile::Root sections_type;
 	sections_type& sections = self->sections();
+	lua_State* const lua = functor.lua_state();
+	R_ASSERT(lua);
 
 	sections_type::const_iterator i = sections.begin();
 	sections_type::const_iterator e = sections.end();
 	for (; i != e; ++i)
 	{
-		if (functor((LPCSTR)(*i).Name.c_str()) == true)
+		// section_for_each is heavily used against the merged system.ltx. Going
+		// through luabind's proxy/converter machinery for every section costs
+		// seconds in large modpacks. Keep the exact callback order and early-exit
+		// semantics, but call the already-bound Lua function directly.
+		if (invoke_section_callback(lua, functor, (*i).Name.c_str()))
+			return;
+	}
+}
+
+void section_for_each_suffix(CScriptIniFile* self, LPCSTR suffix, const ::luabind::functor<bool>& functor)
+{
+	typedef CInifile::Root sections_type;
+	sections_type& sections = self->sections();
+	lua_State* const lua = functor.lua_state();
+	R_ASSERT(lua);
+	R_ASSERT(suffix);
+
+	const size_t suffix_length = xr_strlen(suffix);
+	for (sections_type::const_iterator i = sections.begin(), e = sections.end(); i != e; ++i)
+	{
+		LPCSTR const section = (*i).Name.c_str();
+		const size_t section_length = xr_strlen(section);
+		if (section_length < suffix_length || xr_strcmp(section + section_length - suffix_length, suffix))
+			continue;
+
+		if (invoke_section_callback(lua, functor, section))
 			return;
 	}
 }
@@ -183,6 +235,7 @@ void CScriptIniFile::script_register(lua_State* L)
 		.def("set_override_names", &CScriptIniFile::set_override_names)
 		.def("section_count", &CScriptIniFile::section_count)
 		.def("section_for_each", &::section_for_each)
+		.def("section_for_each_suffix", &::section_for_each_suffix)
 		.def("set_readonly", &CScriptIniFile::set_readonly)
 #endif
 		//Alundaio: END

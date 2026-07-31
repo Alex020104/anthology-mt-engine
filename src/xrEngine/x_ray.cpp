@@ -1816,6 +1816,9 @@ void CApplication::LoadSessionPrecacheBegin()
 	m_load_session.precache_level_calculate_ticks = 0;
 	m_load_session.precache_level_render_ticks = 0;
 	m_load_session.precache_loadscreen_ticks = 0;
+	m_load_session.precache_objects_update_ticks = 0;
+	m_load_session.precache_hud_update_ticks = 0;
+	m_load_session.precache_script_update_ticks = 0;
 }
 
 bool CApplication::LoadSessionMeasurePrecache() const
@@ -1874,6 +1877,17 @@ void CApplication::LoadSessionRecordPrecacheLevel(
 		++m_load_session.precache_world_skipped;
 	m_load_session.precache_level_calculate_ticks += calculate_ticks;
 	m_load_session.precache_level_render_ticks += render_ticks;
+}
+
+void CApplication::LoadSessionRecordPrecacheUpdate(
+	u64 objects_ticks, u64 hud_ticks, u64 script_ticks)
+{
+	if (!m_load_session.active || !m_load_session.precache_started)
+		return;
+
+	m_load_session.precache_objects_update_ticks += objects_ticks;
+	m_load_session.precache_hud_update_ticks += hud_ticks;
+	m_load_session.precache_script_update_ticks += script_ticks;
 }
 
 void CApplication::LoadSessionRecordPrecacheLoadscreen(u64 ticks)
@@ -1999,7 +2013,8 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 	Msg("* [load-session] precache perf: frames=%u, calls(level/loadscreen/present)=%u/%u/%u, "
 		"world(rendered/skipped)=%u/%u, "
 		"wall=%.2f ms, frame move=%.2f ms, seq render=%.2f ms, level calculate/render=%.2f/%.2f ms, "
-		"loadscreen=%.2f ms, render other=%.2f ms, end/present=%.2f/%.2f ms, "
+		"loadscreen=%.2f ms, render other=%.2f ms, objects/hud/script=%.2f/%.2f/%.2f ms, "
+		"end/present=%.2f/%.2f ms, "
 		"secondary wait=%.2f ms, serial other=%.2f ms",
 		m_load_session.precache_frames, m_load_session.precache_level_calls,
 		m_load_session.precache_loadscreen_calls, m_load_session.precache_present_calls,
@@ -2008,7 +2023,9 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		to_ms(m_load_session.precache_seq_render_ticks),
 		to_ms(m_load_session.precache_level_calculate_ticks),
 		to_ms(m_load_session.precache_level_render_ticks), to_ms(m_load_session.precache_loadscreen_ticks),
-		to_ms(render_other_ticks), to_ms(m_load_session.precache_end_ticks),
+		to_ms(render_other_ticks), to_ms(m_load_session.precache_objects_update_ticks),
+		to_ms(m_load_session.precache_hud_update_ticks), to_ms(m_load_session.precache_script_update_ticks),
+		to_ms(m_load_session.precache_end_ticks),
 		to_ms(m_load_session.precache_present_ticks),
 		to_ms(m_load_session.precache_secondary_wait_ticks), to_ms(serial_other_ticks));
 	m_load_session.active = false;

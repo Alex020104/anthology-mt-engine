@@ -316,8 +316,14 @@ void IGame_Level::OnFrame()
 
 	// Update all objects
 	VERIFY(bReady);
+	const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
+	const u64 objects_started_at = measure_precache ? CPU::QPC() : 0;
 	Objects.Update(false);
+	const u64 objects_finished_at = measure_precache ? CPU::QPC() : 0;
 	g_hud->OnFrame();
+	if (measure_precache)
+		pApp->LoadSessionRecordPrecacheUpdate(objects_finished_at - objects_started_at,
+			CPU::QPC() - objects_finished_at, 0);
 
 	// Ambience
 	if (Sounds_Random.size() && (Device.dwTimeGlobal > Sounds_Random_dwNextTime))

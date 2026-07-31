@@ -128,3 +128,54 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   per-frame time budget still limits work, so this raises capacity without
   moving real-time objects off the main thread.
 - The game executable was not launched by the integration process.
+
+## Candidate v46 - measured Lua and particle bottlenecks
+
+### Current save-load evidence
+
+- The latest stable v45 log completes without a crash, but the engine-ready
+  session is still `52,865 ms`. The user's visible save-load interval is about
+  `22-23 s`; the engine session also includes menu/startup work outside that
+  visible interval.
+- Native level preparation is already parallel and takes `3,261 ms`; resource
+  wait is `147 ms`. The two texture loader reports are only `146 ms` and
+  `42 ms`, so texture I/O is not the current save-load limit.
+- Lua startup takes `9,279 ms` (`7,886 ms` measured script self-time). The
+  largest modules are `aol_anim_transitions` at `3,317.85 ms` and
+  `perk_based_artefacts` at `1,051.39 ms`.
+- Final precache is dominated by game updates: `FrameMove=27,695.32 ms`, while
+  level rendering is `276.47 ms`, render-sequence callbacks are `363.31 ms`,
+  and secondary-worker waiting is `1,307.87 ms`. More D3D11 rendering threads
+  cannot remove the measured serial Lua/object update cost.
+
+### Adapted changes
+
+- Optimized `ini_file:section_for_each` by directly invoking its bound Lua
+  callback, avoiding a luabind proxy/converter allocation for every merged INI
+  section while preserving iteration order and early-exit behavior.
+- Added `ini_file:section_for_each_suffix`. The active R.A.K.
+  `aol_anim_transitions.script` uses it for `_hud` sections with a fallback to
+  the original API. This prevents thousands of callbacks for sections the
+  module immediately discarded. The reproducible local patch is stored in
+  `modpack-patches/aol_anim_transitions.script.patch`.
+- Adapted the current Monolith/IX-Ray particle fix: strict B2F particle visuals
+  are no longer inserted into the generic sorted queue in addition to their
+  dedicated particle path. This removes duplicate CPU submission and GPU work
+  in particle-heavy scenes without changing non-particle sorting or PiP/UI.
+- Added `objects/hud/script` timing to the precache performance report. It is
+  diagnostics only and will identify which part of `FrameMove` owns the next
+  measured load bottleneck.
+- Existing owner-safe texture preparation and render-preparation workers remain
+  enabled. D3D11 immediate-context publication stays on the render thread;
+  moving it blindly would reintroduce the UI/PiP/resource races seen in earlier
+  candidates.
+
+### Validation
+
+- `DX11-AVX` builds successfully with the changes above.
+- Candidate hashes:
+  - EXE: `331CCB0F7A03A420F57B4A07524773D84A15475939533DE7BC3C0302C0B0C0C2`;
+  - PDB: `F984326C8BE7E31FABAD173E1ABF3D957EB374C1D2745563FEA352953256EFB7`.
+- The active R.A.K. script was backed up before installation under
+  `webcache/modpack_v46_patch_backup_20260731_213517`.
+- The game executable was not launched during validation.

@@ -1228,10 +1228,14 @@ void CLevel::OnFrame()
 	if (!mt_ph_commander)
 	{
 		PROF_EVENT("m_ph_commander");
+		const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
+		const u64 script_started_at = measure_precache ? CPU::QPC() : 0;
 		ai().script_engine().script_process(ScriptEngine::eScriptProcessorLevel)->update();
 
 		m_ph_commander->update();
 		m_ph_commander_scripts->update();
+		if (measure_precache)
+			pApp->LoadSessionRecordPrecacheUpdate(0, 0, CPU::QPC() - script_started_at);
 	}
 
 	// update static sounds
