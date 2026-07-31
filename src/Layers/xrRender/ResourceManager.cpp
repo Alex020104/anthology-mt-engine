@@ -666,11 +666,10 @@ void CResourceManager::QueueTextureLoad(const ref_texture& texture)
 			return;
 	}
 
-	// Keep regular UI, PiP/render-target and runtime texture creation on the
-	// render-owner path. Background DDS loading is only enabled inside the
-	// explicit level-load generation, where lifetime and the final barrier are
-	// controlled by the load session.
-	const bool async = generation && texture->CanLoadAsync();
+	// Regular DDS resources can be prepared while the menu is still active.
+	// CanLoadAsync keeps video, sequences and runtime/PiP ($user$) textures on
+	// the render-owner path, and Bind() waits for an in-flight DDS when needed.
+	const bool async = texture->CanLoadAsync();
 	const DWORD originThread = GetCurrentThreadId();
 	xrCriticalSectionGuard guard(textureLoadGuard);
 	if (resourceLoadGenerationStarting)
@@ -890,21 +889,32 @@ void CResourceManager::WaitForTextureLoads()
 u64 CResourceManager::BeginLoadGeneration()
 {
 	R_ASSERT2(textureOwnerThread == GetCurrentThreadId(), "Texture generation must begin on the render owner thread");
-	xr_vector<ref_texture> adoptedRequests;
-	xr_vector<ref_texture> crossedRequests;
-	ResourceLoadGenerationPtr startedGeneration;
-	u32 adoptedCount;
-	u64 result;
 	{
 		xrCriticalSectionGuard guard(textureLoadGuard);
 		R_ASSERT2(!activeResourceLoadGeneration && !resourceLoadGenerationStarting,
 			"Previous texture load generation is still active");
-
-		// Do not drain the main-menu queue before the measured load session and do
-		// not reclassify its live texture objects as worker jobs. The loading screen
-		// and resource registry can still reference those objects. Adopt them into
-		// the generation's owner queue; new level DDS requests remain parallel.
 		resourceLoadGenerationStarting = true;
+	}
+
+	// Finish startup/menu texture work before renderer registries become part
+	// of the level generation. Most DDS work has already overlapped the menu;
+	// the barrier prevents those jobs from racing level teardown/publication.
+	try
+	{
+		WaitForTextureLoads();
+	}
+	catch (...)
+	{
+		xrCriticalSectionGuard guard(textureLoadGuard);
+		resourceLoadGenerationStarting = false;
+		throw;
+	}
+
+	xr_vector<ref_texture> crossedRequests;
+	ResourceLoadGenerationPtr startedGeneration;
+	u64 result;
+	{
+		xrCriticalSectionGuard guard(textureLoadGuard);
 		if (++nextResourceLoadGeneration == 0)
 			++nextResourceLoadGeneration;
 		try
@@ -920,39 +930,25 @@ u64 CResourceManager::BeginLoadGeneration()
 			throw;
 		}
 		resourceLoadGenerationStarting = false;
-		adoptedRequests.swap(m_ownerTextureLoads);
 		crossedRequests.swap(m_generationStartingTextureLoads);
-		adoptedCount = static_cast<u32>(adoptedRequests.size());
-		textureLoadSerial = 0;
 		result = nextResourceLoadGeneration;
 	}
 	try
 	{
-		if (adoptedCount)
-		{
-			xrCriticalSectionGuard guard(textureLoadGuard);
-			startedGeneration->ownerTextureLoads.swap(adoptedRequests);
-			startedGeneration->pending += adoptedCount;
-			startedGeneration->serial += adoptedCount;
-			ResetEvent(startedGeneration->completed);
-			SetEvent(startedGeneration->ownerWorkAvailable);
-		}
 		for (const ref_texture& texture : crossedRequests)
 			QueueTextureLoad(texture);
 	}
 	catch (...)
 	{
 		const std::exception_ptr failure = std::current_exception();
-		for (const ref_texture& texture : adoptedRequests)
-			texture->CancelQueuedLoad();
 		for (const ref_texture& texture : crossedRequests)
 			texture->CancelQueuedLoad();
 		NativeLoadExecutor::Instance().CancelGeneration(startedGeneration->native_generation);
 		AbortLoadGeneration(result);
 		std::rethrow_exception(failure);
 	}
-	Msg("* [load-session/resource] generation=%llu adopted=%u crossed=%u",
-		static_cast<unsigned long long>(result), adoptedCount,
+	Msg("* [load-session/resource] generation=%llu pre-session-drained=1 crossed=%u",
+		static_cast<unsigned long long>(result),
 		static_cast<u32>(crossedRequests.size()));
 	return result;
 }

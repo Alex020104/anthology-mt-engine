@@ -377,12 +377,9 @@ void CScriptEngine::setup_auto_load()
 extern void export_classes(lua_State* L);
 extern xr_unordered_map<xr_string, xr_set<xr_string>> unlocalizers;
 extern bool unlocalizerPassed;
-extern void reset_script_bytecode_cache_stats();
-extern void get_script_bytecode_cache_stats(u32& hits, u32& misses);
 
 void CScriptEngine::init()
 {
-	reset_script_bytecode_cache_stats();
 #ifdef USE_LUA_STUDIO
     bool lua_studio_connected = !!m_lua_studio_world;
     if (lua_studio_connected)
@@ -454,11 +451,6 @@ void CScriptEngine::init()
 	if (strstr(Core.Params, "-ldbg")) {
         CScriptStorage::DebuggerAttach();
     }
-
-	u32 bytecodeHits = 0;
-	u32 bytecodeMisses = 0;
-	get_script_bytecode_cache_stats(bytecodeHits, bytecodeMisses);
-	Msg("* [load-session/lua-cache] bytecode hits=%u misses=%u", bytecodeHits, bytecodeMisses);
 }
 
 void CScriptEngine::remove_script_process(const EScriptProcessors& process_id)
