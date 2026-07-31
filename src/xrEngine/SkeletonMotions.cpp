@@ -162,7 +162,12 @@ BOOL motions_value::load(LPCSTR N, IReader* data, vecBones* bones)
 	}
 	else
 	{
-		Debug.fatal(DEBUG_INFO, "Old skinned model version unsupported! (%s)", N);
+		// Modpacks sometimes ship obsolete backup/copy OMF files next to a
+		// wildcard animation set. Treat an incompatible optional motion file
+		// like every other failed extra animation and let the caller discard
+		// its slot instead of terminating a cold save load.
+		Msg("! Old skinned model version unsupported, skipping optional motion file '%s'", N);
+		return false;
 	}
 	if (!bRes) return false;
 

@@ -19,7 +19,6 @@
 #include "level.h"
 #include "../xrEngine/xr_ioconsole.h"
 #include "../xrEngine/Render.h"
-#include "../xrEngine/x_ray.h"
 
 #ifdef DEBUG
 #	include "moving_objects.h"
@@ -32,13 +31,8 @@ extern void destroy_lua_wpn_params();
 void restart_all()
 {
 	PROF_EVENT("restart_all");
-	const bool forced_reuse = Core.ParamsData.test(ECoreParams::keep_lua);
-	const bool menu_reuse = pApp && pApp->LoadSessionCanReuseMenuLua();
-	if (forced_reuse || menu_reuse)
-	{
-		Msg("* [load-session/lua] VM reused mode=%s", forced_reuse ? "forced" : "menu-save");
+	if (Core.ParamsData.test(ECoreParams::keep_lua))
 		return;
-	}
 
 	destroy_lua_wpn_params();
 	MainMenu()->DestroyInternal(true);
