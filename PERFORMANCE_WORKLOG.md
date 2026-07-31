@@ -116,3 +116,15 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - PDB: `9FDACAD822543CAE5743B50BED03BE55FFCA1E19AAD2B74555C93B5C0FAAC925`.
 - Local `user.ltx` still contains `scheduler_batch_size 128`; installation of
   this candidate will back it up and set it to the upstream default of 256.
+
+### v45 installation
+
+- Full pre-install backup:
+  `webcache/engine_v45_install_backup_20260731_204954` (17 files,
+  663,827,486 bytes, including the previous `user.ltx`).
+- Installed only `AnomalyDX11AVX.exe` and `AnomalyDX11AVX.pdb`; installed hashes
+  match the candidate hashes above.
+- Local scheduler setting changed from 128 to 256. The scheduler's existing
+  per-frame time budget still limits work, so this raises capacity without
+  moving real-time objects off the main thread.
+- The game executable was not launched by the integration process.
