@@ -228,10 +228,18 @@ PROTECT_API void InitSettings()
 	CInifile* systemSettings = nullptr;
 	CInifile* gameSettings = nullptr;
 	xr_task_group settingsTasks;
-	settingsTasks.run([&]() { systemSettings = xr_new<CInifile>(systemPath, TRUE); });
-	settingsTasks.run([&]() { gameSettings = xr_new<CInifile>(gamePath, TRUE); });
 	try
 	{
+		if (Core.ParamsData.test(ECoreParams::no_startup_parallel))
+		{
+			systemSettings = xr_new<CInifile>(systemPath, TRUE);
+			gameSettings = xr_new<CInifile>(gamePath, TRUE);
+		}
+		else
+		{
+			settingsTasks.run([&]() { systemSettings = xr_new<CInifile>(systemPath, TRUE); });
+			settingsTasks.run([&]() { gameSettings = xr_new<CInifile>(gamePath, TRUE); });
+		}
 		settingsTasks.wait();
 	}
 	catch (...)
@@ -1639,7 +1647,9 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 	xr_strcpy(m_load_session.scenario, scenario ? scenario : "unknown");
 	try
 	{
-		m_load_session.native_generation = NativeLoadExecutor::Instance().BeginGeneration();
+		NativeLoadExecutor& native_executor = NativeLoadExecutor::Instance();
+		native_executor.SetEnabled(!Core.ParamsData.test(ECoreParams::serial_level_load));
+		m_load_session.native_generation = native_executor.BeginGeneration();
 		if (Device.m_pRender)
 			m_load_session.resource_generation = Device.m_pRender->ResourcesBeginLoadGeneration();
 	}
@@ -1651,6 +1661,12 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 	}
 	m_load_session.active = true;
 	Msg("* [load-session] begin scenario=%s", m_load_session.scenario);
+	Msg("* [load-session] optimization native=%s save-prefetch=%s spawn-prefetch=%s level-cache=%s precache=%s",
+		NativeLoadExecutor::Instance().Enabled() ? "parallel" : "serial",
+		Core.ParamsData.test(ECoreParams::no_save_prefetch) ? "off" : "on",
+		Core.ParamsData.test(ECoreParams::no_spawn_prefetch) ? "off" : "on",
+		Core.ParamsData.test(ECoreParams::no_level_cache) ? "off" : "on",
+		Core.ParamsData.test(ECoreParams::classic_precache) ? "classic" : "sparse");
 	if (Sound)
 		Sound->source_prefetch_pause();
 }
@@ -1778,6 +1794,8 @@ bool CApplication::LoadSessionMeasurePrecache() const
 bool CApplication::LoadSessionShouldRenderPrecacheWorld(u32 remaining, u32 total) const
 {
 	if (!m_load_session.active || !m_load_session.precache_started || !remaining || total != 60)
+		return true;
+	if (Core.ParamsData.test(ECoreParams::classic_precache))
 		return true;
 
 	if (!xr_strcmp(m_load_session.scenario, "quickload") ||

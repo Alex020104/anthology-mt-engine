@@ -152,12 +152,22 @@ public:
     template <typename Function>
     bool Submit(const Batch& batch, NativeLoadPriority priority, Function&& function)
     {
+        if (!Enabled())
+        {
+            std::forward<Function>(function)();
+            return true;
+        }
         return SubmitImpl(batch, priority, std::function<void()>(std::forward<Function>(function)), {});
     }
 
     template <typename Function, typename CancelFunction>
     bool Submit(const Batch& batch, NativeLoadPriority priority, Function&& function, CancelFunction&& cancel)
     {
+        if (!Enabled())
+        {
+            std::forward<Function>(function)();
+            return true;
+        }
         return SubmitImpl(batch, priority, std::function<void()>(std::forward<Function>(function)),
             std::function<void()>(std::forward<CancelFunction>(cancel)));
     }
@@ -247,6 +257,8 @@ public:
     }
 
     u32 WorkerLimit() const { return worker_limit; }
+    void SetEnabled(bool value) { enabled.store(value, std::memory_order_release); }
+    bool Enabled() const { return enabled.load(std::memory_order_acquire); }
 
 private:
     struct GenerationState
@@ -288,6 +300,7 @@ private:
     std::shared_ptr<GenerationState> current_generation;
     GenerationId next_generation = 0;
     const u32 worker_limit;
+    std::atomic_bool enabled{true};
 
     NativeLoadExecutor()
         : worker_limit(std::max(1u, std::thread::hardware_concurrency() > 1 ?

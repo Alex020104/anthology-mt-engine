@@ -36,6 +36,31 @@
 
 D3D_VIEWPORT custom_viewport[1] = { 0, 0, 0, 0, 0.f, 1.f };
 
+namespace
+{
+class CStartupShaderTasks
+{
+	xr_task_group tasks;
+	const bool parallel;
+
+public:
+	explicit CStartupShaderTasks(bool runParallel) : parallel(runParallel) {}
+
+	void run(std::function<void()> work)
+	{
+		if (parallel)
+			tasks.run(std::move(work));
+		else
+			work();
+	}
+
+	void wait()
+	{
+		tasks.wait();
+	}
+};
+}
+
 void CRenderTarget::set_viewport_size(ID3DDeviceContext * dev, float w, float h)
 {
 	custom_viewport[0].Width = w;
@@ -671,7 +696,8 @@ CRenderTarget::CRenderTarget()
 	}
 
 	const u32 initialTargetsMs = startupTimer.GetElapsed_ms();
-	xr_task_group startup_shader_tasks;
+	const bool parallelStartupShaders = !Core.ParamsData.test(ECoreParams::no_startup_parallel);
+	CStartupShaderTasks startup_shader_tasks(parallelStartupShaders);
 	startup_shader_tasks.run([this]()
 		{ s_hdr10_bloom_downsample.create_parallel(b_hdr10_bloom_downsample, "hdr10_bloom_downsample"); });
 	startup_shader_tasks.run([this]()
@@ -1317,7 +1343,8 @@ CRenderTarget::CRenderTarget()
 	//
 	dwWidth = Device.dwWidth;
 	dwHeight = Device.dwHeight;
-	Msg("* [STARTUP/RENDER TARGET] initial=%u overlap=%u shader-wait=%u total=%u ms",
+	Msg("* [STARTUP/RENDER TARGET] mode=%s initial=%u overlap=%u shader-wait=%u total=%u ms",
+		parallelStartupShaders ? "parallel" : "serial",
 		initialTargetsMs, overlappedWorkMs, shaderWaitMs, startupTimer.GetElapsed_ms());
 }
 

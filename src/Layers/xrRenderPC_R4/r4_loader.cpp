@@ -344,6 +344,8 @@ struct CRender::LevelStaticPackage
 
 bool CRender::level_StaticCacheReady(LPCSTR canonical_level_path)
 {
+	if (Core.ParamsData.test(ECoreParams::no_level_cache))
+		return false;
 	const xr_string path = NormalizeLevelPath(canonical_level_path);
 	if (path.empty())
 		return false;
@@ -374,12 +376,13 @@ void CRender::level_Prepare(LPCSTR canonical_level_path)
 		return;
 	const u64 identity = LevelIdentity(path.c_str());
 	bool static_cache_hit = false;
-	for (const LevelStaticPackage* package : m_level_cache)
-		if (package->key.equal(path.c_str()) && package->identity == identity)
-		{
-			static_cache_hit = true;
-			break;
-		}
+	if (!Core.ParamsData.test(ECoreParams::no_level_cache))
+		for (const LevelStaticPackage* package : m_level_cache)
+			if (package->key.equal(path.c_str()) && package->identity == identity)
+			{
+				static_cache_hit = true;
+				break;
+			}
 
 	WaitLevelPrepare();
 	if (m_prepared_level_geometry)
@@ -760,7 +763,8 @@ void CRender::level_Load(IReader* fs)
 		if (detail_recipe_changed)
 			ReleaseLevelCache();
 	}
-	if (RestoreLevelStaticPackage(level_key, level_identity))
+	if (!Core.ParamsData.test(ECoreParams::no_level_cache) &&
+		RestoreLevelStaticPackage(level_key, level_identity))
 	{
 		if (prepared_geometry && (!prepared_geometry->key.equal(level_key) ||
 			prepared_geometry->identity != level_identity))
@@ -1089,7 +1093,7 @@ void CRender::level_Unload()
 
 	const bool clear_resources = psDeviceFlags2.test(rsClearAllResources);
 	const bool clear_models = psDeviceFlags2.test(rsClearModels) || clear_resources;
-	if (!clear_models)
+	if (!clear_models && !Core.ParamsData.test(ECoreParams::no_level_cache))
 	{
 		dxRenderDeviceRender::Instance().Resources->WaitForTextureLoads();
 		LevelStaticPackage* package = DetachLevelStaticPackage();
@@ -1100,9 +1104,12 @@ void CRender::level_Unload()
 	}
 
 	DestroyActiveLevel();
-	ReleaseLevelCache();
-	Models->ClearPool(true);
-	Visuals.clear_and_free();
+	if (clear_models)
+	{
+		ReleaseLevelCache();
+		Models->ClearPool(true);
+		Visuals.clear_and_free();
+	}
 	if (clear_resources)
 	{
 		dxRenderDeviceRender::Instance().Resources->UnloadAllTexturesOnLevelUnload();

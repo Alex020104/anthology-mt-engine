@@ -79,6 +79,11 @@ void cleanup_prepared_save()
 void CALifeStorageManager::prepare_load(LPCSTR save_name)
 {
 	cleanup_prepared_save();
+	if (Core.ParamsData.test(ECoreParams::no_save_prefetch))
+	{
+		Msg("* [save-prefetch] disabled; using original synchronous save path");
+		return;
+	}
 	g_prepared_save.name = save_name;
 	g_prepared_save.active = true;
 	g_prepared_save.valid = false;

@@ -116,17 +116,21 @@ CEnvironment::CEnvironment() :
 	};
 	CInifile* configs[std::size(configNames)] = {};
 	xr_task_group configTasks;
-	for (u32 index = 0; index < std::size(configNames); ++index)
-	{
-		configTasks.run([&, index]()
-		{
-			string_path fileName;
-			configs[index] = xr_new<CInifile>(
-				FS.update_path(fileName, "$game_config$", configNames[index]), TRUE, TRUE, FALSE);
-		});
-	}
 	try
 	{
+		for (u32 index = 0; index < std::size(configNames); ++index)
+		{
+			auto loadConfig = [&, index]()
+			{
+				string_path fileName;
+				configs[index] = xr_new<CInifile>(
+					FS.update_path(fileName, "$game_config$", configNames[index]), TRUE, TRUE, FALSE);
+			};
+			if (Core.ParamsData.test(ECoreParams::no_startup_parallel))
+				loadConfig();
+			else
+				configTasks.run(std::move(loadConfig));
+		}
 		configTasks.wait();
 	}
 	catch (...)

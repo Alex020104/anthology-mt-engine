@@ -98,13 +98,16 @@ void xrServer::SendConnectionData(IClient* _CL)
 	string_path resolved_level_path;
 	FS.update_path(resolved_level_path, "$level$", "");
 	const xr_string level_path = resolved_level_path;
-	const bool prepare_local_resources = !g_dedicated_server && CL == GetServerClient();
+	const bool prepare_local_resources = !g_dedicated_server && CL == GetServerClient() &&
+		!Core.ParamsData.test(ECoreParams::no_spawn_prefetch);
+	NativeLoadExecutor::Batch resource_batch;
 	try
 	{
 		if (prepare_local_resources)
+			resource_batch = executor.BeginBatch(executor.CurrentGeneration());
+		if (prepare_local_resources)
 		for (PreparedClientSpawn& spawn : prepared)
 		{
-			spawn.resource_batch = executor.BeginBatch(executor.CurrentGeneration());
 			auto prepare_resources = [&spawn, level_path]()
 			{
 				if (spawn.actual_visual.size())
@@ -116,19 +119,19 @@ void xrServer::SendConnectionData(IClient* _CL)
 				for (const xr_string& texture : spawn.textures)
 					Device.m_pRender->ResourcesPrefetchCreateTexture(texture.c_str(), level_path.c_str());
 			};
-			if (spawn.resource_batch.Valid())
-				executor.Submit(spawn.resource_batch, NativeLoadPriority::Spawn, std::move(prepare_resources));
+			if (resource_batch.Valid())
+				executor.Submit(resource_batch, NativeLoadPriority::Spawn, std::move(prepare_resources));
 			else
 				prepare_resources();
 		}
+		if (resource_batch.Valid())
+			executor.Wait(resource_batch);
 
 		u32 order_hash = 0;
 		u32 texture_count = 0;
 		u32 model_count = 0;
 		for (const PreparedClientSpawn& spawn : prepared)
 		{
-			if (prepare_local_resources && spawn.resource_batch.Valid())
-				executor.Wait(spawn.resource_batch);
 			#ifdef SPAWN_ANTIFREEZE
 			if (prepare_local_resources)
 				Level().RegisterPreparedClientSpawnResource(spawn.id, spawn.parent_id, spawn.section,
@@ -147,11 +150,10 @@ void xrServer::SendConnectionData(IClient* _CL)
 	catch (...)
 	{
 		const std::exception_ptr failure = std::current_exception();
-		// Submitted workers keep references to vector elements. Drain every batch
-		// before the vector can unwind, even when one task failed first.
-		for (const PreparedClientSpawn& spawn : prepared)
-			if (spawn.resource_batch.Valid())
-				try { executor.Wait(spawn.resource_batch); } catch (...) {}
+		// Submitted workers keep references to vector elements. Drain the shared
+		// batch before the vector can unwind, even when one task failed first.
+		if (resource_batch.Valid())
+			try { executor.Wait(resource_batch); } catch (...) {}
 		std::rethrow_exception(failure);
 	}
 

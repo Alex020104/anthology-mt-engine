@@ -191,7 +191,6 @@ public:
 		shared_str actual_visual;
 		shared_str ltx_visual;
 		xr_vector<xr_string> textures;
-		NativeLoadExecutor::Batch resource_batch;
 		u16 id;
 		u16 parent_id;
 	};
