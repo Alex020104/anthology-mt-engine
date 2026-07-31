@@ -88,6 +88,8 @@ enum class ECoreParams : u8
 	no_startup_parallel,
 	classic_precache,
 	keep_lua,
+	reload_menu_lua,
+	dbg_spawns,
 	_60hz,
 	dxgi_old,
 	dxgi_dbg,

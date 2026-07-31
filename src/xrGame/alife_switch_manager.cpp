@@ -63,8 +63,9 @@ void CALifeSwitchManager::add_online(CSE_ALifeDynamicObject* object, bool update
 		server().Process_spawn(tNetPacket, clientID,FALSE, l_tpAbstract);
 		object->s_flags.and(u16(-1) ^ M_SPAWN_UPDATE);
 
-		//Alundaio: Knowing last object to spawn can be very useful to debugging
-		if (Core.isDebug())
+		// Per-object logging is very expensive on modpacks that spawn thousands
+		// of objects. Keep it available as an explicit diagnostic mode.
+		if (Core.ParamsData.test(ECoreParams::dbg_spawns))
 			Msg("[LSS] Spawning object [%s][%s][%d]", object->name_replace(), *object->s_name, object->ID);
 
 		//Alundaio: Workaround for crash with corpses that end up outside AI map

@@ -200,6 +200,9 @@ void CALifeStorageManager::save(LPCSTR save_name_no_check, bool update_name)
 
 void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR file_name)
 {
+	CTimer load_part_timer;
+	load_part_timer.Start();
+
 	//Alundaio: So we can get the fname to make our own custom save states
 #ifdef ENGINE_LUA_ALIFE_STORAGE_MANAGER_CALLBACKS
 	::luabind::functor<void> funct;
@@ -207,13 +210,22 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 		funct(file_name);
 #endif
 	//-Alundaio
+	const u32 callback_ms = load_part_timer.GetElapsed_ms();
 
 	IReader source(buffer, buffer_size);
 	header().load(source);
 	time_manager().load(source);
+	u32 phase_started = load_part_timer.GetElapsed_ms();
 	spawns().load(source, file_name);
+	const u32 spawns_ms = load_part_timer.GetElapsed_ms() - phase_started;
+
+	phase_started = load_part_timer.GetElapsed_ms();
 	graph().on_load();
+	const u32 graph_ms = load_part_timer.GetElapsed_ms() - phase_started;
+
+	phase_started = load_part_timer.GetElapsed_ms();
 	objects().load(source);
+	const u32 objects_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
 	VERIFY(can_register_objects());
 	can_register_objects(false);
@@ -231,6 +243,7 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 	}
 	VERIFY(I != E);
 
+	phase_started = load_part_timer.GetElapsed_ms();
 	for (I = B; I != E; ++I)
 	{
 		ALife::_OBJECT_ID id = (*I).second->ID;
@@ -238,13 +251,23 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 		VERIFY(id == (*I).second->ID);
 		register_object((*I).second, false);
 	}
+	const u32 register_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
+	phase_started = load_part_timer.GetElapsed_ms();
 	registry().load(source);
+	const u32 registry_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
 	can_register_objects(true);
 
+	phase_started = load_part_timer.GetElapsed_ms();
 	for (I = B; I != E; ++I)
 		(*I).second->on_register();
+	const u32 on_register_ms = load_part_timer.GetElapsed_ms() - phase_started;
+
+	Msg("* [load-session/save] callback=%u ms spawns=%u ms graph=%u ms objects=%u ms register=%u ms "
+		"registry=%u ms on-register=%u ms total=%u ms count=%u",
+		callback_ms, spawns_ms, graph_ms, objects_ms, register_ms, registry_ms, on_register_ms,
+		load_part_timer.GetElapsed_ms(), static_cast<u32>(objects().objects().size()));
 
 	if (!g_pGameLevel)
 		return;
