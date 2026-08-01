@@ -650,3 +650,56 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - PDB: `17F9844463843615F03CD2E5DA2D900B2E4BF91E03261B19837647AFF0427B44`.
 - No Anomaly process was running during replacement, and the game was not
   launched afterward. The same save remains valid for the regression test.
+
+## 2026-08-01 - addon optimization batch 1
+
+### Measured targets
+
+- The fresh load profile attributes `3,530.47 ms` of Lua self-time to
+  `aol_anim_transitions` during `start_game_callback`. Both enabled MO2 copies
+  were still calling the unfiltered `section_for_each`, so the suffix-filtered
+  engine API added earlier was present in v52 but not actually used by the
+  active modpack.
+- Interaction Dot Marks walked every managed HUD marker at a nominal 15 ms
+  cadence. Its target-object queries were also performed before the cadence
+  guard, which made them run once per rendered frame.
+- `arrival_environmental_particles` performed five upward cover rays and a
+  full particle-state pass on every `actor_on_update` outdoors.
+- Ledge Grabbing was configured with `throttleCheck=0`, alternate detection
+  enabled, and 15 ray steps, so its multi-ray climb search could also execute
+  every rendered frame.
+
+### Adapted changes
+
+- Installed the guarded `_hud` suffix iterator in both enabled
+  `aol_anim_transitions.script` owners. Other executables retain the original
+  iterator fallback.
+- Interaction Dot Marks now refreshes managed marker placement and hover at
+  30 Hz. The cadence guard runs before target-object queries. Marker contents,
+  interactions, XML, scaling, and PiP behavior are unchanged.
+- Both possible MO2 providers of `arrival_environmental_particles.script` now
+  check weather, cover and particle placement every 100 ms. Particle systems
+  continue simulating between checks; the change removes roughly 90% of the
+  script's outdoor cover rays at 60 FPS.
+- Ledge Grabbing now uses 10 ray steps and a 30 ms scan throttle in the live
+  MCM override and both mirrored `axr_options.ltx` files. Climbing remains
+  enabled, including alternate and player-width detection.
+- Reproducible patches are stored in `modpack-patches`. No weapon, save, UI
+  XML, renderer, SSS, PiP, or engine binary file was changed in this batch.
+
+### Installed hashes
+
+- Kristiano AOL: `07950F0629ECE4907B487FCD498357142AF72685BA93233DED5CAEA1B8F5B428`
+- R.A.K AOL: `3CCF4DBC017BB180FD1BF0CCA06924F19FD65AF0ABC877D3024EE8FACA5806F5`
+- Dot Marks HUD manager: `4FF3D18DD12125FA93E6BCC19F6D319C81D2948A5E9B579A9AE7A969698FA048`
+- Arrival particle provider: `864031F61B810B2DC0EC4AFD4EE45590C95F1DA027D8458001C98D11398B9D41`
+- Seeds and Leaves particle provider: `C7A6BB73808FFD33344CD6328CDB400631397E0BF7615E630098BF885A96E61E`
+- Active MO2 MCM override: `AF66F9EAFCF4465EFD3A106B56C17B37408653776ACB2B941D0E917114B6E0A6`
+
+### Test expectation
+
+- The existing save is valid; no new game is required.
+- The next fresh log should show a large reduction in
+  `[load-session/lua-profile] aol_anim_transitions` and lower outdoor script
+  time. The remaining render-bound 11-15 ms component is outside this Lua-only
+  batch and should be evaluated separately after the regression test.
