@@ -280,3 +280,54 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Installed `user.ltx` hash:
   `F6753BA172FCF8A65DA6B37821E08902E630D950B0B099BFC8F5136DD3049B61`.
 - The integration process did not launch the game executable.
+
+## v47 runtime review and Ryzen 7 3700X balanced profile
+
+### Fresh v47 evidence
+
+- The 2026-08-01 user test is running the installed v47 executable. The bulk
+  VFS path is active with seven level workers on the 8-core/16-thread CPU.
+- `Init FileSystem` is `11.997974 s`, versus `18.403616 s` in the preceding
+  v46 comparison log.
+- Menu-save engine-ready time is `61,517 ms`, versus `76,614 ms` in the
+  preceding v46 comparison. The measured v47 phases are server/Lua
+  `15,922 ms`, native level `3,412 ms`, client spawn `26,209 ms`, and final
+  precache `39,432 ms`.
+- The remaining precache bottleneck is still serial world update work:
+  `FrameMove=30,866.08 ms`, `scheduler main=3,739.58 ms`, and secondary wait
+  `5,510.28 ms`; renderer work is only `516.73 ms`. Graphics settings cannot
+  by themselves turn this save into a 10-second load.
+- The load uses `native=parallel`, save/spawn prefetch, level cache, and sparse
+  precache. This confirms that worker creation is not the missing switch;
+  save scripts, client spawn, and main-thread simulation remain the dominant
+  path.
+
+### Installed settings profile
+
+- Backed up the complete pre-change `user.ltx` and MO2 MCM store to
+  `webcache/performance_profile_backup_20260801_091503` before editing.
+- Synchronized the main game menu and MCM values: detail radius `150 -> 110`,
+  density `0.78 -> 0.65`, geometry LOD `1.5 -> 1.2`, visibility `0.9 -> 0.8`,
+  skeleton update `32 -> 24`, sun and sunshafts High -> Medium, NPC dynamic
+  torches off, actor shadow off, and wallmark lifetime `250 -> 150`.
+- Replaced the stale MCM scheduler value `52736` with the safe gameplay value
+  `256`. Engine-managed temporary load batching remains enabled.
+- Applied an SSS/SSFX balanced profile: AO High -> Medium, IL Very High ->
+  Medium, interactive entities `8 -> 5` and distance `2000 -> 1200`, POM High
+  -> Medium without refine, shadow maps `1536/4096 -> 512/2048`, forced
+  volumetric point lights off, volumetric quality Very High -> Medium, grass
+  shadow Ultra -> Medium, SSR Ultra -> High at 0.7 scale, SSS Very High ->
+  Medium, and terrain POM High -> Medium.
+- Reduced Spatial Audio ray cost through its MCM data: player/NPC bounce counts
+  `3/2 -> 2/1`, ray work per frame `2 -> 1`, and NPC interval
+  `1250 -> 2000 ms`.
+- Preserved 1920x1080 resolution, full texture quality, 16x anisotropy, TAA,
+  wet surfaces, volumetric smoke/lights, water effects, PiP/3D scope values,
+  and the safe engine MT mask. No Lua, XML, UI, shader, weapon, or save files
+  were modified.
+- Final hashes: `user.ltx`
+  `6B652C4B34E00ABFD583BB90BC7620EF3AA026B22C83FC4F300C48A5A3535AA3`;
+  `axr_options.ltx`
+  `9FD6A4BE6DFC8FDA888396683B660AF57D7531EFFB44264A8625B1E376C9976F`.
+- The game was not launched. The user will compare the same save and camera
+  position and provide the next log/FPS capture.
