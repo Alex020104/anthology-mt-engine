@@ -679,7 +679,7 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   interactions, XML, scaling, and PiP behavior are unchanged.
 - Both possible MO2 providers of `arrival_environmental_particles.script` now
   check weather, cover and particle placement every 100 ms. Particle systems
-  continue simulating between checks; the change removes roughly 90% of the
+  continue simulating between checks; the change removes roughly 83% of the
   script's outdoor cover rays at 60 FPS.
 - Ledge Grabbing now uses 10 ray steps and a 30 ms scan throttle in the live
   MCM override and both mirrored `axr_options.ltx` files. Climbing remains
