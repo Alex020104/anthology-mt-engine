@@ -384,6 +384,9 @@ void CRenderDevice::on_idle()
 		g_SASH.StartBenchmark();
 	}
 
+	const bool measure_mt_frame = mt_FrameProfile && !Device.dwPrecacheFrame && g_bLoaded;
+	const u64 mt_frame_started_at = measure_mt_frame ? CPU::QPC() : 0;
+
 	if (Device.ModelDefferClear)
 	{
 		Device.ModelDefferClear();
@@ -399,13 +402,16 @@ void CRenderDevice::on_idle()
 
 	const bool precache_before_frame = pApp && pApp->LoadSessionMeasurePrecache();
 	const u64 frame_started_at = precache_before_frame ? CPU::QPC() : 0;
+	const u64 mt_frame_move_started_at = measure_mt_frame ? CPU::QPC() : 0;
 	FrameMove();
+	const u64 mt_frame_move_ticks = measure_mt_frame ? CPU::QPC() - mt_frame_move_started_at : 0;
 	const bool measure_precache_frame = pApp && pApp->LoadSessionMeasurePrecache();
 	const u64 frame_move_finished_at = measure_precache_frame ? CPU::QPC() : 0;
 	const u64 measured_frame_started_at = precache_before_frame ? frame_started_at : frame_move_finished_at;
 	const u64 frame_move_ticks = precache_before_frame ? frame_move_finished_at - frame_started_at : 0;
 	u64 seq_render_ticks = 0;
 	u64 end_ticks = 0;
+	u64 mt_seq_render_ticks = 0;
 
     if (g_pGamePersistent != nullptr)
     {
@@ -563,10 +569,17 @@ void CRenderDevice::on_idle()
 	if (b_is_Active && Begin())
 	{
 		START_PROFILE("Process seqRender");
-		const u64 seq_render_started_at = measure_precache_frame ? CPU::QPC() : 0;
+		const bool measure_seq_render = measure_precache_frame || measure_mt_frame;
+		const u64 seq_render_started_at = measure_seq_render ? CPU::QPC() : 0;
 		seqRender.Process(rp_Render);
-		if (measure_precache_frame)
-			seq_render_ticks = CPU::QPC() - seq_render_started_at;
+		if (measure_seq_render)
+		{
+			const u64 elapsed = CPU::QPC() - seq_render_started_at;
+			if (measure_precache_frame)
+				seq_render_ticks = elapsed;
+			if (measure_mt_frame)
+				mt_seq_render_ticks = elapsed;
+		}
 		STOP_PROFILE;
 
 		if (psDeviceFlags.test(rsCameraPos) || psDeviceFlags.test(rsStatistic) || Statistic->errors.size())
@@ -586,13 +599,65 @@ void CRenderDevice::on_idle()
 #endif 
 	Device.isRendering = false;
 
-	const u64 secondary_wait_started_at = measure_precache_frame ? CPU::QPC() : 0;
+	const bool measure_secondary_wait = measure_precache_frame || measure_mt_frame;
+	const u64 secondary_wait_started_at = measure_secondary_wait ? CPU::QPC() : 0;
 	secondary_tasks.wait();
+	const u64 frame_finished_at = measure_secondary_wait ? CPU::QPC() : 0;
 	if (measure_precache_frame)
 	{
-		const u64 frame_finished_at = CPU::QPC();
 		pApp->LoadSessionRecordPrecacheFrame(frame_finished_at - measured_frame_started_at,
 			frame_move_ticks, seq_render_ticks, end_ticks, frame_finished_at - secondary_wait_started_at);
+	}
+
+	const SFrameTaskProfile task_profile = mt_FrameProfile ?
+		XRay::Engine::ConsumeFrameTaskProfile() : SFrameTaskProfile{};
+	if (measure_mt_frame)
+	{
+		struct SFrameProfileAccumulator
+		{
+			u32 frames = 0;
+			u64 total = 0;
+			u64 frame_move = 0;
+			u64 seq_render = 0;
+			u64 secondary_wait = 0;
+			u64 max_total = 0;
+			u64 max_secondary_wait = 0;
+			SFrameTaskProfile tasks;
+		};
+		static SFrameProfileAccumulator profile;
+		const u64 total_ticks = frame_finished_at - mt_frame_started_at;
+		const u64 wait_ticks = frame_finished_at - secondary_wait_started_at;
+		++profile.frames;
+		profile.total += total_ticks;
+		profile.frame_move += mt_frame_move_ticks;
+		profile.seq_render += mt_seq_render_ticks;
+		profile.secondary_wait += wait_ticks;
+		profile.max_total = std::max(profile.max_total, total_ticks);
+		profile.max_secondary_wait = std::max(profile.max_secondary_wait, wait_ticks);
+		profile.tasks.pre_render += task_profile.pre_render;
+		profile.tasks.post_transforms += task_profile.post_transforms;
+		profile.tasks.calculate_bones += task_profile.calculate_bones;
+		profile.tasks.game += task_profile.game;
+		profile.tasks.lua_gc += task_profile.lua_gc;
+
+		if (profile.frames >= 300)
+		{
+			const double ticks_to_average_ms = 1000.0 /
+				(double(CPU::qpc_freq) * double(profile.frames));
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			Msg("* [mt-frame/profile] frames=%u avg(total/frame/render/wait)=%.2f/%.2f/%.2f/%.2f ms "
+				"workers(pre/post/bones/game/lua-gc)=%.2f/%.2f/%.2f/%.2f/%.2f ms max(total/wait)=%.2f/%.2f ms",
+				profile.frames, profile.total * ticks_to_average_ms,
+				profile.frame_move * ticks_to_average_ms, profile.seq_render * ticks_to_average_ms,
+				profile.secondary_wait * ticks_to_average_ms,
+				profile.tasks.pre_render * ticks_to_average_ms,
+				profile.tasks.post_transforms * ticks_to_average_ms,
+				profile.tasks.calculate_bones * ticks_to_average_ms,
+				profile.tasks.game * ticks_to_average_ms,
+				profile.tasks.lua_gc * ticks_to_average_ms,
+				profile.max_total * ticks_to_ms, profile.max_secondary_wait * ticks_to_ms);
+			profile = {};
+		}
 	}
 
 	if (psLua_ParallelGC_debug && psLua_ParallelGC && Device.LuaGCDebug)

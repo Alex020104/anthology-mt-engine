@@ -531,3 +531,60 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - PDB: `8F42AE3DEDEF400D6D068649EEEFA51F863ABC99FB206F4EE5B056479BDF1542`.
 - No Anomaly/XRay process was running during replacement, and the game was not
   launched afterward.
+
+## 2026-08-01 - v51 measured Lua-load and frame-worker correction
+
+### Evidence from the user's v50 run
+
+- v50 did not produce a repeatable improvement: the user's quickload remained
+  in the 16-23 second range and gameplay FPS was unchanged.
+- The fresh same-level quickload profile attributes only `55.22 ms` to spawn
+  decode and `158.54 ms` to entity creation/load. The experimental v50 decode
+  batch never activated because the real event batches remained below its safe
+  threshold, so this was not the remaining load bottleneck.
+- The same profile attributes `10811.88 ms` of the actor's `10813.37 ms`
+  client-spawn time to serial `net_Spawn` work. The log also shows two explicit
+  pairs of full Lua collections during the loading callbacks, with multi-second
+  gaps and large run-to-run variance. Native level preparation remained only
+  `1687 ms`.
+- Current Monolith intentionally executes the visible-skeleton loop serially
+  inside its already asynchronous frame task. v50's nested PPL skeleton and
+  detail loops therefore diverged from upstream and added dispatch/barrier
+  overhead without a measured FPS gain.
+
+### v51 adaptation
+
+- Wrapped the standard Lua `collectgarbage` entry point at VM initialization.
+  Only a default/full `collect` requested while an engine load session is
+  active is deferred; `count`, `step`, stop/restart, pause/step multiplier,
+  arguments, return values, and error behavior still forward to LuaJIT. No
+  modpack Lua file was changed.
+- Deferred full collections are reported as `[load-session/lua-gc]`. After the
+  player receives control, the existing incremental collector continues the
+  cleanup instead of imposing two stop-the-world collections on the load path.
+  The behavior is reversible with `load_defer_full_lua_gc 0`.
+- Added a `250 us` per-frame budget to the parallel incremental Lua collector
+  (`lua_parallel_gc_budget_us`). It still performs at least one step, but can no
+  longer occupy a PPL worker for the entire render and inflate the final frame
+  barrier on a large Lua heap.
+- Made the cross-thread renderer-active flag atomic and removed v50's nested
+  PPL fan-out for skeletons and detail slots. Both subsystems still overlap the
+  main renderer through their existing secondary task.
+- Disabled `mt_load_spawn_decode` by default because the measured decode cost
+  is negligible and the safe path did not activate. The diagnostic path remains
+  available for controlled tests.
+- Added low-overhead 300-frame telemetry under `mt_frame_profile`. Log records
+  average frame move, render, final worker wait, pre/post-render work, bones,
+  game worker, Lua GC, and maximum frame/wait time. This is enabled for the next
+  user test so subsequent FPS work can target the measured subsystem.
+- No UI/XML, PiP, shader, save format, weapon data, MCM setting, or modpack Lua
+  script was modified.
+
+### Build candidate
+
+- `DX11-AVX` Release compiled and linked successfully. The only linker warning
+  is the pre-existing duplicate `lj_vm.obj` entry in the LuaJIT project.
+- Candidate hashes:
+  - EXE: `1AFDFC1499EA8C04352212B251329FA2635DD7AE52E72D3BF666409305A10A0A`;
+  - PDB: `17F9844463843615F03CD2E5DA2D900B2E4BF91E03261B19837647AFF0427B44`.
+- The game was not launched. The same save can be used; no new game is needed.

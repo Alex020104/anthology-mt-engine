@@ -84,6 +84,7 @@ extern float psSqueezeVelocity;
 extern int psLUA_GCSTEP;
 extern int psLua_ParallelGCStep;
 extern int psLua_ParallelGC_CallAmount;
+extern int psLua_ParallelGC_BudgetUs;
 extern BOOL psLua_ParallelGC_debug;
 extern BOOL psLua_ParallelGC;
 extern BOOL lua_debug;
@@ -173,6 +174,7 @@ extern BOOL interruptFireOnAimToggle;
 
 extern BOOL mt_UpdateWeaponSounds;
 extern BOOL mt_Scheduler;
+extern BOOL mt_FrameProfile;
 extern BOOL mt_calc_bones;
 extern BOOL mt_ph_commander;
 extern BOOL mt_TaskManager;
@@ -2649,8 +2651,10 @@ void CCC_RegisterCommands()
 	// demonized: GC step that is used for repeated calls on second thread while frame is rendering, limit to small values
 	CMD4(CCC_Integer, "lua_parallel_gcstep", &psLua_ParallelGCStep, 1, 100);
 	CMD4(CCC_Integer, "lua_parallel_gc_call_amount", &psLua_ParallelGC_CallAmount, 1, 50);
+	CMD4(CCC_Integer, "lua_parallel_gc_budget_us", &psLua_ParallelGC_BudgetUs, 50, 5000);
 	CMD4(CCC_Integer, "lua_parallel_gc_debug", &psLua_ParallelGC_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_parallel_gc", &psLua_ParallelGC, 0, 1);
+	CMD4(CCC_Integer, "load_defer_full_lua_gc", &g_load_defer_full_lua_gc, 0, 1);
 
 	CMD4(CCC_Integer, "lua_debug", &lua_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_use_functor_cache", &lua_use_functor_cache, 0, 1);
@@ -3084,6 +3088,7 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "spawn_antifreeze", &spawn_antifreeze, 0, 1);
 	CMD4(CCC_Integer, "spawn_antifreeze_debug", &spawn_antifreeze_debug, 0, 1);
 	CMD4(CCC_Integer, "mt_load_spawn_decode", &mt_load_spawn_decode, 0, 1);
+	CMD4(CCC_Integer, "mt_frame_profile", &mt_FrameProfile, 0, 1);
 
 	CMD4(CCC_Float, "ik_calc_dist", &IK_CALC_DIST, 50, 150);
 	CMD4(CCC_Float, "ik_calc_ssa", &IK_CALC_SSA, 0.001f, 0.02f);

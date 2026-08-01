@@ -17,8 +17,43 @@
 #include <set>
 #include <luabind/class_info.hpp>
 
+extern ENGINE_API bool EngineShouldDeferFullLuaGC();
+extern ENGINE_API void EngineRecordDeferredFullLuaGC();
+
 namespace
 {
+constexpr LPCSTR original_collectgarbage_registry_key = "xray.original_collectgarbage";
+
+int load_aware_collectgarbage(lua_State* L)
+{
+	const int argument_count = lua_gettop(L);
+	const bool default_collect = argument_count == 0;
+	const bool explicit_collect = argument_count > 0 && lua_type(L, 1) == LUA_TSTRING &&
+		!xr_strcmp(lua_tostring(L, 1), "collect");
+	if ((default_collect || explicit_collect) && EngineShouldDeferFullLuaGC())
+	{
+		EngineRecordDeferredFullLuaGC();
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+
+	// Forward every non-full-GC mode to LuaJIT unchanged, including count,
+	// step, stop/restart and the original argument/error semantics.
+	lua_getfield(L, LUA_REGISTRYINDEX, original_collectgarbage_registry_key);
+	lua_insert(L, 1);
+	lua_call(L, argument_count, LUA_MULTRET);
+	return lua_gettop(L);
+}
+
+void install_load_aware_collectgarbage(lua_State* L)
+{
+	lua_getglobal(L, "collectgarbage");
+	R_ASSERT(lua_isfunction(L, -1));
+	lua_setfield(L, LUA_REGISTRYINDEX, original_collectgarbage_registry_key);
+	lua_pushcfunction(L, load_aware_collectgarbage);
+	lua_setglobal(L, "collectgarbage");
+}
+
 double script_ticks_to_ms(u64 ticks)
 {
 	return CPU::qpc_freq ? (1000.0 * static_cast<double>(ticks) / static_cast<double>(CPU::qpc_freq)) : 0.0;
@@ -401,6 +436,7 @@ void CScriptEngine::init()
 #endif
 
 	CScriptStorage::reinit();
+	install_load_aware_collectgarbage(lua());
 
 #ifdef USE_LUA_STUDIO
     if (m_lua_studio_world || Core.ParamsData.test(ECoreParams::lua_studio) {

@@ -248,7 +248,7 @@ public:
 	xr_delegate<void()> ParticleWorkerCallback;
 	xr_delegate<void()> ModelDefferClear;
 
-	bool isRendering;
+	xr_atomic_bool isRendering{false};
 
 	// LuaGC
 	int LuaGCCount;

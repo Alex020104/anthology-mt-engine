@@ -1634,6 +1634,18 @@ static CTimer total_load_timer;
 extern ENGINE_API BOOL g_appLoaded = FALSE;
 //AVO: used by SPAWN_ANTIFREEZE (by alpet)
 extern ENGINE_API BOOL g_bootComplete = FALSE;
+ENGINE_API BOOL g_load_defer_full_lua_gc = TRUE;
+static u32 g_load_session_deferred_full_lua_gc = 0;
+
+ENGINE_API bool EngineShouldDeferFullLuaGC()
+{
+	return g_load_defer_full_lua_gc && pApp && pApp->LoadSessionActive();
+}
+
+ENGINE_API void EngineRecordDeferredFullLuaGC()
+{
+	++g_load_session_deferred_full_lua_gc;
+}
 //-AVO
 
 void CApplication::LoadSessionEnsureResourceGeneration()
@@ -1660,6 +1672,7 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 		LoadSessionCancel("superseded");
 
 	ZeroMemory(&m_load_session, sizeof(m_load_session));
+	g_load_session_deferred_full_lua_gc = 0;
 	m_load_session.started_at = Device.TimerAsync();
 	m_load_session.client_event_hash = 14695981039346656037ULL;
 	xr_strcpy(m_load_session.scenario, scenario ? scenario : "unknown");
@@ -1759,6 +1772,10 @@ void CApplication::LoadSessionCancel(LPCSTR reason)
 	}
 	Msg("* [load-session] cancelled scenario=%s after %u ms (%s)", m_load_session.scenario,
 		Device.TimerAsync() - m_load_session.started_at, reason ? reason : "unknown");
+	if (g_load_session_deferred_full_lua_gc)
+		Msg("* [load-session/lua-gc] deferred full collections=%u before cancellation",
+			g_load_session_deferred_full_lua_gc);
+	g_load_session_deferred_full_lua_gc = 0;
 	ZeroMemory(&m_load_session, sizeof(m_load_session));
 	if (failure)
 		std::rethrow_exception(failure);
@@ -2039,6 +2056,9 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		to_ms(m_load_session.precache_end_ticks),
 		to_ms(m_load_session.precache_present_ticks),
 		to_ms(m_load_session.precache_secondary_wait_ticks), to_ms(serial_other_ticks));
+	Msg("* [load-session/lua-gc] deferred full collections=%u; cleanup continues incrementally after control",
+		g_load_session_deferred_full_lua_gc);
+	g_load_session_deferred_full_lua_gc = 0;
 	m_load_session.active = false;
 	if (Sound)
 		Sound->source_prefetch_start();

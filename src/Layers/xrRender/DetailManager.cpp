@@ -560,11 +560,10 @@ void CDetailManager::UpdateVisibleM()
 	};
 
 	const u32 visible_slot_count = static_cast<u32>(visible_slots.size());
-	if (visible_slot_count >= 32)
-		xr_parallel_for(0u, visible_slot_count, update_slot);
-	else
-		for (u32 index = 0; index < visible_slot_count; ++index)
-			update_slot(index);
+	// MT_CALC already runs beside the renderer. Nested PPL work for a few dozen
+	// slots increased worker dispatch and barrier cost on 8-core CPUs in v50.
+	for (u32 index = 0; index < visible_slot_count; ++index)
+		update_slot(index);
 
 	// Publish in the exact original cache order. Renderer-facing vectors remain
 	// single-writer even though their per-slot contents were prepared in parallel.

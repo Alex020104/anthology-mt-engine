@@ -11,9 +11,51 @@
 #include "../../Include/xrRender/Kinematics.h"
 
 BOOL mt_Scheduler = TRUE;
+BOOL mt_FrameProfile = TRUE;
+
+namespace
+{
+enum EFrameTaskProfile
+{
+	FrameTaskPreRender,
+	FrameTaskPostTransforms,
+	FrameTaskCalculateBones,
+	FrameTaskGame,
+	FrameTaskLuaGC,
+	FrameTaskCount
+};
+
+std::atomic<u64> frame_task_ticks[FrameTaskCount]{};
+
+class CFrameTaskTimer
+{
+	EFrameTaskProfile task;
+	u64 started_at;
+
+public:
+	explicit CFrameTaskTimer(EFrameTaskProfile value) : task(value), started_at(mt_FrameProfile ? CPU::QPC() : 0) {}
+	~CFrameTaskTimer()
+	{
+		if (started_at)
+			frame_task_ticks[task].fetch_add(CPU::QPC() - started_at, std::memory_order_relaxed);
+	}
+};
+}
+
+SFrameTaskProfile XRay::Engine::ConsumeFrameTaskProfile()
+{
+	SFrameTaskProfile result;
+	result.pre_render = frame_task_ticks[FrameTaskPreRender].exchange(0, std::memory_order_relaxed);
+	result.post_transforms = frame_task_ticks[FrameTaskPostTransforms].exchange(0, std::memory_order_relaxed);
+	result.calculate_bones = frame_task_ticks[FrameTaskCalculateBones].exchange(0, std::memory_order_relaxed);
+	result.game = frame_task_ticks[FrameTaskGame].exchange(0, std::memory_order_relaxed);
+	result.lua_gc = frame_task_ticks[FrameTaskLuaGC].exchange(0, std::memory_order_relaxed);
+	return result;
+}
 
 void XRay::Engine::PreRenderThread()
 {
+	CFrameTaskTimer frame_task_timer(FrameTaskPreRender);
 	PROF_THREAD("Secondary Task 1");
 
 	if (g_pGamePersistent && g_pGamePersistent->pEnvironment && g_pGamePersistent->pEnvironment->eff_Rain)
@@ -31,6 +73,7 @@ void XRay::Engine::PreRenderThread()
 
 void XRay::Engine::PreRenderPostTransformsThread()
 {
+	CFrameTaskTimer frame_task_timer(FrameTaskPostTransforms);
     PROF_THREAD("Secondary Task 1.1");
     {
         PROF_EVENT("seqParallelRender");
@@ -49,6 +92,7 @@ struct SpatialSnapshot
 };
 void XRay::Engine::CalculateBonesThread()
 {
+	CFrameTaskTimer frame_task_timer(FrameTaskCalculateBones);
 	PROF_THREAD("Secondary Task 3");
 
 	PROF_EVENT("CalculateBones");
@@ -114,29 +158,19 @@ void XRay::Engine::CalculateBonesThread()
 	};
 	std::sort(spatialsSnapshot.begin(), spatialsSnapshot.end(), sortFunc);
 
-	const u32 snapshot_count = static_cast<u32>(spatialsSnapshot.size());
-	if (snapshot_count < 8)
-	{
-		for (const auto& snapshot : spatialsSnapshot)
-			snapshot.pKin->CalculateBones(TRUE);
-	}
-	else
-	{
-		// Each snapshot owns an independent visual. The legacy MT path moved the
-		// whole loop to one worker, which still serialized crowded scenes. Let the
-		// PPL scheduler distribute independent skeletons while the render owner
-		// works on the frame; CalculateBones keeps its existing per-visual guard.
-		xr_parallel_for(0u, snapshot_count, [&](u32 index)
-		{
-			spatialsSnapshot[index].pKin->CalculateBones(TRUE);
-		});
-	}
+	// This function already overlaps the renderer as one secondary task. Nested
+	// PPL jobs here cost more scheduling/synchronization than they save on the
+	// relatively small visible-skeleton list (matching current Monolith).
+	for (const auto& snapshot : spatialsSnapshot)
+		snapshot.pKin->CalculateBones(TRUE);
 }
 
 extern BOOL psLua_ParallelGC;
 int psLua_ParallelGC_CallAmount = 25;
+int psLua_ParallelGC_BudgetUs = 250;
 void XRay::Engine::GameThread()
 {
+	CFrameTaskTimer frame_task_timer(FrameTaskGame);
 	PROF_THREAD("Secondary Task 2")
 		
 	// we has granted permission to execute
@@ -173,7 +207,10 @@ void XRay::Engine::GameThread()
     // Reduces stutters since less work will be done in main GC step or no work at all
     static auto LuaGC = []()
     {
+		CFrameTaskTimer frame_task_timer(FrameTaskLuaGC);
         PROF_EVENT("seqLuaGC");
+		const u64 started_at = CPU::QPC();
+		const u64 budget_ticks = CPU::qpc_freq * static_cast<u64>(psLua_ParallelGC_BudgetUs) / 1000000ULL;
         // Do at least once
         do
         {
@@ -184,7 +221,11 @@ void XRay::Engine::GameThread()
                 break;
             }
 
-        } while (Device.isRendering && Device.LuaGCCount < psLua_ParallelGC_CallAmount);
+			// A large Lua heap can otherwise occupy a PPL worker for the whole
+			// render and turn the final task_group wait into a CPU-side frame stall.
+		} while (Device.isRendering.load(std::memory_order_relaxed) &&
+			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
+			CPU::QPC() - started_at < budget_ticks);
     };
     if (psLua_ParallelGC && Device.LuaGC)
         Device.secondary_tasks.run(LuaGC);

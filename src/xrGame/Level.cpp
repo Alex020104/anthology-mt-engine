@@ -83,7 +83,10 @@ u32 lvInterpSteps = 0;
 #ifdef SPAWN_ANTIFREEZE
 BOOL spawn_antifreeze = TRUE;
 BOOL spawn_antifreeze_debug = FALSE;
-BOOL mt_load_spawn_decode = TRUE;
+// The measured quickload decode stage is only ~55 ms and normal batches do not
+// reach the safe parallel threshold. Keep the experimental path available for
+// diagnostics, but do not pay its classification/allocation cost by default.
+BOOL mt_load_spawn_decode = FALSE;
 
 struct spawn_and_prefetch_events
 {
