@@ -75,6 +75,7 @@ private:
 		u64 precache_objects_update_ticks;
 		u64 precache_hud_update_ticks;
 		u64 precache_script_update_ticks;
+		u64 precache_scheduler_ticks;
 		u32 phase_started_at[LoadSessionPhaseCount];
 		u32 phase_elapsed[LoadSessionPhaseCount];
 		bool phase_running[LoadSessionPhaseCount];
@@ -123,6 +124,7 @@ public:
 		u64 end_ticks, u64 secondary_wait_ticks);
 	void LoadSessionRecordPrecacheLevel(u64 calculate_ticks, u64 render_ticks, bool world_rendered);
 	void LoadSessionRecordPrecacheUpdate(u64 objects_ticks, u64 hud_ticks, u64 script_ticks);
+	void LoadSessionRecordPrecacheScheduler(u64 ticks);
 	void LoadSessionRecordPrecacheLoadscreen(u64 ticks);
 	void LoadSessionRecordPrecachePresent(u64 ticks);
 	void LoadSessionRecordClientEvent(bool spawn, u16 destination, u16 type, const void* packet_data, u32 packet_size);

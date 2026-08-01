@@ -199,3 +199,67 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Installed `user.ltx` hash:
   `C0B08776F2E0872580B922E07EBEAFC09F3C085BCDDAACDED1E382C0D944369C`.
 - The game was not launched; runtime/load/FPS validation is left to the user.
+
+## Candidate v47 - guarded startup VFS and scheduler attribution
+
+### New upstream evidence
+
+- The `mt-load-test` release tag resolves to Monolith commit
+  `9a83881851d0bff288dd13f8c93688620ef5da56`, the same final source revision
+  already used for the parallel-level-load review. The foreign test binary was
+  not copied into Anthology; its source changes were compared and adapted.
+- The latest v46 log shows `Init FileSystem 14.115475 sec` and no
+  `[STARTUP/VFS]` diagnostics. The bulk initial catalog, duplicate-alias scan
+  elimination, archive indexing, and process-local loose-file cache existed in
+  Anthology source but their activation had been removed by the earlier broad
+  UI/runtime-safety rollback.
+- The same log shows save-load precache dominated by `FrameMove` (29.7-38.6 s),
+  while level rendering is only 20-272 ms. The remaining main-thread scheduler
+  cost was not separately measured.
+- A later v46 run on 2026-08-01 confirms the pattern at larger scale:
+  `FrameMove=39,294.84 ms`, client spawn `34,397 ms`, native level `3,461 ms`,
+  resource wait `3 ms`, and level rendering `596.24 ms`. Lua module self-time
+  is `10,681.76 ms`, including `aol_anim_transitions=3,973.31 ms`.
+- That run used unsafe persistent runtime values: `mt_ui=1`,
+  `mt_task_manager=1`, `mt_level_call=1`, and
+  `scheduler_batch_size=52736`. Upstream keeps UI and TaskManager MT disabled
+  and uses a large scheduler batch only temporarily during initial actor load.
+
+### Adapted changes
+
+- Restored the upstream bulk VFS startup path without reverting any Anthology
+  UI, XML, texture, PiP, renderer, or save compatibility changes.
+- Recursive aliases already covered by an earlier recursive root are no longer
+  scanned repeatedly during the initial catalog build. File publication stays
+  ordered, preserving `fsgame.ltx`/MO2 override precedence.
+- Enabled the existing process-local loose startup cache only in the fast path.
+  `-no_startup_parallel` retains the previous exact serial scan behavior and
+  disables this cache, providing a one-flag runtime fallback.
+- Added main-thread scheduler attribution to the existing load-session
+  diagnostics. RT object ownership remains on the main thread and scheduler
+  ordering is unchanged.
+- Adapted upstream scheduler flush inside the engine: deferred work may use the
+  maximum batch only while the 60-frame loading precache is active, then the
+  configured gameplay batch resumes automatically. The Lua
+  `level.scheduler_flush` API and its modpack script were not copied.
+- Removed the per-light CPU spin waiting for an unfinished GPU occlusion query.
+  A pending result is treated conservatively as visible and retried next frame,
+  preventing up to 0.5 ms of CPU waiting per queried light without hiding it.
+- Portal traversal rejects only bit-identical repeated frustums and fixes the
+  missing parentheses that could take the debug portal path even with
+  `rs_render_portals` disabled.
+- Adapted the current projected-size detail calculation and avoids repeated
+  flag/container lookups in the inner grass visibility loop.
+- Reviewed the July `codex/gpu-driven-visibility` experiments. Aggressive HOM,
+  shadow hierarchy, and visibility changes were excluded because they can
+  change image correctness and have not been stabilized in the main MT branch.
+- No modpack Lua scripts, UI/XML files, PiP code, or save data were modified.
+
+### Validation
+
+- `DX11-AVX` MT build completed successfully. Existing project warnings remain;
+  the v47 changes add no build errors.
+- Candidate hashes:
+  - EXE: `EE4C5C5FFBFAD9D1B7072E333B8E2F6ADD90557F466787377FDB623C6EA9487F`;
+  - PDB: `498273748C52210A5C627BE8309810CF42326A21269513F418E6446200BEE51A`.
+- The game was not launched during validation.

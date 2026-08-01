@@ -57,6 +57,24 @@ CSector::~CSector()
 //
 extern float r_ssaDISCARD;
 extern float r_ssaLOD_A, r_ssaLOD_B;
+
+static bool IsSameFrustum(const CFrustum& left, const CFrustum& right)
+{
+	if (left.p_count != right.p_count)
+		return false;
+
+	for (int i = 0; i < left.p_count; ++i)
+	{
+		const CFrustum::fplane& left_plane = left.planes[i];
+		const CFrustum::fplane& right_plane = right.planes[i];
+		if (left_plane.n.x != right_plane.n.x || left_plane.n.y != right_plane.n.y ||
+			left_plane.n.z != right_plane.n.z || left_plane.d != right_plane.d)
+			return false;
+	}
+
+	return true;
+}
+
 IC CFrustum CreateFrustumFromPortal(sPoly* poly, Fvector& vBase, Fmatrix& mFullXFORM)
 {
 	CFrustum F;
@@ -115,6 +133,12 @@ void CSector::traverse(CFrustum &&F, CDSGraphManager& DM)
 
 	// Register traversal process
 	auto SNODE = DM.m_sector_frustums.insert(this);
+	// A sector reached through an exactly identical portal frustum would repeat
+	// the same traversal and static collection. Reject only bit-identical plane
+	// sets, so no potentially visible geometry is culled by an epsilon guess.
+	for (const CFrustum& existing : SNODE->val.first)
+		if (IsSameFrustum(existing, F))
+			return;
     SNODE->val.first.push_back(F);
 	if (dbg)
 	{
@@ -188,7 +212,9 @@ void CSector::traverse(CFrustum &&F, CDSGraphManager& DM)
 			continue;
 		}
 
-		if (DM.i_options & CDSGraphManager::VQ_FADE | CDSGraphManager::VQ_SSA && psDeviceFlags.test(rsDrawPortals))
+		const bool render_portal_debug = psDeviceFlags.test(rsDrawPortals) &&
+			(DM.i_options & (CDSGraphManager::VQ_FADE | CDSGraphManager::VQ_SSA));
+		if (render_portal_debug)
 			DM.fade_portal(PORTAL, 1.f);
 		else
 		{

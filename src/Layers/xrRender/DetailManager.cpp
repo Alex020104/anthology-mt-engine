@@ -400,6 +400,7 @@ void CDetailManager::UpdateVisibleM()
 	float fade_range = fade_limit - fade_start;
 	float r_ssaCHEAP = 16 * r_ssaDISCARD;
     float fade_start_ssa = r_ssaDISCARD * ps_r__ssaDISCARD_fade_k;
+	const bool no_scale_on_fade = psDeviceFlags2.test(rsNoScale);
 
 	// Initialize 'vis' and 'cache'
 	// Collect objects for rendering
@@ -486,14 +487,12 @@ void CDetailManager::UpdateVisibleM()
 						float R = objects[sp.id]->bv_sphere.R;
 						float Rq_drcp = R * R * dist_sq_rcp; // reordered expression for 'ssa' calc
 
-						SlotItem **siIT = &(*sp.items.begin()), **siEND = &(*sp.items.end());
+						SlotItem **siIT = sp.items.data(), **siEND = siIT + sp.items.size();
 						for (; siIT != siEND; siIT++)
 						{
 							SlotItem& Item = *(*siIT);
-							float scale = psDeviceFlags2.test(rsNoScale)
-								              ? (Item.scale)
-								              : (Item.scale * alpha_i);
-							float ssa = psDeviceFlags2.test(rsNoScale) ? scale : scale * scale * Rq_drcp;
+							float scale = no_scale_on_fade ? Item.scale : Item.scale * alpha_i;
+							float ssa = scale * scale * Rq_drcp;
 							if (ssa < r_ssaDISCARD)
 							{
 								Item.alpha_target = 0;
@@ -507,7 +506,7 @@ void CDetailManager::UpdateVisibleM()
                                 float survival_chance = (ssa - r_ssaDISCARD) / (fade_start_ssa - r_ssaDISCARD);
 
                                 // Get the index of this specific grass blade inside the slot
-                                u32 item_index = (u32)(siIT - &(*sp.items.begin()));
+                                u32 item_index = (u32)(siIT - sp.items.data());
 
                                 // Mix the Slot's world position with the Item's index using a prime multiplier
                                 // This ensures every blade of grass in the level has a unique, stable seed

@@ -754,6 +754,8 @@ void CGamePersistent::OnFrame()
 
 	if (!Device.Paused())
 	{
+		const bool measure_precache_scheduler = pApp && pApp->LoadSessionMeasurePrecache();
+		const u64 scheduler_started_at = measure_precache_scheduler ? CPU::QPC() : 0;
 		if (!mt_Scheduler)
 		{
 			PROF_EVENT("Sheduler");
@@ -765,6 +767,8 @@ void CGamePersistent::OnFrame()
 			::Engine.Sheduler.UpdateInit();
 			::Engine.Sheduler.UpdateRT();
 		}
+		if (measure_precache_scheduler)
+			pApp->LoadSessionRecordPrecacheScheduler(CPU::QPC() - scheduler_started_at);
 
 		// update weathers ambient
 		WeathersUpdate();

@@ -345,10 +345,15 @@ void CSheduler::ProcessStep()
 	ItemsBatch.clear();
 	u32 ItemsCount = Items.size();
 	float target = psShedulerTarget;
+	// Drain the deferred startup backlog while the loading precache is active,
+	// then return to the configured per-frame batch automatically. This adapts
+	// Monolith's temporary scheduler_flush without requiring a modpack script or
+	// leaving a huge batch enabled during normal gameplay.
+	const u32 batch_size = Device.dwPrecacheFrame ? 65536u : u32(SchedulerBatchSize);
 
 	{
 		xrSRWLockGuard g(ItemsLock);
-		while (!Items.empty() && Top().dwTimeForExecute < dwTime && ItemsBatch.size() < SchedulerBatchSize)
+		while (!Items.empty() && Top().dwTimeForExecute < dwTime && ItemsBatch.size() < batch_size)
 		{
 			// Optional: Also stop collecting if we are already out of time
 			// (Prevents grabbing items we won't even touch)
