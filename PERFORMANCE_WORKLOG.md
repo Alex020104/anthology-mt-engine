@@ -263,3 +263,20 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - EXE: `EE4C5C5FFBFAD9D1B7072E333B8E2F6ADD90557F466787377FDB623C6EA9487F`;
   - PDB: `498273748C52210A5C627BE8309810CF42326A21269513F418E6446200BEE51A`.
 - The game was not launched during validation.
+
+### v47 installation
+
+- Full pre-install engine/config backup:
+  `webcache/engine_v47_install_backup_20260801_085019` (17 files,
+  663,953,950 bytes). It contains the complete previous `bin` and `user.ltx`.
+- Installed only `AnomalyDX11AVX.exe` and `AnomalyDX11AVX.pdb`; installed hashes
+  match the v47 candidate hashes above. Other renderer executables and DLLs
+  were not changed.
+- Restored the safe runtime profile in `user.ltx`: `mt_level_call=0`,
+  `mt_task_manager=0`, `mt_ui=0`, and `scheduler_batch_size=256`.
+  `mt_scheduler=1`, `mt_calc_bones=1`, `r2_mt=on`, and the Lua functor cache
+  remain enabled. The automatic large load batch is controlled by the engine
+  and cannot leak into normal gameplay.
+- Installed `user.ltx` hash:
+  `F6753BA172FCF8A65DA6B37821E08902E630D950B0B099BFC8F5136DD3049B61`.
+- The integration process did not launch the game executable.
