@@ -520,3 +520,14 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - PDB: `4C4D7A1A12D3E249AD983230516B24AEF29E7F3C30F1D9BD00BE7AE2FFD33463`.
 - The game was not launched. Load-time and FPS gains remain to be measured on
   the user's same save and same gameplay position.
+
+### Installation
+
+- v50 EXE/PDB were installed to `Anomaly-1.5.3-Anthology 2.1/bin`; installed
+  hashes match the build candidate exactly.
+- The preceding v49 pair was backed up to
+  `webcache/engine_v50_parallel_spawn_frame_backup_20260801_115207`:
+  - EXE: `5556A364C08005EAD12FF2B6D15646072BF333E7B32A546EE0C4F0B3FE48B7C4`;
+  - PDB: `8F42AE3DEDEF400D6D068649EEEFA51F863ABC99FB206F4EE5B056479BDF1542`.
+- No Anomaly/XRay process was running during replacement, and the game was not
+  launched afterward.
