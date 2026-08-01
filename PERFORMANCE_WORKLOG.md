@@ -603,3 +603,50 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `mt_load_spawn_decode 0`. No graphics/MCM/modpack settings were changed.
 - No Anomaly process was running during replacement, and the game was not
   launched afterward.
+
+## 2026-08-01 - v52 MT stalker movement crash guard
+
+### Crash evidence
+
+- The fresh minidump and PDB-resolved stack end in
+  `stalker_movement_manager_base::setup_movement_params` at the destination
+  vertex replacement path. The caller chain is `GameThread` -> deferred
+  scheduler -> `CAI_Stalker::Think` -> stalker movement update.
+- The active runtime keeps `mt_scheduler 1`; the failure is therefore an
+  engine-side hard crash in the parallel game worker, not a Lua error and not
+  a Tactic Compass callback failure.
+- Current Monolith already addresses this exact source line in upstream commit
+  `efda92014`. The Anthology branch was missing its vertex guards and also
+  retained the older `on_restrictions_change` pointer-negation typo fixed by
+  upstream commit `5d187e8a6`.
+
+### Adapted fix
+
+- Validate every level-graph vertex before dereferencing it or publishing it
+  as the NPC destination.
+- When a destination is invalid, first recover it from the NPC's current valid
+  vertex. If recovery is impossible, force that NPC to stand for the update
+  instead of calling `vertex_position` with an invalid id.
+- Validate the results returned by `accessible_nearest` in both movement setup
+  and nearest-position recovery, and reject invalid ids in the common
+  `CMovementManager::set_level_dest_vertex` entry point.
+- Correct `accessible(!m_current.desired_position())` to dereference the actual
+  desired position. This lets restriction changes rebuild the path instead of
+  leaving a stale destination behind.
+- The MT scheduler remains enabled and `scheduler_batch_size` remains 256. No
+  Lua, UI/XML, PiP, shader, save, weapon, graphics, or modpack configuration
+  file was changed.
+
+### Build and installation
+
+- `DX11-AVX` Release compiled and linked successfully. Only the pre-existing
+  LuaJIT duplicate-object and template warnings remain.
+- Candidate and installed hashes match:
+  - EXE: `20AA24BC47832051BDB174298B1E38E5EB516441428149209C2DD83920BF97E0`;
+  - PDB: `5E90AC161239482556B0BBF1993601F06928DD2A67219C476665019836701EB1`.
+- The preceding v51 EXE/PDB were backed up to
+  `webcache/engine_v52_ai_movement_guard_backup_20260801_201705`:
+  - EXE: `1AFDFC1499EA8C04352212B251329FA2635DD7AE52E72D3BF666409305A10A0A`;
+  - PDB: `17F9844463843615F03CD2E5DA2D900B2E4BF91E03261B19837647AFF0427B44`.
+- No Anomaly process was running during replacement, and the game was not
+  launched afterward. The same save remains valid for the regression test.
