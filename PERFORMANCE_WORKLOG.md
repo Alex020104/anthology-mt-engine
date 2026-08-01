@@ -588,3 +588,18 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - EXE: `1AFDFC1499EA8C04352212B251329FA2635DD7AE52E72D3BF666409305A10A0A`;
   - PDB: `17F9844463843615F03CD2E5DA2D900B2E4BF91E03261B19837647AFF0427B44`.
 - The game was not launched. The same save can be used; no new game is needed.
+
+### Installation
+
+- v51 EXE/PDB were installed to `Anomaly-1.5.3-Anthology 2.1/bin`; installed
+  hashes match the candidate exactly.
+- The preceding v50 EXE/PDB and the pre-v51 `user.ltx` were backed up to
+  `webcache/engine_v51_gc_frame_backup_20260801_125006`:
+  - EXE: `8159871239F5CEF64482CD81530B304B3FFEC2D5DB02BB29EB15BCA41E06CE3B`;
+  - PDB: `4C4D7A1A12D3E249AD983230516B24AEF29E7F3C30F1D9BD00BE7AE2FFD33463`;
+  - `user.ltx`: `804F2EAEE3E1735A7FD3349F99A0E39776092B3AE24570991FCA8FF749077358`.
+- The active engine-only settings are `load_defer_full_lua_gc 1`,
+  `lua_parallel_gc_budget_us 250`, `mt_frame_profile 1`, and
+  `mt_load_spawn_decode 0`. No graphics/MCM/modpack settings were changed.
+- No Anomaly process was running during replacement, and the game was not
+  launched afterward.
