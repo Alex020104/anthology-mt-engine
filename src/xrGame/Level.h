@@ -267,6 +267,8 @@ public:
 	virtual void net_StartPlayDemo();
 	void cl_Process_Event(u16 dest, u16 type, NET_Packet& P);
 	void cl_Process_Spawn(NET_Packet& P);
+	void cl_Process_Spawn(NET_Packet& P, CSE_Abstract* prepared_entity, const shared_str& prepared_section,
+		u64 prepared_decode_ticks);
 
 	script_attachment* add_attachment(LPCSTR name, script_attachment* att);
 	script_attachment* get_attachment(LPCSTR name);

@@ -38,4 +38,5 @@ public:
 	virtual ObjectFactory::CLIENT_BASE_CLASS* client_object() const;
 #endif
 	virtual ObjectFactory::SERVER_BASE_CLASS* server_object(LPCSTR section) const;
+	virtual bool server_object_parallel_safe() const override { return false; }
 };

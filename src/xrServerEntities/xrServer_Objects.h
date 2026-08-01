@@ -225,6 +225,7 @@ SERVER_ENTITY_DECLARE_END
 
 #ifndef AI_COMPILER
 extern CSE_Abstract* F_entity_Create(LPCSTR caSection);
+extern CSE_Abstract* F_entity_Create(LPCSTR caSection, const CLASS_ID& clsid);
 #endif
 
 #pragma warning(pop)

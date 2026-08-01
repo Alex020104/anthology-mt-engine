@@ -399,8 +399,19 @@ void CDetailManager::UpdateVisibleM()
 	fade_start = fade_start * fade_start;
 	float fade_range = fade_limit - fade_start;
 	float r_ssaCHEAP = 16 * r_ssaDISCARD;
-    float fade_start_ssa = r_ssaDISCARD * ps_r__ssaDISCARD_fade_k;
+	float fade_start_ssa = r_ssaDISCARD * ps_r__ssaDISCARD_fade_k;
 	const bool no_scale_on_fade = psDeviceFlags2.test(rsNoScale);
+	const bool fast_details_update = ps_r2_ls_flags.test(R2FLAG_FAST_DETAILS_UPDATE);
+	const u32 current_frame = RDEVICE.dwFrame;
+
+	// Visibility/HOM queries keep their original deterministic owner-worker
+	// order. The expensive per-blade transforms below touch only their own slot,
+	// so they can safely fan out after this list is built.
+	static xr_vector<Slot*> visible_slots;
+	static xr_vector<u8> publish_slots;
+	static xr_vector<u32> next_update_frames;
+	visible_slots.clear();
+	visible_slots.reserve(dm_cache_size);
 
 	// Initialize 'vis' and 'cache'
 	// Collect objects for rendering
@@ -454,117 +465,122 @@ void CDetailManager::UpdateVisibleM()
 					continue; // invisible-occlusion
 				}
 #endif
-				// Add to visibility structures
-				if (RDEVICE.dwFrame > S.frame)
+				visible_slots.push_back(&S);
+			}
+		}
+	}
+
+	publish_slots.assign(visible_slots.size(), 1);
+	next_update_frames.assign(visible_slots.size(), 0);
+	for (u32 slot_index = 0; slot_index < visible_slots.size(); ++slot_index)
+	{
+		const Slot& slot = *visible_slots[slot_index];
+		if (current_frame > slot.frame && EYE.distance_to_sqr(slot.vis.sphere.P) <= fade_limit)
+			next_update_frames[slot_index] = fast_details_update ? current_frame + 1 :
+				current_frame + Random.randI(15, 30);
+	}
+	const auto update_slot = [&](u32 slot_index)
+	{
+		Slot& S = *visible_slots[slot_index];
+		if (current_frame <= S.frame)
+			return;
+
+		const float dist_sq = EYE.distance_to_sqr(S.vis.sphere.P);
+		if (dist_sq > fade_limit)
+		{
+			S.hidden = true;
+			publish_slots[slot_index] = 0;
+			return;
+		}
+
+		const float alpha = (dist_sq < fade_start) ? 0.f : (dist_sq - fade_start) / fade_range;
+		const float alpha_i = 1.f - alpha;
+		const float dist_sq_rcp = 1.f / dist_sq;
+		const u32 slot_hash = GetFvectorHash(S.vis.sphere.P);
+		S.frame = next_update_frames[slot_index];
+
+		for (int sp_id = 0; sp_id < dm_obj_in_slot; ++sp_id)
+		{
+			SlotPart& sp = S.G[sp_id];
+			if (sp.id == DetailSlot::ID_Empty)
+				continue;
+
+			for (SlotItemVec& items : sp.r_items)
+				items.clear_not_free();
+
+			const float R = objects[sp.id]->bv_sphere.R;
+			const float Rq_drcp = R * R * dist_sq_rcp;
+			SlotItem** items_begin = sp.items.data();
+			SlotItem** items_end = items_begin + sp.items.size();
+			for (SlotItem** item_iterator = items_begin; item_iterator != items_end; ++item_iterator)
+			{
+				SlotItem& item = **item_iterator;
+				const float scale = no_scale_on_fade ? item.scale : item.scale * alpha_i;
+				const float ssa = scale * scale * Rq_drcp;
+				if (ssa < r_ssaDISCARD)
 				{
-					// Calc fade factor	(per slot)
-					float dist_sq = EYE.distance_to_sqr(S.vis.sphere.P);
-					if (dist_sq > fade_limit)
+					item.alpha_target = 0;
+					continue;
+				}
+
+				if (ssa < fade_start_ssa)
+				{
+					const float survival_chance = (ssa - r_ssaDISCARD) / (fade_start_ssa - r_ssaDISCARD);
+					const u32 item_index = static_cast<u32>(item_iterator - items_begin);
+					const u32 blade_hash = slot_hash ^ (item_index * 0x9E3779B9u);
+					constexpr float hash_to_float = 1.0f / 4294967296.0f;
+					if (blade_hash * hash_to_float > _powf(survival_chance, ps_r__ssaDISCARD_exp))
 					{
-						S.hidden = true;
+						item.alpha_target = 0;
 						continue;
 					}
-					if (dist_sq > fade_limit) continue;
-					float alpha = (dist_sq < fade_start) ? 0.f : (dist_sq - fade_start) / fade_range;
-					float alpha_i = 1.f - alpha;
-					float dist_sq_rcp = 1.f / dist_sq;
-
-					if(ps_r2_ls_flags.test(R2FLAG_FAST_DETAILS_UPDATE))
-						S.frame			= RDEVICE.dwFrame+1;
-					else
-						S.frame			= RDEVICE.dwFrame+Random.randI(15,30);
-
-                    u32 slot_hash = GetFvectorHash(S.vis.sphere.P);
-					for (int sp_id = 0; sp_id < dm_obj_in_slot; sp_id++)
-					{
-						SlotPart& sp = S.G[sp_id];
-						if (sp.id == DetailSlot::ID_Empty) continue;
-
-						sp.r_items[0].clear_not_free();
-						sp.r_items[1].clear_not_free();
-						sp.r_items[2].clear_not_free();
-
-						float R = objects[sp.id]->bv_sphere.R;
-						float Rq_drcp = R * R * dist_sq_rcp; // reordered expression for 'ssa' calc
-
-						SlotItem **siIT = sp.items.data(), **siEND = siIT + sp.items.size();
-						for (; siIT != siEND; siIT++)
-						{
-							SlotItem& Item = *(*siIT);
-							float scale = no_scale_on_fade ? Item.scale : Item.scale * alpha_i;
-							float ssa = scale * scale * Rq_drcp;
-							if (ssa < r_ssaDISCARD)
-							{
-								Item.alpha_target = 0;
-								continue;
-							}
-
-                            // demonized: same logic as in r_dsgraph_insert_static
-                            if (ssa < fade_start_ssa)
-                            {
-                                // Base probability of survival
-                                float survival_chance = (ssa - r_ssaDISCARD) / (fade_start_ssa - r_ssaDISCARD);
-
-                                // Get the index of this specific grass blade inside the slot
-                                u32 item_index = (u32)(siIT - sp.items.data());
-
-                                // Mix the Slot's world position with the Item's index using a prime multiplier
-                                // This ensures every blade of grass in the level has a unique, stable seed
-                                u32 blade_hash = slot_hash ^ (item_index * 0x9E3779B9u);
-
-                                // Convert to [0.0, 1.0) float
-                                constexpr float hash_to_float = 1.0f / 4294967296.0f;
-                                float val = blade_hash * hash_to_float;
-
-                                // If the object's hash value is higher than its survival chance, cull it
-                                if (val > _powf(survival_chance, ps_r__ssaDISCARD_exp))
-                                {
-                                    Item.alpha_target = 0;
-                                    continue;
-                                }
-                            }
-
-							u32 vis_id = 0;
-							if (ssa > r_ssaCHEAP) vis_id = Item.vis_ID;
-
-							Fmatrix& M = Item.mRotY_calculated;
-							M = Item.mRotY;
-							M._11*=scale; M._21*=scale; M._31*=scale;
-							M._12*=scale; M._22*=scale; M._32*=scale;
-							M._13*=scale; M._23*=scale; M._33*=scale;
-
-							sp.r_items[vis_id].push_back(*siIT);
-							
-							if (S.hidden)
-							{
-								Item.alpha = 0;
-								S.hidden = false;
-							}
-							Item.alpha_target = 1;
-							Item.distance = dist_sq;
-							Item.position = S.vis.sphere.P;
-							//2							visible[vis_id][sp.id].push_back(&Item);
-						}
-					}
 				}
-				for (int sp_id = 0; sp_id < dm_obj_in_slot; sp_id++)
+
+				u32 vis_id = 0;
+				if (ssa > r_ssaCHEAP)
+					vis_id = item.vis_ID;
+
+				Fmatrix& matrix = item.mRotY_calculated;
+				matrix = item.mRotY;
+				matrix._11 *= scale; matrix._21 *= scale; matrix._31 *= scale;
+				matrix._12 *= scale; matrix._22 *= scale; matrix._32 *= scale;
+				matrix._13 *= scale; matrix._23 *= scale; matrix._33 *= scale;
+				sp.r_items[vis_id].push_back(*item_iterator);
+
+				if (S.hidden)
 				{
-					SlotPart& sp = S.G[sp_id];
-					if (sp.id == DetailSlot::ID_Empty) continue;
-					if (!sp.r_items[0].empty())
-					{
-						m_visibles[0][sp.id].push_back(&sp.r_items[0]);
-					}
-					if (!sp.r_items[1].empty())
-					{
-						m_visibles[1][sp.id].push_back(&sp.r_items[1]);
-					}
-					if (!sp.r_items[2].empty())
-					{
-						m_visibles[2][sp.id].push_back(&sp.r_items[2]);
-					}
+					item.alpha = 0;
+					S.hidden = false;
 				}
+				item.alpha_target = 1;
+				item.distance = dist_sq;
+				item.position = S.vis.sphere.P;
 			}
+		}
+	};
+
+	const u32 visible_slot_count = static_cast<u32>(visible_slots.size());
+	if (visible_slot_count >= 32)
+		xr_parallel_for(0u, visible_slot_count, update_slot);
+	else
+		for (u32 index = 0; index < visible_slot_count; ++index)
+			update_slot(index);
+
+	// Publish in the exact original cache order. Renderer-facing vectors remain
+	// single-writer even though their per-slot contents were prepared in parallel.
+	for (u32 slot_index = 0; slot_index < visible_slot_count; ++slot_index)
+	{
+		if (!publish_slots[slot_index])
+			continue;
+		Slot& S = *visible_slots[slot_index];
+		for (int sp_id = 0; sp_id < dm_obj_in_slot; ++sp_id)
+		{
+			SlotPart& sp = S.G[sp_id];
+			if (sp.id == DetailSlot::ID_Empty)
+				continue;
+			for (u32 visible = 0; visible < 3; ++visible)
+				if (!sp.r_items[visible].empty())
+					m_visibles[visible][sp.id].push_back(&sp.r_items[visible]);
 		}
 	}
 	RDEVICE.Statistic->RenderDUMP_DT_VIS.End();

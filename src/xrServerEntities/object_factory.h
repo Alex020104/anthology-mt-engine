@@ -83,6 +83,7 @@ public:
 #ifndef NO_XR_GAME
 	IC CLIENT_BASE_CLASS* client_object(const CLASS_ID& clsid) const;
 	IC SERVER_BASE_CLASS* server_object(const CLASS_ID& clsid, LPCSTR section) const;
+	IC bool server_object_parallel_safe(const CLASS_ID& clsid) const;
 #else
 	IC		SERVER_BASE_CLASS			*server_object					(const CLASS_ID &clsid, LPCSTR section) const;
 #endif

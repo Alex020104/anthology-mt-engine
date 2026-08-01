@@ -117,6 +117,11 @@ IC CObjectFactory::SERVER_BASE_CLASS* CObjectFactory::server_object(const CLASS_
 {
 	return (item(clsid).server_object(section));
 }
+
+IC bool CObjectFactory::server_object_parallel_safe(const CLASS_ID& clsid) const
+{
+	return item(clsid).server_object_parallel_safe();
+}
 #else
 IC	CObjectFactory::SERVER_BASE_CLASS *CObjectFactory::server_object	(const CLASS_ID &clsid, LPCSTR section) const
 {

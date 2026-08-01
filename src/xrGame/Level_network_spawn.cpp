@@ -13,32 +13,39 @@
 
 void CLevel::cl_Process_Spawn(NET_Packet& P)
 {
+	cl_Process_Spawn(P, nullptr, shared_str(), 0);
+}
+
+void CLevel::cl_Process_Spawn(NET_Packet& P, CSE_Abstract* prepared_entity,
+	const shared_str& prepared_section, u64 prepared_decode_ticks)
+{
 	const bool measure_spawn = pApp && pApp->LoadSessionActive();
 	const u64 total_started_at = measure_spawn ? CPU::QPC() : 0;
 	#ifdef SPAWN_ANTIFREEZE
 	PublishPreparedClientSpawnResource(P);
 	#endif
 	// Begin analysis
-	shared_str s_name;
-	P.r_stringZ(s_name);
+	shared_str s_name = prepared_section;
+	CSE_Abstract* E = prepared_entity;
+	if (!E)
+	{
+		P.r_stringZ(s_name);
+		E = F_entity_Create(*s_name);
+		R_ASSERT2(E, *s_name);
+
+		E->Spawn_Read(P);
+		if (E->s_flags.is(M_SPAWN_UPDATE))
+			E->UPDATE_Read(P);
+
+		if (!E->match_configuration())
+		{
+			F_entity_Destroy(E);
+			return;
+		}
+	}
 	PROF_EVENT("CLevel::cl_Process_Spawn");
 
 	//Msg("cl_Process_Spawn spawning %s", s_name.c_str());
-
-	// Create DC (xrSE)
-	CSE_Abstract* E = F_entity_Create(*s_name);
-	R_ASSERT2(E, *s_name);
-
-
-	E->Spawn_Read(P);
-	if (E->s_flags.is(M_SPAWN_UPDATE))
-		E->UPDATE_Read(P);
-
-	if (!E->match_configuration())
-	{
-		F_entity_Destroy(E);
-		return;
-	}
 	//-------------------------------------------------
 	//.	Msg ("M_SPAWN - %s[%d][%x] - %d %d", *s_name,  E->ID, E,E->ID_Parent, Device.dwFrame);
 	//-------------------------------------------------
@@ -54,13 +61,15 @@ void CLevel::cl_Process_Spawn(NET_Packet& P)
 	/*/
 	client_spawn_profile_sample profile;
 	if (measure_spawn)
-		profile.entity_decode_ticks = CPU::QPC() - total_started_at;
+		profile.entity_decode_ticks = prepared_entity ? prepared_decode_ticks : CPU::QPC() - total_started_at;
 	g_sv_Spawn(E, measure_spawn ? &profile : nullptr);
 
 	F_entity_Destroy(E);
 	if (measure_spawn)
 	{
 		profile.total_ticks = CPU::QPC() - total_started_at;
+		if (prepared_entity)
+			profile.total_ticks += prepared_decode_ticks;
 		RecordClientSpawnProfile(s_name, profile);
 	}
 	//*/
@@ -256,6 +265,13 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E, client_spawn_profile_sample* profile)
 
 void CLevel::RecordClientSpawnProfile(const shared_str& section, const client_spawn_profile_sample& sample)
 {
+	// A CLevel instance can survive a same-level quickload. Start a fresh profile
+	// on the first spawn after the preceding load session was dumped.
+	if (m_client_spawn_profile_dumped)
+	{
+		m_client_spawn_profile.clear();
+		m_client_spawn_profile_dumped = false;
+	}
 	auto& entry = m_client_spawn_profile[section];
 	++entry.count;
 	entry.total_ticks += sample.total_ticks;
@@ -309,9 +325,12 @@ void CLevel::DumpClientSpawnProfile()
 	for (u32 i = 0; i < top_count; ++i)
 	{
 		const ranked_spawn& item = ranked[i];
-		Msg("* [client-spawn/profile] #%02u total=%.2f ms count=%u avg=%.3f ms section=%s",
+		Msg("* [client-spawn/profile] #%02u total=%.2f ms count=%u avg=%.3f ms "
+			"decode=%.2f create/load=%.2f net_spawn=%.2f callbacks=%.2f section=%s",
 			i + 1, to_ms(item.entry.total_ticks), item.entry.count,
-			to_ms(item.entry.total_ticks) / double(item.entry.count), item.section.c_str());
+			to_ms(item.entry.total_ticks) / double(item.entry.count), to_ms(item.entry.entity_decode_ticks),
+			to_ms(item.entry.object_create_ticks), to_ms(item.entry.net_spawn_ticks),
+			to_ms(item.entry.post_spawn_callback_ticks), item.section.c_str());
 	}
 }
 

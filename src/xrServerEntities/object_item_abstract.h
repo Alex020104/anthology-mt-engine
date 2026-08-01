@@ -27,6 +27,7 @@ public:
 	virtual ObjectFactory::CLIENT_BASE_CLASS* client_object() const = 0;
 #endif
 	virtual ObjectFactory::SERVER_BASE_CLASS* server_object(LPCSTR section) const = 0;
+	virtual bool server_object_parallel_safe() const { return true; }
 };
 
 #include "object_item_abstract_inline.h"

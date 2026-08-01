@@ -51,6 +51,8 @@
 #include "xrPhysics/IPHWorld.h"
 #include "xrPhysics/console_vars.h"
 #include "../xrEngine/device.h"
+#include "../xrServerEntities/object_factory.h"
+#include "../xrServerEntities/clsid_game.h"
 
 #include "UIGameCustom.h"
 #include "ui/UIPdaWnd.h"
@@ -81,6 +83,7 @@ u32 lvInterpSteps = 0;
 #ifdef SPAWN_ANTIFREEZE
 BOOL spawn_antifreeze = TRUE;
 BOOL spawn_antifreeze_debug = FALSE;
+BOOL mt_load_spawn_decode = TRUE;
 
 struct spawn_and_prefetch_events
 {
@@ -689,11 +692,108 @@ void CLevel::ProcessSpawnEvents()
         }
 	}
 
+	struct decoded_spawn
+	{
+		CSE_Abstract* entity = nullptr;
+		shared_str section;
+		CLASS_ID clsid = 0;
+		u16 object_id = u16(-1);
+		u16 parent_id = u16(-1);
+		u64 decode_ticks = 0;
+		bool parallel_safe = false;
+		bool configuration_matches = true;
+	};
+
+	xr_vector<decoded_spawn> decoded;
+	bool use_parallel_decode = mt_load_spawn_decode && pApp && pApp->LoadSessionActive() &&
+		events_to_process.size() >= 64;
+	if (use_parallel_decode)
+	{
+		decoded.resize(events_to_process.size());
+		auto packet_data = make_intrusive<ProcessNetPacket>();
+		for (u32 index = 0; index < events_to_process.size(); ++index)
+		{
+			NET_Packet& packet = packet_data->P;
+			events_to_process[index].implication(packet);
+			decoded_spawn& item = decoded[index];
+			item.object_id = GetSpawnInfo(packet, item.parent_id, item.section);
+			if (!pSettings->section_exist(item.section.c_str()) ||
+				!pSettings->line_exist(item.section.c_str(), "class"))
+				continue;
+
+			item.clsid = pSettings->r_clsid(item.section.c_str(), "class");
+			string16 clsid_text;
+			CLSID2TEXT(item.clsid, clsid_text);
+			const bool ai_entity = !strncmp(clsid_text, "AI_", 3);
+			// Script-created server entities enter the single Lua VM. Actor/AI
+			// constructors can use the live ALife registry and the process-wide RNG,
+			// while custom_data can enter the ALife config registry. Keep all of them
+			// on the owner thread; workers get native data-only server entities.
+			item.parallel_safe = object_factory().server_object_parallel_safe(item.clsid) &&
+				item.clsid != CLSID_OBJECT_ACTOR && !ai_entity &&
+				!pSettings->line_exist(item.section.c_str(), "custom_data");
+		}
+
+		const u64 parallel_started_at = CPU::QPC();
+		try
+		{
+			xr_parallel_for(0u, static_cast<u32>(decoded.size()), [&](u32 index)
+			{
+				decoded_spawn& item = decoded[index];
+				if (!item.parallel_safe)
+					return;
+
+				NET_Packet packet;
+				events_to_process[index].implication(packet);
+				u16 message;
+				packet.r_begin(message);
+				shared_str packet_section;
+				packet.r_stringZ(packet_section);
+				if (packet_section != item.section)
+					return;
+
+				const u64 started_at = CPU::QPC();
+				item.entity = F_entity_Create(item.section.c_str(), item.clsid);
+				if (!item.entity)
+					return;
+				item.entity->Spawn_Read(packet);
+				if (item.entity->s_flags.is(M_SPAWN_UPDATE))
+					item.entity->UPDATE_Read(packet);
+				item.configuration_matches = item.entity->match_configuration();
+				item.decode_ticks = CPU::QPC() - started_at;
+			});
+		}
+		catch (...)
+		{
+			for (decoded_spawn& item : decoded)
+				if (item.entity)
+					F_entity_Destroy(item.entity);
+			decoded.clear();
+			use_parallel_decode = false;
+			Msg("! [client-spawn/decode] worker preparation failed; using owner-thread fallback");
+		}
+
+		if (use_parallel_decode)
+		{
+			u32 prepared_count = 0;
+			u32 owner_fallback_count = 0;
+			for (const decoded_spawn& item : decoded)
+			{
+				prepared_count += item.entity != nullptr;
+				owner_fallback_count += item.entity == nullptr;
+			}
+			const double wall_ms = double(CPU::QPC() - parallel_started_at) * 1000.0 / double(CPU::qpc_freq);
+			Msg("* [client-spawn/decode] parallel prepared=%u owner-fallback=%u wall=%.2f ms",
+				prepared_count, owner_fallback_count, wall_ms);
+		}
+	}
+
 	// NET_Packet is 16 KiB. Reuse one owner-thread packet for the serial spawn
 	// loop instead of allocating and freeing it once per event.
 	auto packet_data = make_intrusive<ProcessNetPacket>();
-	for (const auto& E : events_to_process)
+	for (u32 event_index = 0; event_index < events_to_process.size(); ++event_index)
 	{
+		const NET_Event& E = events_to_process[event_index];
 		u16 ID, dest, type;
 		NET_Packet& P = packet_data->P;
 		ID = E.ID;
@@ -703,7 +803,16 @@ void CLevel::ProcessSpawnEvents()
 
 		u16 parent_id;
 		shared_str section;
-		u16 obj_id = GetSpawnInfo(P, parent_id, section);
+		u16 obj_id;
+		decoded_spawn* prepared = use_parallel_decode ? &decoded[event_index] : nullptr;
+		if (prepared)
+		{
+			parent_id = prepared->parent_id;
+			section = prepared->section;
+			obj_id = prepared->object_id;
+		}
+		else
+			obj_id = GetSpawnInfo(P, parent_id, section);
 
 		if (spawn_antifreeze_debug) Msg("[ProcessSpawnEvents] spawning section %s, obj_id %d, parent_id %d, event_id %d", section.c_str(), obj_id, parent_id, dest);
 
@@ -721,11 +830,13 @@ void CLevel::ProcessSpawnEvents()
             if (spawn_data_it->second.hasAlifeObject)
             {
                 auto obj = ai().alife().objects().object(obj_id);
-                if (!obj)
-                {
-                    if (spawn_antifreeze_debug) Msg("![ProcessSpawnEvents] object was in alife, but now is not, do not spawn, section %s, obj_id %d, parent_id %d, event_id %d", section.c_str(), obj_id, parent_id, dest);
-                    continue;
-                }
+				if (!obj)
+				{
+					if (spawn_antifreeze_debug) Msg("![ProcessSpawnEvents] object was in alife, but now is not, do not spawn, section %s, obj_id %d, parent_id %d, event_id %d", section.c_str(), obj_id, parent_id, dest);
+					if (prepared && prepared->entity)
+						F_entity_Destroy(prepared->entity);
+					continue;
+				}
             }
         }        
 
@@ -736,6 +847,8 @@ void CLevel::ProcessSpawnEvents()
 			if (!parent_obj || !parent_obj->m_bOnline)
 			{
 				if (spawn_antifreeze_debug) Msg("![ProcessSpawnEvents] parent object is not in alife, do not spawn, section %s, obj_id %d, parent_id %d, event_id %d", section.c_str(), obj_id, parent_id, dest);
+				if (prepared && prepared->entity)
+					F_entity_Destroy(prepared->entity);
 				continue;
 			}
 		}
@@ -755,8 +868,21 @@ void CLevel::ProcessSpawnEvents()
 		u16 dummy16;
 		P.r_begin(dummy16);
 		pApp->LoadSessionRecordClientEvent(true, 0, 0, P.B.data, P.B.count);
-		cl_Process_Spawn(P);
+		if (prepared && prepared->entity)
+		{
+			if (prepared->configuration_matches)
+				cl_Process_Spawn(P, prepared->entity, prepared->section, prepared->decode_ticks);
+			else
+				F_entity_Destroy(prepared->entity);
+			prepared->entity = nullptr;
+		}
+		else
+			cl_Process_Spawn(P);
 	}
+
+	for (decoded_spawn& item : decoded)
+		if (item.entity)
+			F_entity_Destroy(item.entity);
 }
 #endif
 

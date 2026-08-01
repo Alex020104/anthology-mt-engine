@@ -114,8 +114,23 @@ void XRay::Engine::CalculateBonesThread()
 	};
 	std::sort(spatialsSnapshot.begin(), spatialsSnapshot.end(), sortFunc);
 
-    for (const auto& snapshot : spatialsSnapshot)
-        snapshot.pKin->CalculateBones(TRUE);
+	const u32 snapshot_count = static_cast<u32>(spatialsSnapshot.size());
+	if (snapshot_count < 8)
+	{
+		for (const auto& snapshot : spatialsSnapshot)
+			snapshot.pKin->CalculateBones(TRUE);
+	}
+	else
+	{
+		// Each snapshot owns an independent visual. The legacy MT path moved the
+		// whole loop to one worker, which still serialized crowded scenes. Let the
+		// PPL scheduler distribute independent skeletons while the render owner
+		// works on the frame; CalculateBones keeps its existing per-visual guard.
+		xr_parallel_for(0u, snapshot_count, [&](u32 index)
+		{
+			spatialsSnapshot[index].pKin->CalculateBones(TRUE);
+		});
+	}
 }
 
 extern BOOL psLua_ParallelGC;

@@ -460,3 +460,63 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `webcache/engine_v49_spawn_profile_backup_20260801_110333`.
 - No Lua, config, UI/XML, PiP, shader, save, or weapon file was modified. The
   game was not launched during build or installation.
+
+## v49 measurement and v50 safe spawn/frame parallelism
+
+### Measured target
+
+- The first profiled v49 load processed 4,038 client spawns. Aggregate client
+  work was `33,540 ms`: server-entity decode `4,936 ms`, client object
+  create/load `10,024 ms`, `net_Spawn` `17,850 ms`, and callbacks `725 ms`.
+  One actor spawn accounted for `13,985 ms` of the aggregate total.
+- The same-level quickload measured server/Lua `18,859 ms`, native level
+  preparation `1,554 ms`, client spawn `13,355 ms`, and precache wall time
+  `45,341 ms`. Native level preparation and texture reuse are already fast;
+  the remaining target is object/Lua work and the per-frame CPU path.
+- The active configuration already enables `r2_mt`, `mt_scheduler`,
+  `mt_calc_bones`, `r__optimize_calculate_bones`, and the enemy-manager useful
+  cache. `r__clear_resources_on_unload` is off, so quickloads retain reusable
+  resources. PiP/3D scopes remain enabled.
+- Hardware inspection found a Ryzen 7 3700X (8C/16T), RTX 5070 12 GB, and
+  32 GB DDR4. The DIMMs are rated for 3200 MT/s but are currently configured
+  at 2400 MT/s; Windows uses the Balanced power plan. The supplied gameplay
+  capture showed a 94 C CPU and about 35% GPU use. The selected 1080p graphics
+  profile is therefore not the principal FPS limiter.
+
+### Adapted implementation
+
+- Added parallel server-entity packet decode for large load-session spawn
+  batches. Packet preparation runs on workers, while renderer resource
+  publication, client object construction/load, `net_Spawn`, ALife checks,
+  and every Lua-visible callback remain on the owner thread and retain the
+  original event order.
+- The worker allow-list is deliberately conservative: script-factory classes,
+  actor, every `AI_*` class, and sections with `custom_data` use the original
+  owner-thread path. This avoids the shared Lua VM, live ALife registry, and
+  process-wide RNG. The feature is exposed as `mt_load_spawn_decode` and is on
+  by default.
+- Added `[client-spawn/decode]` wall-time/count diagnostics and reset spawn
+  profiling after each completed session, so a same-level quickload now emits
+  a fresh profile. Top sections include decode, create/load, `net_Spawn`, and
+  callback attribution instead of only a total.
+- Split independent visible skeleton `CalculateBones` calls through the
+  existing parallel scheduler when at least eight visuals need work. Existing
+  frustum/distance rejection and each visual's own synchronization remain in
+  place.
+- Split expensive detail-blade transform/cull preparation by visible cache
+  slot when at least 32 slots are active. Frustum/HOM tests, random refresh
+  scheduling, and publication into renderer-visible vectors stay deterministic
+  and single-writer. No grass shaders, SSS parameters, or detail content were
+  changed.
+- No Lua, XML/UI, PiP, shader, save, weapon, or modpack config file was
+  modified by v50.
+
+### Build candidate
+
+- `DX11-AVX` Release compiled and linked successfully. The only linker warning
+  is the pre-existing duplicate `lj_vm.obj` entry in the LuaJIT project.
+- Candidate hashes:
+  - EXE: `8159871239F5CEF64482CD81530B304B3FFEC2D5DB02BB29EB15BCA41E06CE3B`;
+  - PDB: `4C4D7A1A12D3E249AD983230516B24AEF29E7F3C30F1D9BD00BE7AE2FFD33463`.
+- The game was not launched. Load-time and FPS gains remain to be measured on
+  the user's same save and same gameplay position.
