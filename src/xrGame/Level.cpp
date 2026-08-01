@@ -1124,6 +1124,9 @@ void CLevel::OnFrame()
 		pApp->LoadSessionPhaseEnd(LoadSessionResourceWait);
 		queues_drained = load_queues_drained();
 	}
+	if (pApp->LoadSessionActive() && !Device.dwPrecacheFrame && g_loading_events.empty() &&
+		bReady && control_ready && queues_drained)
+		DumpClientSpawnProfile();
 	pApp->LoadSessionTryFinish(bReady, control_ready, queues_drained);
 
 	if (m_bNeed_CrPr)

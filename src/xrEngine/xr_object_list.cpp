@@ -520,6 +520,21 @@ CObject* CObjectList::Create(LPCSTR name)
 	return O;
 }
 
+CObject* CObjectList::Create(LPCSTR name, CLASS_ID clsid)
+{
+	CObject* O = g_pGamePersistent->ObjectPool.create(name, clsid);
+	// Msg("CObjectList::Create [%x]%s", O, name);
+
+    if (O)
+	{
+	    objects_sleeping.push_back(O);
+		if (O->net_RelcaseNeeded())
+			objects_relcase_sleeping.push_back(O);
+	}
+
+	return O;
+}
+
 void CObjectList::Destroy(CObject* O)
 {
 	if (0 == O) return;

@@ -26,6 +26,7 @@ public:
 	void clear();
 
 	CObject* create(LPCSTR name);
+	CObject* create(LPCSTR name, CLASS_ID clsid);
 	void destroy(CObject* O);
 
 	IGame_ObjectPool();

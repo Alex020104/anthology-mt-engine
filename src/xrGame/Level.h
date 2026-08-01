@@ -178,6 +178,24 @@ public:
 	CZoneList* create_hud_zones_list();
 
 private:
+	struct client_spawn_profile_sample
+	{
+		u64 total_ticks = 0;
+		u64 entity_decode_ticks = 0;
+		u64 object_create_ticks = 0;
+		u64 net_spawn_ticks = 0;
+		u64 post_spawn_callback_ticks = 0;
+		u64 game_on_spawn_ticks = 0;
+	};
+	struct client_spawn_profile_entry : client_spawn_profile_sample
+	{
+		u32 count = 0;
+	};
+	xr_map<shared_str, client_spawn_profile_entry> m_client_spawn_profile;
+	bool m_client_spawn_profile_dumped = false;
+	void RecordClientSpawnProfile(const shared_str& section, const client_spawn_profile_sample& sample);
+	void DumpClientSpawnProfile();
+
 	// preload sounds registry
 	DEFINE_MAP(shared_str, ref_sound, SoundRegistryMap, SoundRegistryMapIt);
 	SoundRegistryMap sound_registry;
@@ -320,7 +338,7 @@ public:
 	u32 Objects_net_Save(NET_Packet* _Packet, u32 start, u32 count);
 	virtual void Send(NET_Packet& P, u32 dwFlags = DPNSEND_GUARANTEED, u32 dwTimeout = 0);
 	void g_cl_Spawn(LPCSTR name, u8 rp, u16 flags, Fvector pos); // only ask server
-	void g_sv_Spawn(CSE_Abstract* E); // server reply/command spawning
+	void g_sv_Spawn(CSE_Abstract* E, client_spawn_profile_sample* profile = nullptr); // server reply/command spawning
 	// Save/Load/State
 	void SLS_Load(LPCSTR name); // Game Load
 	void SLS_Default(); // Default/Editor Load

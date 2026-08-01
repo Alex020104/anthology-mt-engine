@@ -422,3 +422,41 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The game was not launched during validation. The next same-save test should
   compare visible load time and the log's `secondary wait` and `client spawn`
   fields; no specific improvement is claimed before that measurement.
+
+## v48 measured result and v49 client-spawn attribution
+
+### v48 result
+
+- The user tested the installed v48 executable on the same save. It was active
+  with hash `DBDD801B245C954A78D6AF75192B0515EE40C5A071B4D95C7FCFD7BB244C4F27`.
+- v48 did not produce a useful total-load improvement. Engine-ready time
+  regressed from `62,658 ms` to `76,496 ms`; client spawn increased from
+  `26,898 ms` to `35,359 ms`; FrameMove increased from `31,967 ms` to
+  `40,692 ms`.
+- The intended render-worker reduction is visible but immaterial:
+  secondary wait decreased from `6,304 ms` to `5,524 ms` (about `780 ms`).
+  This is not sufficient and is not treated as a successful optimization.
+- The session still creates 4,036 client objects and processes 1,790 events.
+  Native level preparation remains parallel at `3,687 ms`; the unresolved
+  target is the serial client object construction and callback path.
+
+### v49 attribution and safe lookup removal
+
+- Added owner-thread timing around each client spawn with aggregate categories:
+  server-entity decode, client object construction/`Load`, `net_Spawn`, post
+  spawn callbacks, `Game::OnSpawn`, and residual work.
+- The log now prints the aggregate `[client-spawn/profile]` line and the 15
+  sections with the highest cumulative spawn time. This provides the data
+  needed to choose a concrete preparation stage for the next worker adaptation
+  instead of changing Lua/object ownership speculatively.
+- Removed one duplicate `system.ltx` class lookup per client object. The client
+  object pool now accepts the `CLASS_ID` already resolved and validated by the
+  corresponding server entity. Constructors, `Load`, spawn order, packet data,
+  callbacks, and owner thread are unchanged.
+- `DX11-AVX` Release build completed successfully. Installed hashes:
+  - EXE: `5556A364C08005EAD12FF2B6D15646072BF333E7B32A546EE0C4F0B3FE48B7C4`;
+  - PDB: `8F42AE3DEDEF400D6D068649EEEFA51F863ABC99FB206F4EE5B056479BDF1542`.
+- The previous v48 EXE/PDB are backed up in
+  `webcache/engine_v49_spawn_profile_backup_20260801_110333`.
+- No Lua, config, UI/XML, PiP, shader, save, or weapon file was modified. The
+  game was not launched during build or installation.

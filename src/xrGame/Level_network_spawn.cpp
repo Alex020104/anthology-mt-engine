@@ -7,11 +7,14 @@
 #include "game_level_cross_table.h"
 #include "level_graph.h"
 #include "client_spawn_manager.h"
+#include "../xrEngine/x_ray.h"
 #include "../xrEngine/xr_object.h"
 #include "../xrEngine/IGame_Persistent.h"
 
 void CLevel::cl_Process_Spawn(NET_Packet& P)
 {
+	const bool measure_spawn = pApp && pApp->LoadSessionActive();
+	const u64 total_started_at = measure_spawn ? CPU::QPC() : 0;
 	#ifdef SPAWN_ANTIFREEZE
 	PublishPreparedClientSpawnResource(P);
 	#endif
@@ -49,9 +52,17 @@ void CLevel::cl_Process_Spawn(NET_Packet& P)
 	game_spawn_queue.push_back(E);
 	if (g_bDebugEvents)		ProcessGameSpawns();
 	/*/
-	g_sv_Spawn(E);
+	client_spawn_profile_sample profile;
+	if (measure_spawn)
+		profile.entity_decode_ticks = CPU::QPC() - total_started_at;
+	g_sv_Spawn(E, measure_spawn ? &profile : nullptr);
 
 	F_entity_Destroy(E);
+	if (measure_spawn)
+	{
+		profile.total_ticks = CPU::QPC() - total_started_at;
+		RecordClientSpawnProfile(s_name, profile);
+	}
 	//*/
 };
 
@@ -88,7 +99,7 @@ void CLevel::g_cl_Spawn(LPCSTR name, u8 rp, u16 flags, Fvector pos)
 #	include "ai_debug.h"
 #endif // DEBUG
 
-void CLevel::g_sv_Spawn(CSE_Abstract* E)
+void CLevel::g_sv_Spawn(CSE_Abstract* E, client_spawn_profile_sample* profile)
 {
 #ifdef DEBUG_MEMORY_MANAGER
 	size_t							E_mem = 0;
@@ -112,7 +123,12 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 
 	// Client spawn
 	//	T.Start		();
-	CObject* O = Objects.Create(*E->s_name);
+	const u64 object_create_started_at = profile ? CPU::QPC() : 0;
+	// The server entity already resolved the section class. Reuse it instead of
+	// repeating the same system.ltx lookup for every client object.
+	CObject* O = Objects.Create(*E->s_name, E->m_tClassID);
+	if (profile)
+		profile->object_create_ticks = CPU::QPC() - object_create_started_at;
 	// Msg				("--spawn--CREATE: %f ms",1000.f*T.GetAsync());
 
 	//	T.Start		();
@@ -126,7 +142,11 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
         return;
     }
 
-	if (!O->net_Spawn(E))
+	const u64 net_spawn_started_at = profile ? CPU::QPC() : 0;
+	const bool net_spawned = O->net_Spawn(E);
+	if (profile)
+		profile->net_spawn_ticks = CPU::QPC() - net_spawn_started_at;
+	if (!net_spawned)
 	{
         Msg("! Failed to spawn entity '%s', net_Spawn failed", *E->s_name);
 		O->net_Destroy();
@@ -142,6 +162,7 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 	}
 	else
 	{
+		const u64 callbacks_started_at = profile ? CPU::QPC() : 0;
 
 #ifdef DEBUG_MEMORY_MANAGER
 		mem_alloc_gather_stats	(!!psAI_Flags.test(aiDebugOnFrameAllocs));
@@ -201,6 +222,8 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
             smart_cast<CGameObject*>(O)->callback(GameObject::eNetSpawnAfter)();
         }
 #endif
+		if (profile)
+			profile->post_spawn_callback_ticks = CPU::QPC() - callbacks_started_at;
 	}
 
 	/*if (E->s_flags.is(M_SPAWN_UPDATE)) {
@@ -215,7 +238,10 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 		}*/ //:(
 
 	//---------------------------------------------------------
+	const u64 game_spawn_started_at = profile ? CPU::QPC() : 0;
 	Game().OnSpawn(O);
+	if (profile)
+		profile->game_on_spawn_ticks = CPU::QPC() - game_spawn_started_at;
 	//---------------------------------------------------------
 
 #ifdef DEBUG_MEMORY_MANAGER
@@ -226,6 +252,67 @@ void CLevel::g_sv_Spawn(CSE_Abstract* E)
 	}
 #endif // DEBUG_MEMORY_MANAGER
 
+}
+
+void CLevel::RecordClientSpawnProfile(const shared_str& section, const client_spawn_profile_sample& sample)
+{
+	auto& entry = m_client_spawn_profile[section];
+	++entry.count;
+	entry.total_ticks += sample.total_ticks;
+	entry.entity_decode_ticks += sample.entity_decode_ticks;
+	entry.object_create_ticks += sample.object_create_ticks;
+	entry.net_spawn_ticks += sample.net_spawn_ticks;
+	entry.post_spawn_callback_ticks += sample.post_spawn_callback_ticks;
+	entry.game_on_spawn_ticks += sample.game_on_spawn_ticks;
+}
+
+void CLevel::DumpClientSpawnProfile()
+{
+	if (m_client_spawn_profile_dumped || m_client_spawn_profile.empty())
+		return;
+	m_client_spawn_profile_dumped = true;
+
+	struct ranked_spawn
+	{
+		shared_str section;
+		client_spawn_profile_entry entry;
+	};
+	xr_vector<ranked_spawn> ranked;
+	ranked.reserve(m_client_spawn_profile.size());
+	client_spawn_profile_entry aggregate;
+	for (const auto& [section, entry] : m_client_spawn_profile)
+	{
+		ranked.push_back({section, entry});
+		aggregate.count += entry.count;
+		aggregate.total_ticks += entry.total_ticks;
+		aggregate.entity_decode_ticks += entry.entity_decode_ticks;
+		aggregate.object_create_ticks += entry.object_create_ticks;
+		aggregate.net_spawn_ticks += entry.net_spawn_ticks;
+		aggregate.post_spawn_callback_ticks += entry.post_spawn_callback_ticks;
+		aggregate.game_on_spawn_ticks += entry.game_on_spawn_ticks;
+	}
+	std::sort(ranked.begin(), ranked.end(), [](const ranked_spawn& left, const ranked_spawn& right)
+	{
+		return left.entry.total_ticks > right.entry.total_ticks;
+	});
+	const auto to_ms = [](u64 ticks) { return double(ticks) * 1000.0 / double(CPU::qpc_freq); };
+	const u64 accounted = aggregate.entity_decode_ticks + aggregate.object_create_ticks +
+		aggregate.net_spawn_ticks + aggregate.post_spawn_callback_ticks + aggregate.game_on_spawn_ticks;
+	const u64 other = aggregate.total_ticks > accounted ? aggregate.total_ticks - accounted : 0;
+	Msg("* [client-spawn/profile] count=%u sections=%u total=%.2f ms decode=%.2f create/load=%.2f "
+		"net_spawn=%.2f callbacks=%.2f game_on_spawn=%.2f other=%.2f",
+		aggregate.count, static_cast<u32>(ranked.size()), to_ms(aggregate.total_ticks),
+		to_ms(aggregate.entity_decode_ticks), to_ms(aggregate.object_create_ticks),
+		to_ms(aggregate.net_spawn_ticks), to_ms(aggregate.post_spawn_callback_ticks),
+		to_ms(aggregate.game_on_spawn_ticks), to_ms(other));
+	const u32 top_count = std::min<u32>(15, static_cast<u32>(ranked.size()));
+	for (u32 i = 0; i < top_count; ++i)
+	{
+		const ranked_spawn& item = ranked[i];
+		Msg("* [client-spawn/profile] #%02u total=%.2f ms count=%u avg=%.3f ms section=%s",
+			i + 1, to_ms(item.entry.total_ticks), item.entry.count,
+			to_ms(item.entry.total_ticks) / double(item.entry.count), item.section.c_str());
+	}
 }
 
 CSE_Abstract* CLevel::spawn_item(LPCSTR section, const Fvector& position, u32 level_vertex_id, u16 parent_id,

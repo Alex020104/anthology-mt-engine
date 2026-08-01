@@ -51,8 +51,12 @@ void IGame_ObjectPool::clear()
 
 CObject* IGame_ObjectPool::create(LPCSTR name)
 {
-	CLASS_ID CLS = pSettings->r_clsid(name, "class");
-	CObject* O = (CObject*)NEW_INSTANCE(CLS);
+	return create(name, pSettings->r_clsid(name, "class"));
+}
+
+CObject* IGame_ObjectPool::create(LPCSTR name, CLASS_ID clsid)
+{
+	CObject* O = (CObject*)NEW_INSTANCE(clsid);
 
     if (O)
     {

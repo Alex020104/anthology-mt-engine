@@ -64,6 +64,7 @@ public:
 	void Unload();
 
 	CObject* Create(LPCSTR name);
+	CObject* Create(LPCSTR name, CLASS_ID clsid);
 	void Destroy(CObject* O);
 
 	void SingleUpdate(CObject* O);
