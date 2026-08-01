@@ -171,12 +171,6 @@ struct ProcessNetPacket : public intrusive_base_nonatomic
     NET_Packet P;
 };
 
-struct ProcessGameEventsData : ProcessNetPacket
-{
-	prefetch_event E;
-    NET_Packet PRespond;
-};
-
 namespace crash_saving {
     extern void(*save_impl)();
     static bool g_isSaving = false;
@@ -695,11 +689,13 @@ void CLevel::ProcessSpawnEvents()
         }
 	}
 
+	// NET_Packet is 16 KiB. Reuse one owner-thread packet for the serial spawn
+	// loop instead of allocating and freeing it once per event.
+	auto packet_data = make_intrusive<ProcessNetPacket>();
 	for (const auto& E : events_to_process)
 	{
-		auto data = make_intrusive<ProcessNetPacket>();
 		u16 ID, dest, type;
-		NET_Packet& P = data->P;
+		NET_Packet& P = packet_data->P;
 		ID = E.ID;
 		dest = E.destination;
 		type = E.type;
@@ -778,6 +774,11 @@ void CLevel::ProcessGameEvents()
 		}
 	}
 
+	// NET_Packet is 16 KiB and this queue contains thousands of entries during
+	// a save load. Keep one packet for the serial owner-thread loop; postponed
+	// prefetch entries still receive their own durable packet copy below.
+	auto packet_data = make_intrusive<ProcessNetPacket>();
+
 	// Game events
 	{
 		for (auto it = events_to_process.begin(); it != events_to_process.end(); )
@@ -787,8 +788,7 @@ void CLevel::ProcessGameEvents()
 			u16 dest = it->destination;
 			u16 type = it->type;
 
-			auto data = make_intrusive<ProcessGameEventsData>();
-			auto& P = data->P;
+			auto& P = packet_data->P;
 			it->implication(P);
 
 //AVO: spawn antifreeze implementation, originally by alpet, reritten by demonized
@@ -881,7 +881,7 @@ void CLevel::ProcessGameEvents()
 
 						if (!models.empty())
 						{
-							auto& E = data->E;
+							prefetch_event E;
 							E.p = P;
 							E.models = std::move(models);
 							E.id = obj_id;
@@ -940,7 +940,10 @@ void CLevel::ProcessGameEvents()
 							break;
 						OActor->MoveActor(NewPos, NewDir);
 					}
-					auto& PRespond = data->PRespond;
+					// This response is rare; allocate its large packet only for the
+					// message type that actually needs it.
+					auto response_data = make_intrusive<ProcessNetPacket>();
+					auto& PRespond = response_data->P;
 					PRespond.w_begin(M_MOVE_PLAYERS_RESPOND);
 					Send(PRespond, net_flags(TRUE, TRUE));
 					break;

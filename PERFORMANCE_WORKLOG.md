@@ -371,3 +371,54 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   Lua/client spawn, scheduler, and synchronization work. Further graphics/MCM
   reductions may improve gameplay FPS but cannot plausibly reduce this save
   to 10 seconds on their own.
+
+## v48 owner-safe spawn and sparse-precache worker reduction
+
+### Runtime target
+
+- The latest v47 log processes 4,040 client spawns and 1,792 client events.
+  Client spawn accounts for `26,898 ms` of the load session and overlaps the
+  `31,967 ms` aggregate FrameMove cost.
+- Sparse precache renders the world on 12 of 58 measured frames, but the
+  previous code still scheduled HOM/detail preparation and visible-skeleton
+  bone calculation on all 58 frames. Their results on the 46 skipped frames
+  were overwritten before a world frame could consume them and contributed to
+  the `6,304 ms` secondary-thread wait.
+- Current Monolith MT and IX-Ray development implementations were reviewed
+  again. Object creation, `net_Spawn`, Lua callbacks, real-time scheduler work,
+  and renderer publication remain owner-thread operations in this adaptation.
+
+### Adapted changes
+
+- World-render-only secondary jobs (`seqParallelRender` HOM/detail work and
+  `CalculateBonesThread`) now follow the same sparse-precache decision as the
+  world renderer. They still run on every displayed precache world frame and
+  every normal gameplay frame.
+- All 60 logical precache frames, FrameMove, object/HUD/script updates,
+  particles, Lua-visible callbacks, scheduler ordering, loading-screen draws,
+  and the final world render remain intact.
+- `ProcessGameEvents` now reuses one 16 KiB `NET_Packet` across its serial
+  owner-thread loop instead of allocating a three-packet helper for every
+  event. A durable packet copy is still made when an event is handed to the
+  asynchronous prefetch queue, and the rare move-player response allocates its
+  packet only when used.
+- `ProcessSpawnEvents` likewise reuses one owner-thread packet across its
+  batch. Spawn order, packet contents, ALife validation, model publication,
+  `cl_Process_Spawn`, and Lua callback order are unchanged.
+- No Lua, XML, UI, PiP, shader, config, save, weapon, or renderer-content file
+  was modified.
+
+### Build and installation
+
+- `DX11-AVX` Release build completed successfully. The modified translation
+  units compile and link; only pre-existing project warnings remain.
+- Candidate and installed hashes match:
+  - EXE: `DBDD801B245C954A78D6AF75192B0515EE40C5A071B4D95C7FCFD7BB244C4F27`;
+  - PDB: `3B7706F981A9D5CE341B5D227D5D1F05F3029CA40B25AAE427CF345389F24812`.
+- The previous v47 EXE/PDB are backed up in
+  `webcache/engine_v48_install_backup_20260801_100621` with hashes
+  `EE4C5C5FFBFAD9D1B7072E333B8E2F6ADD90557F466787377FDB623C6EA9487F`
+  and `498273748C52210A5C627BE8309810CF42326A21269513F418E6446200BEE51A`.
+- The game was not launched during validation. The next same-save test should
+  compare visible load time and the log's `secondary wait` and `client spawn`
+  fields; no specific improvement is claimed before that measurement.

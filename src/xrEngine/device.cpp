@@ -508,12 +508,22 @@ void CRenderDevice::on_idle()
 	}
 	STOP_PROFILE;
 
-    // TODO: Try to move this upper
-    secondary_tasks.run(&XRay::Engine::PreRenderPostTransformsThread);
-	if (mt_calc_bones)
-		secondary_tasks.run(&XRay::Engine::CalculateBonesThread);
-	else
-		XRay::Engine::CalculateBonesThread();
+	// HOM/detail preparation and skeleton matrices are consumed only by a world
+	// render. Sparse loading precache deliberately skips most world renders, so
+	// repeating those render-only jobs on the skipped frames just makes the main
+	// thread wait for work whose result is overwritten before it is displayed.
+	// FrameMove, Lua-visible callbacks, object updates, particles and the full
+	// render frames are left untouched.
+	const bool prepare_world_render = !measure_precache_frame ||
+		pApp->LoadSessionShouldRenderPrecacheWorld(dwPrecacheFrame, dwPrecacheTotal);
+	if (prepare_world_render)
+	{
+		secondary_tasks.run(&XRay::Engine::PreRenderPostTransformsThread);
+		if (mt_calc_bones)
+			secondary_tasks.run(&XRay::Engine::CalculateBonesThread);
+		else
+			XRay::Engine::CalculateBonesThread();
+	}
 
 	Device.isRendering = true;
 	Device.LuaGCDone = false;
