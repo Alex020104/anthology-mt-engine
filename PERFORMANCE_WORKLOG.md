@@ -331,3 +331,43 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `9FD6A4BE6DFC8FDA888396683B660AF57D7531EFFB44264A8625B1E376C9976F`.
 - The game was not launched. The user will compare the same save and camera
   position and provide the next log/FPS capture.
+
+## v47 settings-layer correction and second runtime review
+
+### Why the base config appeared unchanged
+
+- The writable MCM store used by the MO2 launch is
+  `SYS_A.N.T.H.O.L.O.G.Y_mo2_CBT/overwrite/gamedata/configs/axr_options.ltx`.
+  The latest game session incremented its session metadata and preserved the
+  installed performance values, confirming that it is the active VFS layer.
+- The physical `Anomaly-1.5.3-Anthology 2.1/gamedata/configs/axr_options.ltx`
+  and its legacy root duplicate had remained stale. This made the settings
+  change invisible when inspecting the physical game directory and could also
+  produce different settings when launching outside the configured MO2 path.
+- Backed up all three `axr_options.ltx` layers and `user.ltx` to
+  `webcache/axr_sync_backup_20260801_093345` before correcting the mismatch.
+- Synchronized the selected core, Modded Exes, SSS/SSFX, and Spatial Audio
+  performance keys into both physical CP1251 files while preserving their
+  encoding and CRLF line endings. The physical copies are now byte-identical,
+  SHA-256
+  `A5DB4EBAFAABEA885D165EAE220CF5FFD06EEDE681A828C61629CD22713BC0AE`.
+- The active MO2 store and `user.ltx` already contained the target values and
+  were not overwritten during this correction. PiP/3D scope values and the
+  safe MT mask remain unchanged. No Lua, XML, UI, shader, save, or weapon file
+  was modified, and the game was not launched.
+
+### Latest load evidence
+
+- The next user test still reports about 22 seconds of visible save loading.
+  The fresh log confirms seven level workers on the 8-core/16-thread CPU and
+  `native=parallel`, save/spawn prefetch, level cache, and sparse precache.
+- The measured phases are server/Lua `15,572 ms`, native level preparation
+  `3,482 ms`, client spawn `26,898 ms`, and final precache `41,049 ms`.
+  Precache attribution is `FrameMove=31,967 ms`, main-thread scheduler
+  `4,106 ms`, secondary-thread wait `6,304 ms`, and rendering only
+  `491.85 ms`.
+- Therefore neither missing worker creation nor SSS rendering cost explains
+  the 22-second load. The remaining load-time target is serial FrameMove,
+  Lua/client spawn, scheduler, and synchronization work. Further graphics/MCM
+  reductions may improve gameplay FPS but cannot plausibly reduce this save
+  to 10 seconds on their own.
