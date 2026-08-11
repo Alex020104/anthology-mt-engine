@@ -316,6 +316,7 @@ void CLevel::ClientReceive()
 #endif // #ifdef DEBUG
                 Msg("Device.LuaGC clear");
                 Device.LuaGC.clear();
+                Device.LuaGCFull.clear();
                 Device.LuaGCDebug.clear();
 
 				if (m_type == M_LOAD_GAME)

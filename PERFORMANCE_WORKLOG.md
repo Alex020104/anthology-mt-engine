@@ -703,3 +703,73 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `[load-session/lua-profile] aol_anim_transitions` and lower outdoor script
   time. The remaining render-bound 11-15 ms component is outside this Lua-only
   batch and should be evaluated separately after the regression test.
+
+## 2026-08-12 - addon batch rollback and v53 load-GC barrier correction
+
+### Regression evidence and rollback
+
+- The addon batch above did not improve the user's measured frame pacing and
+  was already restored in the live MO2 installation. The active AOL, Arrival,
+  Seeds and Leaves, Dot Marks, and Ledge Grabbing files/settings again match
+  their pre-batch versions; no modpack Lua/config file is changed by v53.
+- Removed the four stale patch artifacts from `modpack-patches` so this branch
+  no longer represents the rejected addon experiment as an installed change.
+- The fresh v52 load profile instead identifies an engine-side barrier:
+  precache spent `11542.83 ms` waiting for secondary tasks. Frame telemetry
+  also recorded recurring 40-68 ms worker waits and isolated waits up to
+  303.78 ms, including when render and game-worker time were negligible.
+
+### Root cause
+
+- `load_defer_full_lua_gc 1` suppressed four explicit full collections during
+  loading, but v52 never performed a replacement collection before returning
+  control. The large garbage backlog was therefore collected incrementally in
+  gameplay.
+- Incremental Lua GC ran inside `Device.secondary_tasks`, which the render
+  thread must join at the end of every frame. The outer 250 us budget cannot
+  interrupt a single LuaJIT `LUA_GCSTEP` after it enters the collector's atomic
+  phase, so a nominally parallel task became a periodic stop-the-world frame
+  barrier.
+- Monolith briefly moved this work to a persistent GC thread in upstream
+  commit `a96e3e4702`, then reverted it immediately in `8444a0c5b1`. That
+  implementation still spin-waited for GC and risked overlapping later Lua VM
+  use, so it was not copied into Anthology.
+
+### v53 adaptation
+
+- While a load session is actively deferring full collections, incremental GC
+  is no longer submitted to the per-frame secondary task group. This removes
+  LuaJIT atomic phases from the loading precache barrier while preserving the
+  existing parallel incremental collector during normal gameplay.
+- All deferred full-collection requests are coalesced into one owner-thread
+  `LUA_GCCOLLECT` immediately before the load session finishes. The garbage is
+  reclaimed behind the loading screen instead of producing post-load stutters.
+- Added a dedicated full-GC delegate with symmetric bind/clear handling during
+  level load, reload and shutdown. The log now reports request count and the
+  exact coalesced collection time as
+  `[load-session/lua-gc] coalesced full collection`.
+- UI/XML, PiP, shaders, saves, weapons, graphics settings and modpack scripts
+  remain untouched. The current save remains compatible; no new game is
+  required.
+
+### Build and installation
+
+- `engine-vs2022.sln`, configuration `DX11-AVX|x64`, compiled and linked
+  successfully. Candidate and installed hashes match:
+  - EXE: `512CB6D28190171C8A6366FC60F4B892E09827035676BDF545C0E1F984A4251D`;
+  - PDB: `88848892E187102857A40F191A033DC252EAFEE7CFF045BCB16B19163657B609`.
+- The preceding v52 pair was backed up to
+  `webcache/engine_v53_load_gc_barrier_backup_20260812_010800` before v53 was
+  installed to `Anomaly-1.5.3-Anthology 2.1/bin`.
+- The active test settings remain `load_defer_full_lua_gc 1`,
+  `lua_parallel_gc 1`, `lua_parallel_gc_budget_us 250`, and
+  `mt_frame_profile 1`. No Anomaly/XRay process was running during replacement,
+  and the game was not launched afterward.
+
+### Test target
+
+- Use the same save and measure from pressing Load until control is available.
+  The next log should show one coalesced GC, sharply lower precache
+  `secondary wait`, and lower post-control `max(total/wait)` values. The
+  collection duration will reveal whether the remaining load target is GC or
+  the separately measured actor `net_Spawn` path.

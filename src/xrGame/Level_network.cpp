@@ -191,6 +191,7 @@ void CLevel::net_Stop()
 
     Msg("Device.LuaGC clear");
     Device.LuaGC.clear();
+    Device.LuaGCFull.clear();
     Device.LuaGCDebug.clear();
 
 	if (!g_dedicated_server)

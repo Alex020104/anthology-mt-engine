@@ -1,8 +1,0 @@
---- a/gamedata/configs/axr_options.ltx
-+++ b/gamedata/configs/axr_options.ltx
-@@
--        demonized_ledge_grabbing/raySteps = 15
-+        demonized_ledge_grabbing/raySteps = 10
-@@
--        demonized_ledge_grabbing/throttleCheck = 0
-+        demonized_ledge_grabbing/throttleCheck = 30

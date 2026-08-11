@@ -351,6 +351,7 @@ public:
     IC CDebugRenderer& debug_renderer();
 	void __stdcall script_gc(); // GC-cycle
     static int LuaGC(); // GC that will called from Device via Device.LuaGC
+    static void LuaGCFull(); // owner-thread full GC used to finish a load session
     static void LuaGCDebug(); // GC that will called from Device via Device.LuaGCDebug
 	IC CPHCommander& ph_commander();
 	IC CPHCommander& ph_commander_scripts();

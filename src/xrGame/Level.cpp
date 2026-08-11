@@ -1434,6 +1434,7 @@ bool CLevel::Load(u32 dwNum)
     inherited::Load(dwNum);
     Msg("Device.LuaGC bind");
     Device.LuaGC.bind(&CLevel::LuaGC);
+    Device.LuaGCFull.bind(&CLevel::LuaGCFull);
     Device.LuaGCDebug.bind(&CLevel::LuaGCDebug);
     return true;
 }
@@ -1442,6 +1443,10 @@ bool CLevel::Load(u32 dwNum)
 int CLevel::LuaGC()
 {
     return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
+}
+void CLevel::LuaGCFull()
+{
+    lua_gc(ai().script_engine().lua(), LUA_GCCOLLECT, 0);
 }
 void CLevel::LuaGCDebug()
 {

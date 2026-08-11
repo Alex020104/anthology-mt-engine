@@ -2010,6 +2010,26 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		Device.m_pRender->ResourcesDestroyNecessaryTextures();
 	LoadSessionPhaseEnd(LoadSessionResourceWait);
 
+	const u32 deferred_full_gc = g_load_session_deferred_full_lua_gc;
+	if (deferred_full_gc)
+	{
+		if (Device.LuaGCFull)
+		{
+			const u64 gc_started_at = CPU::QPC();
+			Device.LuaGCFull();
+			const double gc_elapsed_ms = double(CPU::QPC() - gc_started_at) * 1000.0 /
+				double(CPU::qpc_freq);
+			Msg("* [load-session/lua-gc] coalesced full collection: requests=%u, elapsed=%.2f ms",
+				deferred_full_gc, gc_elapsed_ms);
+		}
+		else
+		{
+			Msg("! [load-session/lua-gc] unable to run coalesced full collection: requests=%u, Lua VM unavailable",
+				deferred_full_gc);
+		}
+	}
+	g_load_session_deferred_full_lua_gc = 0;
+
 	const u32 now = Device.TimerAsync();
 	Msg("* [load-session] engine ready scenario=%s: %u ms", m_load_session.scenario,
 		now - m_load_session.started_at);
@@ -2056,9 +2076,6 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		to_ms(m_load_session.precache_end_ticks),
 		to_ms(m_load_session.precache_present_ticks),
 		to_ms(m_load_session.precache_secondary_wait_ticks), to_ms(serial_other_ticks));
-	Msg("* [load-session/lua-gc] deferred full collections=%u; cleanup continues incrementally after control",
-		g_load_session_deferred_full_lua_gc);
-	g_load_session_deferred_full_lua_gc = 0;
 	m_load_session.active = false;
 	if (Sound)
 		Sound->source_prefetch_start();

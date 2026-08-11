@@ -8,6 +8,7 @@
 #include "../../xrCDB/Frustum.h"
 #include "Render.h"
 #include "Irenderable.h"
+#include "x_ray.h"
 #include "../../Include/xrRender/Kinematics.h"
 
 BOOL mt_Scheduler = TRUE;
@@ -227,7 +228,14 @@ void XRay::Engine::GameThread()
 			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
 			CPU::QPC() - started_at < budget_ticks);
     };
-    if (psLua_ParallelGC && Device.LuaGC)
+    // Full collections requested by Lua during a load session are coalesced
+    // into one owner-thread collection immediately before control is returned
+    // to the player. Running incremental GC here at the same time only makes
+    // the render thread wait for LuaJIT's non-preemptible atomic phase on every
+    // precache frame and leaves less garbage for the coalesced collection to
+    // reclaim. Outside loading the existing renderer-overlapped path remains
+    // unchanged.
+    if (psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
         Device.secondary_tasks.run(LuaGC);
 
 	{

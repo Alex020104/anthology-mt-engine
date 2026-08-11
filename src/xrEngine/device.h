@@ -254,6 +254,7 @@ public:
 	int LuaGCCount;
 	bool LuaGCDone;
     xr_delegate<int()> LuaGC;
+    xr_delegate<void()> LuaGCFull;
     xr_delegate<void()> LuaGCDebug;
 
 	// Dependent classes
