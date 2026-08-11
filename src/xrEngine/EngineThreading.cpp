@@ -12,7 +12,7 @@
 #include "../../Include/xrRender/Kinematics.h"
 
 BOOL mt_Scheduler = TRUE;
-BOOL mt_FrameProfile = TRUE;
+BOOL mt_FrameProfile = FALSE;
 
 namespace
 {

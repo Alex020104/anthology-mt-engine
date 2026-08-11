@@ -773,3 +773,66 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `secondary wait`, and lower post-control `max(total/wait)` values. The
   collection duration will reveal whether the remaining load target is GC or
   the separately measured actor `net_Spawn` path.
+
+## 2026-08-12 - v54 quickload GC lifetime and animation-stall correction
+
+### v53 result
+
+- v53 did not meet the requested target. The measured menu-save session was
+  `49.929 s` versus `51.225 s` in the preceding comparison. Precache secondary
+  wait improved from `11.543 s` to `4.413 s`, and the coalesced full collection
+  cost only `226.72 ms`, but client spawn and frame-move work absorbed most of
+  the saved time.
+- A later same-level quickload completed in `42.964 s`. Its log contained
+  `[load-session/lua-gc] unable to run coalesced full collection: Lua VM
+  unavailable`; after this point the parallel GC delegate was also absent.
+- The quickload client profile attributed `7.615 s` of `8.228 s` total spawn
+  work to the actor's serial `net_Spawn`. This is now split into named phases
+  for the next measurement instead of guessing which owner-thread subsystem is
+  responsible.
+- One NPC/profile/visual combination threw inside the animation manager and
+  emitted the same detailed error `1,556` times between loads. Each update paid
+  for exception unwinding, animation resets, inventory logging and synchronous
+  log output, matching the reported recurring stutters.
+
+### v54 adaptation
+
+- Do not clear Lua GC delegates when the load-game network message is received.
+  Same-level quickload keeps the `CLevel` instance and does not call
+  `CLevel::Load` again, so the old clear permanently disabled the collector.
+  Actual level teardown still clears all delegates in `CLevel::net_Stop`, and a
+  new level binds them normally.
+- Latch a failed stalker animation update after its first detailed report. The
+  bad NPC is no longer allowed to throw and log every scheduler update.
+  `reinit()`/`reload()` clears the latch, so a rebuilt profile or changed visual
+  can recover normally.
+- Added `[actor-spawn/profile]` timing for inventory-owner, inherited object,
+  physics, visual reload, final bones, map/statistics and unclassified actor
+  spawn work. This instrumentation runs only during an active load session.
+- Frame telemetry now defaults off. The installed test configuration also uses
+  `mt_frame_profile 0`, `mt_load_spawn_decode 1`, `lua_use_functor_cache 1`, and
+  `lua_busy_hands_debug 0`. Parallel decode remains restricted to native
+  data-only entities; actor, AI, Lua-created and custom-data entities stay on
+  the owner thread.
+- `r__no_ram_textures` remains on because the 32 GiB system has insufficient
+  evidence of safe headroom under this modpack. No graphics/MCM value, UI/XML,
+  PiP, shader, save format, weapon data or modpack script was changed.
+
+### Build and installation
+
+- `engine-vs2022.sln`, configuration `DX11-AVX|x64`, compiled and linked
+  successfully. Candidate and installed hashes match:
+  - EXE: `42B012CDBB3C5D858F1427CD8316081628CE9E1BBB20080150CF1BFB87EDB763`;
+  - PDB: `323317E32B9F35BFD3628915933F42CE60930E0092533D458359332811BF866B`.
+- The preceding v53 pair and the exact v54 test `user.ltx` were copied to
+  `webcache/engine_v54_quickload_stutter_backup_20260812_023947` before v54 was
+  installed. No Anomaly/XRay process was running during replacement, and the
+  game was not launched afterward.
+
+### Test target
+
+- Use the same save, then perform one same-level quickload. Both sessions must
+  report a successful coalesced full collection; `Lua VM unavailable` must not
+  recur. The broken Duty NPC error should appear at most once per NPC reload,
+  not thousands of times. The new actor phase line determines the next load
+  optimization without moving renderer, physics or Lua ownership unsafely.

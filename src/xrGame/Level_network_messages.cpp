@@ -314,10 +314,11 @@ void CLevel::ClientReceive()
 #ifdef DEBUG
 				Msg("--- Changing level message received...");
 #endif // #ifdef DEBUG
-                Msg("Device.LuaGC clear");
-                Device.LuaGC.clear();
-                Device.LuaGCFull.clear();
-                Device.LuaGCDebug.clear();
+                // A same-level quickload keeps this CLevel instance alive and
+                // does not call CLevel::Load again. Clearing these delegates
+                // here therefore permanently disabled parallel/incremental GC
+                // after quickload and made the coalesced load collection fail.
+                // Real level teardown clears them in CLevel::net_Stop.
 
 				if (m_type == M_LOAD_GAME)
 				{

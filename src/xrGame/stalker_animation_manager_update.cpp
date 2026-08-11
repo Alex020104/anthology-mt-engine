@@ -245,6 +245,14 @@ void CStalkerAnimationManager::update_impl()
 
 void CStalkerAnimationManager::update()
 {
+	// A broken profile/visual combination used to throw, reset and synchronously
+	// log the same exception every scheduler update. One bad NPC in the measured
+	// save produced 1,556 identical errors and recurring frame stalls. reload()
+	// clears the latch when the visual/profile is rebuilt, so valid changes can
+	// recover without retrying a permanently broken animation every frame.
+	if (m_update_failed)
+		return;
+
 	START_PROFILE("stalker/client_update/animations")
 		try
 		{
@@ -252,6 +260,7 @@ void CStalkerAnimationManager::update()
 		}
 		catch (...)
 		{
+			m_update_failed = true;
 			Msg("! error in stalker [%s], profile [%s] with visual [%s]",
 				object().cNameSect().c_str(),
 				object().cast_inventory_owner()->CharacterInfo().GetSpecificCharacterId().c_str(),

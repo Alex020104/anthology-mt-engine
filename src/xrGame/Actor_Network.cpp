@@ -6,6 +6,7 @@
 #include "xrserver_objects_alife_monsters.h"
 #include "xrServer.h"
 #include "../xrEngine/CustomHUD.h"
+#include "../xrEngine/x_ray.h"
 #include "CameraLook.h"
 #include "CameraFirstEye.h"
 
@@ -510,6 +511,15 @@ void CActor::net_Import_Physic_proceed()
 
 BOOL CActor::net_Spawn(CSE_Abstract* DC)
 {
+	const bool profile_load_spawn = pApp && pApp->LoadSessionActive();
+	const u64 profile_started_at = profile_load_spawn ? CPU::QPC() : 0;
+	u64 profile_inventory_owner = 0;
+	u64 profile_inherited = 0;
+	u64 profile_physics = 0;
+	u64 profile_visual = 0;
+	u64 profile_final_bones = 0;
+	u64 profile_map_stats = 0;
+
 	m_holder_id = ALife::_OBJECT_ID(-1);
 	m_feel_touch_characters = 0;
 	m_snd_noise = 0.0f;
@@ -547,8 +557,15 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 	game_news_registry->registry().init(ID());
 
 
+	u64 phase_started_at = profile_load_spawn ? CPU::QPC() : 0;
 	if (!CInventoryOwner::net_Spawn(DC)) return FALSE;
+	if (profile_load_spawn)
+		profile_inventory_owner = CPU::QPC() - phase_started_at;
+
+	phase_started_at = profile_load_spawn ? CPU::QPC() : 0;
 	if (!inherited::net_Spawn(DC)) return FALSE;
+	if (profile_load_spawn)
+		profile_inherited = CPU::QPC() - phase_started_at;
 
 	CSE_ALifeTraderAbstract* pTA = smart_cast<CSE_ALifeTraderAbstract*>(e);
 	set_money(pTA->m_dwMoney, false);
@@ -564,7 +581,10 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 	mstate_wishful = E->mstate & (mcCrouch | mcAccel);
 	mstate_old = mstate_real = mstate_wishful;
 	set_state_box(mstate_real);
+	phase_started_at = profile_load_spawn ? CPU::QPC() : 0;
 	m_pPhysics_support->in_NetSpawn(e);
+	if (profile_load_spawn)
+		profile_physics = CPU::QPC() - phase_started_at;
 
 	//set_state_box( mstate_real );
 	//character_physics_support()->movement()->ActivateBox	(0);
@@ -613,7 +633,10 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 
 	m_hit_slowmo = 0.f;
 
+	phase_started_at = profile_load_spawn ? CPU::QPC() : 0;
 	OnChangeVisual();
+	if (profile_load_spawn)
+		profile_visual = CPU::QPC() - phase_started_at;
 	//----------------------------------
 	m_bAllowDeathRemove = false;
 
@@ -652,9 +675,12 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 			}
 		}
 	*/
+	phase_started_at = profile_load_spawn ? CPU::QPC() : 0;
 	SetDefaultVisualOutfit(cNameVisual());
 
 	smart_cast<IKinematics*>(Visual())->CalculateBones();
+	if (profile_load_spawn)
+		profile_final_bones = CPU::QPC() - phase_started_at;
 
 	//--------------------------------------------------------------
 	inventory().SetPrevActiveSlot(NO_ACTIVE_SLOT);
@@ -692,10 +718,13 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 
 	if (IsGameTypeSingle())
 	{
+		phase_started_at = profile_load_spawn ? CPU::QPC() : 0;
 		Level().MapManager().AddMapLocation("actor_location", ID());
 		Level().MapManager().AddMapLocation("actor_location_p", ID());
 
 		m_statistic_manager = xr_new<CActorStatisticMgr>();
+		if (profile_load_spawn)
+			profile_map_stats = CPU::QPC() - phase_started_at;
 	}
 
 
@@ -710,6 +739,22 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 
 	//Alun: In theory it will call SwitchNightVision 'true' when outfit or helmet spawn and moved to slot if m_bNightVisionOn is true
 	m_bNightVisionOn = !!m_trader_flags.test(CSE_ALifeTraderAbstract::eTraderFlagNightVisionActive);
+
+	if (profile_load_spawn)
+	{
+		const u64 total = CPU::QPC() - profile_started_at;
+		const u64 measured = profile_inventory_owner + profile_inherited + profile_physics +
+			profile_visual + profile_final_bones + profile_map_stats;
+		const auto to_ms = [](u64 ticks)
+		{
+			return double(ticks) * 1000.0 / double(CPU::qpc_freq);
+		};
+		Msg("* [actor-spawn/profile] total=%.2f ms inventory=%.2f inherited=%.2f physics=%.2f "
+			"visual=%.2f final-bones=%.2f map/stats=%.2f other=%.2f ms",
+			to_ms(total), to_ms(profile_inventory_owner), to_ms(profile_inherited), to_ms(profile_physics),
+			to_ms(profile_visual), to_ms(profile_final_bones), to_ms(profile_map_stats),
+			to_ms(total > measured ? total - measured : 0));
+	}
 
 	return TRUE;
 }

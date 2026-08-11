@@ -71,6 +71,7 @@ private:
 	bool m_call_script_callback;
 	bool m_call_global_callback;
 	bool m_start_new_script_animation;
+	bool m_update_failed;
 
 #ifdef USE_HEAD_BONE_PART_FAKE
 private:

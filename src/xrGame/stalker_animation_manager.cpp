@@ -31,12 +31,14 @@ CStalkerAnimationManager::CStalkerAnimationManager(CAI_Stalker* object) :
 	m_torso(object),
 	m_legs(object),
 	m_script(object),
-	m_start_new_script_animation(false)
+	m_start_new_script_animation(false),
+	m_update_failed(false)
 {
 }
 
 void CStalkerAnimationManager::reinit()
 {
+	m_update_failed = false;
 	m_direction_start = 0;
 	m_current_direction = eMovementDirectionForward;
 	m_target_direction = eMovementDirectionForward;
@@ -72,6 +74,7 @@ void CStalkerAnimationManager::reinit()
 
 void CStalkerAnimationManager::reload()
 {
+	m_update_failed = false;
 	m_visual = object().Visual();
 
 	m_crouch_state_config = object().SpecificCharacter().crouch_type();
