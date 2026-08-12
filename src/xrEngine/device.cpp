@@ -45,6 +45,111 @@ ENGINE_API CRenderDevice Device;
 ENGINE_API CLoadScreenRenderer load_screen_renderer;
 ENGINE_API CRenderDevice* DevicePtr = nullptr;
 
+namespace
+{
+struct SPrecacheFrameCallbackProfile
+{
+	const void* object = nullptr;
+	xr_string type_name;
+	int priority = REG_PRIORITY_INVALID;
+	u32 calls = 0;
+	u64 total_ticks = 0;
+	u64 max_ticks = 0;
+};
+
+xr_vector<SPrecacheFrameCallbackProfile>& PrecacheFrameCallbackProfiles()
+{
+	static xr_vector<SPrecacheFrameCallbackProfile> profiles;
+	return profiles;
+}
+
+void RecordPrecacheFrameCallback(const _REG_INFO& info, LPCSTR type_name, u64 elapsed_ticks)
+{
+	auto& profiles = PrecacheFrameCallbackProfiles();
+	auto profile = std::find_if(profiles.begin(), profiles.end(), [&info](const auto& candidate)
+	{
+		return candidate.object == info.Object;
+	});
+
+	if (profile == profiles.end())
+	{
+		profiles.emplace_back();
+		profile = profiles.end() - 1;
+		profile->object = info.Object;
+		profile->type_name = type_name;
+		profile->priority = info.Prio;
+	}
+
+	++profile->calls;
+	profile->total_ticks += elapsed_ticks;
+	profile->max_ticks = std::max(profile->max_ticks, elapsed_ticks);
+}
+
+void PrintPrecacheFrameCallbackProfiles()
+{
+	auto profiles = PrecacheFrameCallbackProfiles();
+	std::sort(profiles.begin(), profiles.end(), [](const auto& left, const auto& right)
+	{
+		return left.total_ticks > right.total_ticks;
+	});
+
+	u64 total_ticks = 0;
+	for (const auto& profile : profiles)
+		total_ticks += profile.total_ticks;
+
+	const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+	Msg("* [load-session/frame-callbacks] callbacks=%u total=%.2f ms",
+		static_cast<u32>(profiles.size()), total_ticks * ticks_to_ms);
+	for (u32 index = 0; index < profiles.size(); ++index)
+	{
+		const auto& profile = profiles[index];
+		Msg("* [load-session/frame-callbacks] #%02u total=%.2f ms max=%.2f ms calls=%u prio=%d type=%s",
+			index + 1, profile.total_ticks * ticks_to_ms, profile.max_ticks * ticks_to_ms,
+			profile.calls, profile.priority, profile.type_name.c_str());
+	}
+}
+
+void ProcessPrecacheFrameCallbacks()
+{
+	auto& registrator = Device.seqFrame;
+	registrator.in_process = true;
+
+	if (registrator.R.empty())
+	{
+		registrator.in_process = false;
+		return;
+	}
+
+	auto process = [](const _REG_INFO& info)
+	{
+		pureFrame* callback = static_cast<pureFrame*>(info.Object);
+		const xr_string type_name = typeid(*callback).name();
+		const u64 started_at = CPU::QPC();
+		rp_Frame(info.Object);
+		RecordPrecacheFrameCallback(info, type_name.c_str(), CPU::QPC() - started_at);
+	};
+
+	if (registrator.R[0].Prio == REG_PRIORITY_CAPTURE)
+	{
+		const _REG_INFO info = registrator.R[0];
+		process(info);
+	}
+	else
+	{
+		for (u32 index = 0; index < registrator.R.size(); ++index)
+		{
+			const _REG_INFO info = registrator.R[index];
+			if (info.Prio != REG_PRIORITY_INVALID)
+				process(info);
+		}
+	}
+
+	if (registrator.changed)
+		registrator.Resort();
+	registrator.in_process = false;
+}
+} // namespace
+
 ENGINE_API xr_atomic_bool g_bRendering = false;
 extern ENGINE_API float psHUD_FOV;
 
@@ -832,7 +937,17 @@ void CRenderDevice::FrameMove()
 	Statistic->EngineTOTAL.Begin();
 
 	START_PROFILE("Process seqFrame");
-	Device.seqFrame.Process(rp_Frame);
+	const bool measure_precache_callbacks = pApp && pApp->LoadSessionMeasurePrecache();
+	if (measure_precache_callbacks)
+	{
+		if (dwPrecacheFrame == dwPrecacheTotal)
+			PrecacheFrameCallbackProfiles().clear();
+		ProcessPrecacheFrameCallbacks();
+		if (dwPrecacheFrame == 1)
+			PrintPrecacheFrameCallbackProfiles();
+	}
+	else
+		Device.seqFrame.Process(rp_Frame);
 	STOP_PROFILE;
 	
 	g_bLoaded = TRUE;

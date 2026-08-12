@@ -920,3 +920,96 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Compare load-button-to-player-control time, not the earlier `Зона ждёт`
   message. No new game is required. Use regular DX11 only as a compatibility
   control; it contains the same engine logic without the AVX target.
+
+## 2026-08-12 - v56 shadow rollback, AOL reparse fix and precache callback profile
+
+### Fresh v55 load evidence
+
+- The first menu-save load reached engine-ready in `47.820 s`; a same-level
+  quickload reached engine-ready in `43.491 s`. This confirms that v55 did not
+  yet deliver the requested wall-time reduction on this pack.
+- The menu-save session spent `9.945 s` in server/Lua work, `2.308 s` in native
+  level preparation, `20.720 s` in client spawn and `30.086 s` before final
+  precache completion. The quickload spent `11.887 s`, `0.817 s`, `8.496 s`
+  and `33.502 s` in the same phases.
+- Precache frame movement dominated both cases: `23.206 s` for menu-save and
+  `26.225 s` for quickload. The already instrumented main scheduler explained
+  only `2.123 s` of quickload, so the former aggregate timing still hid the
+  actual expensive `seqFrame` participant.
+- The standalone PBA adaptation reduced its startup scan from the earlier
+  `0.740 s` to `0.146/0.128 s`. AOL still consumed `2.449/2.132 s`, because its
+  temporary `ini_file("system.ltx")` reparsed the full merged configuration
+  before the suffix iterator could filter sections.
+
+### Controlled SSS rollback
+
+- The current profile had `ssfx_shadows=(768,1536,0)` and MCM shadow LOD minimum
+  index `3`, while the retained pre-v55 test configuration used
+  `ssfx_shadows=(256,1536,0)`. Only that first SSS shadow value was restored to
+  `256`, and the matching MCM index was restored to `1`.
+- TAA, motion blur, SSS quality, shaders and PiP code were not changed. This is
+  a controlled visual comparison for the newly reported moving-shadow trail,
+  not an assertion that the SSS setting is already proven to be its cause.
+- Previous settings are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260812_140500_sss_aol_profile_fix/settings`.
+
+### Standalone addon fixes
+
+- `Anthology Performance - AOL Transitions` now uses the process-global,
+  already parsed `system_ini()` instead of constructing a second
+  `CScriptIniFile` for merged `system.ltx`. Transition parsing and callbacks
+  are unchanged. New script SHA-256:
+  `75F2DD3B35411E81143FBD49DC45494202B07FDCD6437D7C261C455D20DBD421`.
+- `Anthology Diagnostics - Actor Load Callbacks` now preformats timing messages
+  with `string.format`; the pack's global `printf` accepted the earlier format
+  string as a single argument and printed literal `%d` fields. New script
+  SHA-256:
+  `EC7EBE1BDAD30FB041AADFC1B1A8D4666886508EAF3DD0A7F324F44AFB8DC2F2`.
+- Both scripts pass Lua 5.1 bytecode parsing and remain complete standalone
+  addons on `D:/ANTHOLOGY_DEV/addons`, installed through the existing top
+  priority MO2 junctions. Their previous revisions are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260812_140500_sss_aol_profile_fix/addons`.
+
+### Load-only `seqFrame` attribution
+
+- During the 60 logical precache frames only, `Device.seqFrame` now preserves
+  the existing callback order and capture behavior while attributing elapsed
+  time to each registered callback object. At the final frame it emits sorted
+  `[load-session/frame-callbacks]` lines with total, maximum, call count,
+  priority and RTTI type name.
+- Outside an active measured precache, the engine continues to call the
+  original `CRegistrator::Process` path. The diagnostic therefore adds no
+  per-frame profiling or sorting cost to gameplay.
+- This measurement is required before moving any additional callback work to
+  workers: the current log proves that the main scheduler is not the owner of
+  most of the missing `23-26 s`, but does not yet identify which other callback
+  is. Parallelizing an unidentified owner would repeat the earlier crash and
+  state-corruption risk.
+
+### Dual DX11 build and installation
+
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully. The
+  executable/PDB pairs are installed in the game `bin` directory:
+  - regular DX11 EXE:
+    `E9153BA42D58637889C927FA306DD42149E7929983DCC4F649BD8132A7889028`;
+  - regular DX11 PDB:
+    `31ACD79850BACD1F484A1AE32F53DF3560ED6BFC918EBA5E6D5862C5DE56146F`;
+  - DX11-AVX EXE:
+    `5F19AC7ED5119A164D571A3D6AE824ED14C5CDB3BF924BB4860E4ACE554967AD`;
+  - DX11-AVX PDB:
+    `70210D1BFF9D6745DFAD72A3910D78494F6E83A543C6C98AD74BEC1F2B0F5DF4`.
+- The replaced v55 regular and AVX pairs are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260812_140300_engine_v56_dual_dx11/bin`.
+
+### PiP status and next test
+
+- The PiP work remains a reviewed implementation plan at
+  `D:/ANTHOLOGY_DEV/addons/Anthology PiP Rework/PLAN.md`; it is not installed
+  or enabled. The plan covers viewport state isolation, main-render visual
+  parity, per-viewport TAA history, PiP sensitivity, effective quality presets,
+  hands with NVG/thermal, compatibility toggles, and both DX11 builds.
+- Test the same save once from the menu and once by same-level quickload. The
+  next log must contain numeric `[load-session/lua-callbacks]` rankings and the
+  new `[load-session/frame-callbacks]` ranking. Also compare moving shadows at
+  the same location after the SSS rollback; no new game or shader-cache purge
+  is required.
