@@ -836,3 +836,87 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   recur. The broken Duty NPC error should appear at most once per NPC reload,
   not thousands of times. The new actor phase line determines the next load
   optimization without moving renderer, physics or Lua ownership unsafely.
+
+## 2026-08-12 - v55 standalone addon load pass and dual DX11 build
+
+### v54 measurement
+
+- The fresh stable menu-save session reached engine-ready in `43.279 s`.
+  Native level preparation took `2.247 s`, while server/Lua work took
+  `10.546 s`, client spawn `18.880 s`, and final precache `27.786 s`.
+- Client-spawn profiling attributed `4.798 s` to packet decode, `3.235 s` to
+  entity creation/load and `10.479 s` to owner-thread `net_Spawn` work. The
+  actor alone consumed `9.917 s`; its inherited actor/Lua path was `7.448 s`.
+- Lua module startup took `5.524 s`. The two largest avoidable configuration
+  scans were `aol_anim_transitions` (`2.568 s`) and
+  `perk_based_artefacts` (`0.740 s`).
+- The repeating animation exception storm fixed in v54 did not recur. Only one
+  report remained for the bad `sim_default_duty_2` animation state, so this is
+  no longer the source of a periodic gameplay stall.
+
+### Standalone addon adaptations
+
+- Created complete, independently removable addons under
+  `D:/ANTHOLOGY_DEV/addons`; no source mod was edited in place:
+  - `Anthology Performance - AOL Transitions`: replaces a scan of every system
+    section with the existing `_hud` suffix index. Script SHA-256 changed from
+    `5C0E6D89D7F53A4301744253655544398E6FE2D52C5F7997D430C3F61EFF7BA4`
+    to `733F0995597BFBBA7C33A183192A07CBA293B30109786814F26CE72E64873386`.
+  - `Anthology Performance - Perk Based Artefacts`: builds one immutable
+    section index and derives all seven artefact sets from it instead of
+    scanning `system.ltx` seven times. Script SHA-256 changed from
+    `B9750E3606C8D3EBE8DD7C3ECBD3EF1EF89C0914E2ECF35A95D94A1D1E8E7D60`
+    to `F6445835DD37BE6924983A01C8BDBF52CA8FA044661C32AF7F520110A69F9034`.
+  - `Anthology Diagnostics - Actor Load Callbacks`: adds load-session-only
+    timing around every `on_game_load` callback without changing callback
+    order, arguments or error propagation. It reports total callback time and
+    the twenty most expensive source locations. Script SHA-256 changed from
+    `1B2C2049704A705EAE1DA34A86476D0B30D776EA94AE75E2D49EFF40055FEEA`
+    to `C8965791FE5CB0CD5AF1140C7B4F121E68F81C516574CD457ACBDAB9223F0733`.
+- All three scripts pass Lua 5.1 bytecode parsing. The addon directories are
+  installed into MO2 as directory junctions and enabled at the top of the
+  active `Anthology 2.1 HARD Сложный` profile, so edits stay on D while the
+  game sees normal MO2 mods.
+- Byte-exact originals and the pre-change active mod list are stored at
+  `E:/ANTHOLOGY_BACKUPS/20260812_031500_addon_load_optimization`.
+
+### Dual DX11 build and installation
+
+- Both `DX11|x64` and `DX11-AVX|x64` configurations compiled and linked
+  successfully from the same v54 engine source. Both executable/PDB pairs were
+  installed to the game `bin` directory:
+  - regular DX11 EXE:
+    `C641D801BACAD1CA350B47A452DAACD67554620D226B524A841B761799174FFA`;
+  - regular DX11 PDB:
+    `14CBB766CB659FDE9D339D99BAE9C90E9933776858F5B5446F2399C34657CA03`;
+  - DX11-AVX EXE:
+    `BF36096AC2D1A405EBEF7EB3AACFA7C184EE24E5BB63772B3DB5023BBC2F2ED1`;
+  - DX11-AVX PDB:
+    `5B5903E59637AE4DBE3A3114ACADD70DBA3FAD34A71E871933BD69ABE9E6575B`.
+- The replaced regular and AVX pairs are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260812_034100_engine_v55_dual_dx11/bin`.
+
+### PiP inspection and next implementation plan
+
+- The current PiP MCM quality selector writes
+  `scope_lense_render_quality`, but no renderer code reads this variable. It is
+  currently a no-op and cannot change image quality or performance.
+- Current mouse scaling applies optical FOV scaling but exposes no PiP-specific
+  user multiplier. PiP activation also has no engine-level policy for 2D NVG
+  or thermal overlays.
+- TAA jitter is disabled whenever PiP is active, rather than only for the
+  viewport being rendered. This can make the lens excessively sharp/grainy
+  and can disturb temporal stability in the main view even though the two
+  viewports already have separate histories.
+- The staged implementation and compatibility matrix are documented at
+  `D:/ANTHOLOGY_DEV/addons/Anthology PiP Rework/PLAN.md`. This directory is a
+  planning workspace only and is deliberately not enabled in MO2 yet.
+
+### Test target
+
+- Load the same save with the AVX binary first. The next log must contain
+  `[load-session/lua-callbacks]`; its ranked callback list identifies the safe
+  standalone addon targets inside the remaining `7.448 s` actor load path.
+- Compare load-button-to-player-control time, not the earlier `Зона ждёт`
+  message. No new game is required. Use regular DX11 only as a compatibility
+  control; it contains the same engine logic without the AVX target.
