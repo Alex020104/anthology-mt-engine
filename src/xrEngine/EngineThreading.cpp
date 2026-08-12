@@ -23,10 +23,22 @@ enum EFrameTaskProfile
 	FrameTaskCalculateBones,
 	FrameTaskGame,
 	FrameTaskLuaGC,
+	FrameTaskVision,
 	FrameTaskCount
 };
 
 std::atomic<u64> frame_task_ticks[FrameTaskCount]{};
+std::atomic<u64> frame_task_max_ticks[FrameTaskCount]{};
+
+void RecordFrameTask(EFrameTaskProfile task, u64 elapsed)
+{
+	frame_task_ticks[task].fetch_add(elapsed, std::memory_order_relaxed);
+	u64 previous = frame_task_max_ticks[task].load(std::memory_order_relaxed);
+	while (previous < elapsed &&
+		!frame_task_max_ticks[task].compare_exchange_weak(previous, elapsed, std::memory_order_relaxed))
+	{
+	}
+}
 
 class CFrameTaskTimer
 {
@@ -38,9 +50,20 @@ public:
 	~CFrameTaskTimer()
 	{
 		if (started_at)
-			frame_task_ticks[task].fetch_add(CPU::QPC() - started_at, std::memory_order_relaxed);
+			RecordFrameTask(task, CPU::QPC() - started_at);
 	}
 };
+}
+
+u64 XRay::Engine::BeginVisionTaskProfile()
+{
+	return mt_FrameProfile ? CPU::QPC() : 0;
+}
+
+void XRay::Engine::EndVisionTaskProfile(u64 started_at)
+{
+	if (started_at)
+		RecordFrameTask(FrameTaskVision, CPU::QPC() - started_at);
 }
 
 SFrameTaskProfile XRay::Engine::ConsumeFrameTaskProfile()
@@ -51,6 +74,13 @@ SFrameTaskProfile XRay::Engine::ConsumeFrameTaskProfile()
 	result.calculate_bones = frame_task_ticks[FrameTaskCalculateBones].exchange(0, std::memory_order_relaxed);
 	result.game = frame_task_ticks[FrameTaskGame].exchange(0, std::memory_order_relaxed);
 	result.lua_gc = frame_task_ticks[FrameTaskLuaGC].exchange(0, std::memory_order_relaxed);
+	result.vision = frame_task_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
+	result.max_pre_render = frame_task_max_ticks[FrameTaskPreRender].exchange(0, std::memory_order_relaxed);
+	result.max_post_transforms = frame_task_max_ticks[FrameTaskPostTransforms].exchange(0, std::memory_order_relaxed);
+	result.max_calculate_bones = frame_task_max_ticks[FrameTaskCalculateBones].exchange(0, std::memory_order_relaxed);
+	result.max_game = frame_task_max_ticks[FrameTaskGame].exchange(0, std::memory_order_relaxed);
+	result.max_lua_gc = frame_task_max_ticks[FrameTaskLuaGC].exchange(0, std::memory_order_relaxed);
+	result.max_vision = frame_task_max_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
 	return result;
 }
 

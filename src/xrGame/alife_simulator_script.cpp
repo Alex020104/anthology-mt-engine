@@ -477,6 +477,32 @@ void CALifeSimulator__iterate_objects(const CALifeSimulator* self, const luabind
 	}
 }
 
+// Filter in native code so scripts which need one rare class do not cross the
+// Lua/C++ boundary for every ALife object (or probe all 65,534 possible IDs).
+void CALifeSimulator__iterate_objects_by_clsid(const CALifeSimulator* self, int script_clsid,
+    const luabind::functor<bool>& functor)
+{
+    // The callback is allowed to release the object it receives. Iterating the
+    // registry directly in that case would invalidate the current iterator, so
+    // take a compact ID snapshot first and revalidate every object before use.
+    xr_vector<ALife::_OBJECT_ID> matching_ids;
+    matching_ids.reserve(8);
+
+    const CALifeObjectRegistry& objects = self->objects();
+    for (const auto& se_obj : objects.objects())
+    {
+        if (se_obj.second && se_obj.second->script_clsid() == script_clsid)
+            matching_ids.push_back(se_obj.first);
+    }
+
+    for (const ALife::_OBJECT_ID id : matching_ids)
+    {
+        CSE_ALifeDynamicObject* se_obj = objects.object(id, true);
+        if (se_obj && se_obj->script_clsid() == script_clsid && functor(se_obj))
+            break;
+    }
+}
+
 void CALifeSimulator__iterate_objects_without_actor(const CALifeSimulator* self, const luabind::functor<bool>& functor)
 {
 	const CALifeObjectRegistry& objects = self->objects();
@@ -654,6 +680,7 @@ void CALifeSimulator::script_register(lua_State* L)
 		.def("object_ids", &alife_object_ids)
 		.def("objects", &alife_objects)
 		.def("iterate_objects", &CALifeSimulator__iterate_objects)
+		.def("iterate_objects_by_clsid", &CALifeSimulator__iterate_objects_by_clsid)
 		/*.def("iterate_objects_without_actor", &CALifeSimulator__iterate_objects_without_actor)
 		.def("objects_iter", &alife_object_iter)
 		.def("objects_without_actor_iter", &alife_object_without_actor_iter)*/

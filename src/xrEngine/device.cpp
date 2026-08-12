@@ -746,6 +746,13 @@ void CRenderDevice::on_idle()
 		profile.tasks.calculate_bones += task_profile.calculate_bones;
 		profile.tasks.game += task_profile.game;
 		profile.tasks.lua_gc += task_profile.lua_gc;
+		profile.tasks.vision += task_profile.vision;
+		profile.tasks.max_pre_render = std::max(profile.tasks.max_pre_render, task_profile.max_pre_render);
+		profile.tasks.max_post_transforms = std::max(profile.tasks.max_post_transforms, task_profile.max_post_transforms);
+		profile.tasks.max_calculate_bones = std::max(profile.tasks.max_calculate_bones, task_profile.max_calculate_bones);
+		profile.tasks.max_game = std::max(profile.tasks.max_game, task_profile.max_game);
+		profile.tasks.max_lua_gc = std::max(profile.tasks.max_lua_gc, task_profile.max_lua_gc);
+		profile.tasks.max_vision = std::max(profile.tasks.max_vision, task_profile.max_vision);
 
 		if (profile.frames >= 300)
 		{
@@ -753,7 +760,7 @@ void CRenderDevice::on_idle()
 				(double(CPU::qpc_freq) * double(profile.frames));
 			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
 			Msg("* [mt-frame/profile] frames=%u avg(total/frame/render/wait)=%.2f/%.2f/%.2f/%.2f ms "
-				"workers(pre/post/bones/game/lua-gc)=%.2f/%.2f/%.2f/%.2f/%.2f ms max(total/wait)=%.2f/%.2f ms",
+				"workers(pre/post/bones/game/lua-gc/vision)=%.2f/%.2f/%.2f/%.2f/%.2f/%.2f ms max(total/wait)=%.2f/%.2f ms",
 				profile.frames, profile.total * ticks_to_average_ms,
 				profile.frame_move * ticks_to_average_ms, profile.seq_render * ticks_to_average_ms,
 				profile.secondary_wait * ticks_to_average_ms,
@@ -762,7 +769,15 @@ void CRenderDevice::on_idle()
 				profile.tasks.calculate_bones * ticks_to_average_ms,
 				profile.tasks.game * ticks_to_average_ms,
 				profile.tasks.lua_gc * ticks_to_average_ms,
+				profile.tasks.vision * ticks_to_average_ms,
 				profile.max_total * ticks_to_ms, profile.max_secondary_wait * ticks_to_ms);
+			Msg("* [mt-frame/profile] max-workers(pre/post/bones/game/lua-gc/vision)=%.2f/%.2f/%.2f/%.2f/%.2f/%.2f ms",
+				profile.tasks.max_pre_render * ticks_to_ms,
+				profile.tasks.max_post_transforms * ticks_to_ms,
+				profile.tasks.max_calculate_bones * ticks_to_ms,
+				profile.tasks.max_game * ticks_to_ms,
+				profile.tasks.max_lua_gc * ticks_to_ms,
+				profile.tasks.max_vision * ticks_to_ms);
 			profile = {};
 		}
 	}

@@ -81,6 +81,11 @@ class CUIGameCustom :
 	public DLL_Pure,
 	public CDialogHolder
 {
+private:
+	// UI updates may run in the render-overlapped worker when mt_ui is enabled.
+	// Protect the custom-static collection from script additions/removals and
+	// from the renderer without serializing the rest of the UI tree twice.
+	xrCriticalSection CustomStaticsLock;
 protected:
 	CUIWindow* Window;
 	CUIXml* MsgConfig;

@@ -112,3 +112,28 @@ private:
 };
 //Write functions guard: xrSRWLockGuard guard(lock); ...
 //Read functions guard: xrSRWLockGuard guard(lock, true); ...
+
+// Short waits complete fastest while spinning, but yielding on every pass can
+// repeatedly deschedule a worker and turn a tiny particle/scheduler hand-off
+// into a visible frame-time spike. Spin briefly, then yield cooperatively.
+class XRCORE_API xrSpinWait
+{
+	u32 spin_count;
+	u32 current_count = 0;
+
+public:
+	explicit xrSpinWait(u32 value = 16) : spin_count(value) {}
+
+	ICF void operator()()
+	{
+		if (current_count < spin_count)
+		{
+			_mm_pause();
+			++current_count;
+		}
+		else
+			std::this_thread::yield();
+	}
+
+	ICF void reset() { current_count = 0; }
+};

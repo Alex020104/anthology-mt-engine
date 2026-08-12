@@ -78,11 +78,9 @@ int	CParticleManager::CreateActionList()
 {
 	int actionId = m_action_counter++;
 
+	xrSpinWait wait;
 	while (ActionIter.load(std::memory_order_acquire) != 0)
-	{
-		_mm_pause();
-		std::this_thread::yield();
-	}
+		wait();
 
 	xrSRWLockGuard guard(m_action_guard);
 	auto ActionResultPair = m_alist_map.emplace(actionId, xr_new<ParticleActions>());
@@ -104,11 +102,9 @@ void CParticleManager::DestroyActionList(int alist_id)
 		}
 	}
 
+	xrSpinWait wait;
 	while (ActionIter.load(std::memory_order_acquire) != 0)
-	{
-		_mm_pause();
-		std::this_thread::yield();
-	}
+		wait();
 }
 
 // control

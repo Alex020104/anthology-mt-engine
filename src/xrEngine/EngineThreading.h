@@ -7,6 +7,13 @@ struct SFrameTaskProfile
 	u64 calculate_bones = 0;
 	u64 game = 0;
 	u64 lua_gc = 0;
+	u64 vision = 0;
+	u64 max_pre_render = 0;
+	u64 max_post_transforms = 0;
+	u64 max_calculate_bones = 0;
+	u64 max_game = 0;
+	u64 max_lua_gc = 0;
+	u64 max_vision = 0;
 };
 
 extern ENGINE_API BOOL mt_FrameProfile;
@@ -17,5 +24,7 @@ namespace XRay::Engine
     void PreRenderPostTransformsThread();
 	void CalculateBonesThread();
 	void GameThread();
+	u64 BeginVisionTaskProfile();
+	void EndVisionTaskProfile(u64 started_at);
 	SFrameTaskProfile ConsumeFrameTaskProfile();
 }

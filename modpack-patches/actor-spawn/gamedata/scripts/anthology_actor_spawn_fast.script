@@ -1,0 +1,37 @@
+local function release_phantom(se_obj)
+	safe_release_manager.release(se_obj)
+	return false
+end
+
+local function actor_on_net_spawn_fast()
+	if ui_options.get("gameplay/general/hardcore_ai_aim") then
+		exec_console_cmd("ai_aim_max_angle 20.0")
+		exec_console_cmd("ai_aim_min_angle 17.0")
+		exec_console_cmd("ai_aim_min_speed 2.00")
+		exec_console_cmd("ai_aim_predict_time 0.28")
+	else
+		exec_console_cmd("ai_aim_max_angle 0.7854")
+		exec_console_cmd("ai_aim_min_angle 0.19635")
+		exec_console_cmd("ai_aim_min_speed 0.24")
+		exec_console_cmd("ai_aim_predict_time 0.40")
+	end
+
+	local started_at = time_global()
+	local sim = alife()
+	local remove_outfits = not db.actor:has_info("remove_outfits_hack")
+
+	-- Anthology's engine filters by class in C++. Lua is entered only for the
+	-- rare phantom objects instead of probing every one of 65,534 possible IDs.
+	sim:iterate_objects_by_clsid(clsid.phantom, release_phantom)
+
+	if remove_outfits then
+		db.actor:give_info_portion("remove_outfits_hack")
+	end
+
+	printf(string.format("* [load-session/actor-spawn-addon] native phantom scan=%d ms", time_global() - started_at))
+	SendScriptCallback("on_game_load", binder)
+end
+
+function on_game_start()
+	bind_stalker_ext.actor_on_net_spawn = actor_on_net_spawn_fast
+end

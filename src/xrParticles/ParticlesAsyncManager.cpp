@@ -47,10 +47,9 @@ void CParticlesAsync::Wait()
 	if (psDeviceFlags.test(mtParticles))
 	{
 		PROF_EVENT("Particles Wait");
+		xrSpinWait wait;
 		while (Instance.IsStarted)
-		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(0));
-		}
+			wait();
 	}
 }
 

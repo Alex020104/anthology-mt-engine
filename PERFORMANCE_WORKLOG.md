@@ -1094,3 +1094,91 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   same-level quickload, and record about 60 seconds of gameplay. The requested
   8-10 second target is not claimed until the new actor-binder and intro-event
   subphase timings identify the remaining serialized work.
+
+## 2026-08-12 - v58 actor-load fast path, MT tail diagnostics and local-light culling
+
+### Evidence from the latest pre-v58 log
+
+- The menu-save load reached engine-ready in `44.800 s`. Its measured phases
+  were server/Lua `8.160 s`, native level preparation `2.350 s`, client spawn
+  `21.700 s` and final precache `31.300 s`.
+- The same-level quickload reached engine-ready in `42.299 s`: server/Lua
+  `10.687 s`, native level preparation `0.896 s`, client spawn `8.579 s` and
+  final precache `33.565 s`.
+- In both sessions the actor script binder alone took about eight seconds
+  (`7.800 s` and `7.913 s`). Source inspection identified its fixed Lua loop
+  over all `65,534` possible ALife IDs while looking only for phantom objects.
+- The quickload's `game_loaded` intro event took `15.101 s`. The event also
+  reparsed `ui/game_tutorials.xml`; that old aggregate value does not prove the
+  XML was the whole cost, so v58 records XML rebuild/reuse separately.
+- Normal gameplay generally spent about `5-7 ms` in FrameMove and `9-12 ms`
+  in rendering. The old MT profile nevertheless recorded rare secondary-worker
+  waits around `40-58 ms`, with severe samples around `111-176 ms`. The old
+  averages could not identify which child task produced those tails.
+- `r__framelimit 64` was active and implemented as a gameplay busy wait. It
+  also pinned the screenshot near a `16 ms` frame even when rendering had
+  headroom. VSync remains disabled.
+
+### Save-load changes
+
+- Added native `alife():iterate_objects_by_clsid(...)`. It filters the existing
+  ALife registry in C++ and enters Lua only for matching objects instead of
+  probing every possible ID. Matching IDs are snapshotted and each object is
+  revalidated before its callback, so a callback may safely release the
+  current object without invalidating the registry iterator.
+- A complete standalone addon was created at
+  `D:/ANTHOLOGY_DEV/addons/Anthology Performance - Actor Spawn` and installed
+  through a top-priority MO2 junction. It preserves Anthology's aim settings,
+  safe-release manager, `remove_outfits_hack` flag and `on_game_load` callback
+  order; only the phantom search uses the native filtered iterator. Script
+  SHA-256: `45F296E572FB50C43D51E0CCC4206240F812EB8E6DBE80737CA23DADB479AF83`.
+- `game_tutorials.xml` now has a process-local parsed DOM. It is built on first
+  use and reused by later save loads in the same process. No persistent cache
+  is generated, so changed XML/mod files are picked up normally on restart.
+  New `[load-session/tutorial-xml]` lines distinguish rebuild and reuse time.
+- The callback diagnostics addon remains independent and now records both
+  `on_game_load` and `actor_on_first_update`. Its installed script SHA-256 is
+  `688D7D45CE14625365BA1FC0E4B0BB76B378F0CC191F28D51B173D39DC29A07F`.
+
+### Frame pacing and renderer changes
+
+- MT frame profiling now records both averages and per-window maxima for
+  pre/post phase work, bones, game tasks, parallel Lua GC and vision. This is
+  diagnostic only outside the already enabled 300-frame profile window and is
+  intended to identify the remaining intermittent worker wait.
+- Removed a shared mutable thread-ID variable from monster vision work and
+  added vision-task attribution. The prior static variable was a data race
+  when several monsters prepared vision concurrently.
+- Anthology's UI custom-static collection is now protected for the existing
+  `mt_ui` path, allowing `mt_ui 1` without racing HUD add/remove/update/render.
+- Adapted Monolith's per-omnipart visibility test for shadowed point lights.
+  Invisible cubemap sides no longer enter shadow rendering, which particularly
+  targets campfires and numerous local lights in the Bar. Added a conservative
+  shadow LOD floor of `0.02`; shadow quality and SSS temporal fixes are kept.
+- Particle waits now use a bounded pause/yield spin helper instead of an
+  unbounded hot loop, reducing CPU contention while async particle work
+  finishes.
+- Active settings are `mt_ui 1`, `mt_task_manager 1`, `r__framelimit 0`,
+  `lua_parallel_gc_budget_us 100`, `lua_parallel_gcstep 25`,
+  `r2_shadow_omnipart_vischeck 1` and `r2_shadow_lod_min 0.02`.
+  PiP and the fixed SSS addon were not modified in this round.
+
+### Build, installation and recovery
+
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully and are
+  installed in the game `bin` directory. Source and installed hashes match:
+  - regular DX11 EXE:
+    `E47D655C26334EE847A73E1F0F34D490550ACE29565242C9B8BF856F83CA67EB`;
+  - regular DX11 PDB:
+    `23E3ED1ECFD2EB723B9208C570BA60978844B8424734B730A346C3E706A4BFEF`;
+  - DX11-AVX EXE:
+    `84BAF2A67E83B2C351729D488497676340B33B35EBA29C60DA451B9F827E77C2`;
+  - DX11-AVX PDB:
+    `6EE4CC0F3205D327385DDA8D3FF2894B3E142098CB02583863722B763199EBAA`.
+- The complete pre-v58 binaries, settings and profile are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260812_160216_v58_load_fps_stutter`.
+- No new game or shader-cache purge is required. The result must be measured
+  from a fresh process with the same save, followed by a same-level quickload
+  and at least 60 seconds in the same Bar scene. The 8-10 second and large FPS
+  targets are not claimed until that test produces the new phase and MT-tail
+  measurements.

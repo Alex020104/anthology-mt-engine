@@ -15,6 +15,17 @@
 
 extern ENGINE_API BOOL bShowPauseString;
 
+namespace
+{
+bool game_tutorial_xml_loaded = false;
+
+CUIXml& GameTutorialXml()
+{
+	static CUIXml xml;
+	return xml;
+}
+}
+
 void CallFunction(shared_str const& func)
 {
 	::luabind::functor<void> functor_to_call;
@@ -99,7 +110,6 @@ CUISequencer::CUISequencer()
 	m_name = "invalid";
 }
 
-extern BOOL g_bootComplete;
 void CUISequencer::Start(LPCSTR tutor_name)
 {
 	VERIFY(m_sequencer_items.size()==0);
@@ -110,19 +120,22 @@ void CUISequencer::Start(LPCSTR tutor_name)
 
 	m_name = tutor_name;
 
-    static CUIXml uiXml;
-    static bool uiXmlLoaded;
-    if (uiXmlLoaded && g_bootComplete)
-    {
-        uiXml.SetLocalRoot(uiXml.GetRoot());
-    }
-    else
-    {
-        uiXmlLoaded = true;
-        uiXml.ClearInternal();
-        uiXml.Load(CONFIG_PATH, UI_PATH, "game_tutorials.xml");
-        uiXml.SetLocalRoot(uiXml.GetRoot());
-    }
+	CUIXml& uiXml = GameTutorialXml();
+	if (game_tutorial_xml_loaded)
+	{
+		uiXml.SetLocalRoot(uiXml.GetRoot());
+		Msg("* [load-session/tutorial-xml] reused process-local game_tutorials.xml");
+	}
+	else
+	{
+		CTimer load_timer;
+		load_timer.Start();
+		uiXml.ClearInternal();
+		uiXml.Load(CONFIG_PATH, UI_PATH, "game_tutorials.xml");
+		uiXml.SetLocalRoot(uiXml.GetRoot());
+		game_tutorial_xml_loaded = true;
+		Msg("* [load-session/tutorial-xml] rebuilt game_tutorials.xml in %u ms", load_timer.GetElapsed_ms());
+	}
         
 
 	int items_count = uiXml.GetNodesNum(tutor_name, 0, "item");

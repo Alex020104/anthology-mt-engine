@@ -668,8 +668,17 @@ void light::export_()
 					L->set_occq_mode(flags.bOccq);
 					L->set_hud_mode(flags.bHudMode);
 					L->xform_calc();
-					L->vis.pending = vis.pending;
-					L->vis.visible = vis.visible;
+					// A point light is rendered as six shadow-map faces. Test each
+					// face independently so faces outside the camera/portal set do
+					// not inherit the parent light's visibility and waste a shadow
+					// render. The compatibility switch preserves the old behavior.
+					if (ps_r2_shadow_omnipart_vischeck)
+						L->vis_prepare();
+					else
+					{
+						L->vis.pending = vis.pending;
+						L->vis.visible = vis.visible;
+					}
 					if (L->vis.pending)
 						RImplementation.LP_pending.v_shadowed.push_back(L);
 					else

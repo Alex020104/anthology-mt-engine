@@ -10,6 +10,7 @@
 #include "vision_client.h"
 #include "entity.h"
 #include "visual_memory_manager.h"
+#include "../xrEngine/EngineThreading.h"
 
 IC const CEntity& vision_client::object() const
 {
@@ -64,12 +65,13 @@ void vision_client::eye_pp_s2()
 	u32 dwTime = Device.dwTimeGlobal;
 	u32 dwDT = dwTime - m_time_stamp;
 	m_time_stamp = dwTime;
-	static DWORD this_thread_id = 0;
-	this_thread_id = GetCurrentThreadId();
+	const DWORD caller_thread_id = GetCurrentThreadId();
 	Device.secondary_tasks.run([=]()
 	{
-		if (this_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
+		const u64 profile_started_at = XRay::Engine::BeginVisionTaskProfile();
+		if (caller_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
 		feel_vision_update(m_object, m_position, float(dwDT) / 1000.f, visual().transparency_threshold());
+		XRay::Engine::EndVisionTaskProfile(profile_started_at);
 	});
 
 	Device.Statistic->AI_Vis_RayTests.End();
