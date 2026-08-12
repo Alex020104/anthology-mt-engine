@@ -296,6 +296,8 @@ void CRenderDevice::PreCache(u32 amount, bool b_draw_loadscreen, bool b_wait_use
 #endif
 	if (pApp)
 		pApp->LoadSessionPrecacheBegin();
+	if (amount == 60)
+		PrecacheFrameCallbackProfiles().clear();
 
 	dwPrecacheFrame = dwPrecacheTotal = amount;
 	if (amount && !precache_light && g_pGameLevel && g_loading_events.empty())
@@ -940,8 +942,6 @@ void CRenderDevice::FrameMove()
 	const bool measure_precache_callbacks = pApp && pApp->LoadSessionMeasurePrecache();
 	if (measure_precache_callbacks)
 	{
-		if (dwPrecacheFrame == dwPrecacheTotal)
-			PrecacheFrameCallbackProfiles().clear();
 		ProcessPrecacheFrameCallbacks();
 		if (dwPrecacheFrame == 1)
 			PrintPrecacheFrameCallbackProfiles();

@@ -19,10 +19,12 @@
 
 extern ENGINE_API bool EngineShouldDeferFullLuaGC();
 extern ENGINE_API void EngineRecordDeferredFullLuaGC();
+extern ENGINE_API void EngineRecordSuppressedLuaJITFlush();
 
 namespace
 {
 constexpr LPCSTR original_collectgarbage_registry_key = "xray.original_collectgarbage";
+constexpr LPCSTR original_jit_flush_registry_key = "xray.original_jit_flush";
 
 int load_aware_collectgarbage(lua_State* L)
 {
@@ -45,6 +47,24 @@ int load_aware_collectgarbage(lua_State* L)
 	return lua_gettop(L);
 }
 
+int load_aware_jit_flush(lua_State* L)
+{
+	const int argument_count = lua_gettop(L);
+	if (EngineShouldDeferFullLuaGC())
+	{
+		// Flushing every LuaJIT trace at the loading prompt makes the first
+		// gameplay seconds recompile the whole modpack and creates visible
+		// frame-time spikes. The VM is recreated on the next load anyway.
+		EngineRecordSuppressedLuaJITFlush();
+		return 0;
+	}
+
+	lua_getfield(L, LUA_REGISTRYINDEX, original_jit_flush_registry_key);
+	lua_insert(L, 1);
+	lua_call(L, argument_count, LUA_MULTRET);
+	return lua_gettop(L);
+}
+
 void install_load_aware_collectgarbage(lua_State* L)
 {
 	lua_getglobal(L, "collectgarbage");
@@ -52,6 +72,23 @@ void install_load_aware_collectgarbage(lua_State* L)
 	lua_setfield(L, LUA_REGISTRYINDEX, original_collectgarbage_registry_key);
 	lua_pushcfunction(L, load_aware_collectgarbage);
 	lua_setglobal(L, "collectgarbage");
+
+	// Preserve jit.flush outside loading, but keep compiled traces alive while
+	// handing control from the loading screen to gameplay.
+	lua_getglobal(L, "jit");
+	if (lua_istable(L, -1))
+	{
+		lua_getfield(L, -1, "flush");
+		if (lua_isfunction(L, -1))
+		{
+			lua_setfield(L, LUA_REGISTRYINDEX, original_jit_flush_registry_key);
+			lua_pushcfunction(L, load_aware_jit_flush);
+			lua_setfield(L, -2, "flush");
+		}
+		else
+			lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
 }
 
 double script_ticks_to_ms(u64 ticks)

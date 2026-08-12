@@ -653,13 +653,27 @@ void CGamePersistent::OnFrame()
 	{
 		xr_delete(g_tutorial);
 	}
-	if (0 == Device.dwFrame % 200)
-		CUITextureMaster::FreeCachedShaders();
+	// Keep the small, finite UI shader cache during gameplay. Clearing it every
+	// 200 frames made the next HUD/console opening synchronously recreate GPU
+	// resources and caused the periodic frame-time spikes seen in captures.
 
 #ifdef DEBUG
     ++m_frame_counter;
 #endif
-	if (!g_dedicated_server && !m_intro_event.empty()) m_intro_event();
+	if (!g_dedicated_server && !m_intro_event.empty())
+	{
+		const bool measure_intro = pApp && pApp->LoadSessionMeasurePrecache();
+		const u64 intro_started_at = measure_intro ? CPU::QPC() : 0;
+		m_intro_event();
+		if (measure_intro)
+		{
+			const double elapsed_ms = double(CPU::QPC() - intro_started_at) * 1000.0 /
+				double(CPU::qpc_freq);
+			if (elapsed_ms >= 10.0)
+				Msg("* [load-session/persistent] intro-event=%.2f ms remaining=%u", elapsed_ms,
+					Device.dwPrecacheFrame);
+		}
+	}
 
 	if (!g_dedicated_server && Device.dwPrecacheFrame == 0 && !m_intro && m_intro_event.empty())
 		load_screen_renderer.stop();
@@ -1063,5 +1077,6 @@ void CGamePersistent::OnSectorChanged(int sector)
 void CGamePersistent::OnAssetsChanged()
 {
 	IGame_Persistent::OnAssetsChanged();
+	CUITextureMaster::FreeCachedShaders();
 	CStringTable().rescan();
 }

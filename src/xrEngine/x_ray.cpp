@@ -1636,6 +1636,7 @@ extern ENGINE_API BOOL g_appLoaded = FALSE;
 extern ENGINE_API BOOL g_bootComplete = FALSE;
 ENGINE_API BOOL g_load_defer_full_lua_gc = TRUE;
 static u32 g_load_session_deferred_full_lua_gc = 0;
+static u32 g_load_session_suppressed_luajit_flush = 0;
 
 ENGINE_API bool EngineShouldDeferFullLuaGC()
 {
@@ -1645,6 +1646,11 @@ ENGINE_API bool EngineShouldDeferFullLuaGC()
 ENGINE_API void EngineRecordDeferredFullLuaGC()
 {
 	++g_load_session_deferred_full_lua_gc;
+}
+
+ENGINE_API void EngineRecordSuppressedLuaJITFlush()
+{
+	++g_load_session_suppressed_luajit_flush;
 }
 //-AVO
 
@@ -1673,6 +1679,7 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 
 	ZeroMemory(&m_load_session, sizeof(m_load_session));
 	g_load_session_deferred_full_lua_gc = 0;
+	g_load_session_suppressed_luajit_flush = 0;
 	m_load_session.started_at = Device.TimerAsync();
 	m_load_session.client_event_hash = 14695981039346656037ULL;
 	xr_strcpy(m_load_session.scenario, scenario ? scenario : "unknown");
@@ -1775,7 +1782,11 @@ void CApplication::LoadSessionCancel(LPCSTR reason)
 	if (g_load_session_deferred_full_lua_gc)
 		Msg("* [load-session/lua-gc] deferred full collections=%u before cancellation",
 			g_load_session_deferred_full_lua_gc);
+	if (g_load_session_suppressed_luajit_flush)
+		Msg("* [load-session/lua-jit] suppressed trace flushes=%u before cancellation",
+			g_load_session_suppressed_luajit_flush);
 	g_load_session_deferred_full_lua_gc = 0;
+	g_load_session_suppressed_luajit_flush = 0;
 	ZeroMemory(&m_load_session, sizeof(m_load_session));
 	if (failure)
 		std::rethrow_exception(failure);
@@ -2029,6 +2040,10 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		}
 	}
 	g_load_session_deferred_full_lua_gc = 0;
+	if (g_load_session_suppressed_luajit_flush)
+		Msg("* [load-session/lua-jit] retained compiled traces: suppressed flushes=%u",
+			g_load_session_suppressed_luajit_flush);
+	g_load_session_suppressed_luajit_flush = 0;
 
 	const u32 now = Device.TimerAsync();
 	Msg("* [load-session] engine ready scenario=%s: %u ms", m_load_session.scenario,

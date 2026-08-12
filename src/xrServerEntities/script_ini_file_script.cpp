@@ -55,6 +55,30 @@ bool invoke_section_callback(lua_State* lua, const ::luabind::functor<bool>& fun
 
 	return !!lua_toboolean(lua, -1);
 }
+
+bool invoke_ini_line_callback(lua_State* lua, const ::luabind::functor<bool>& functor,
+	LPCSTR section, LPCSTR name, LPCSTR value)
+{
+	::luabind::detail::stack_pop result_guard(lua, 1);
+	functor.pushvalue();
+	lua_pushstring(lua, section);
+	lua_pushstring(lua, name);
+	lua_pushstring(lua, value ? value : "");
+	if (::luabind::detail::pcall(lua, 3, 1))
+	{
+#ifndef LUABIND_NO_EXCEPTIONS
+		throw ::luabind::error(lua);
+#else
+		::luabind::error_callback_fun error_callback = ::luabind::get_error_callback();
+		if (error_callback)
+			error_callback(lua);
+		R_ASSERT2(false, "line_for_each_section_suffix_prefix Lua callback failed");
+		return true;
+#endif
+	}
+
+	return !!lua_toboolean(lua, -1);
+}
 }
 
 void section_for_each(CScriptIniFile* self, const ::luabind::functor<bool>& functor)
@@ -95,6 +119,39 @@ void section_for_each_suffix(CScriptIniFile* self, LPCSTR suffix, const ::luabin
 
 		if (invoke_section_callback(lua, functor, section))
 			return;
+	}
+}
+
+void line_for_each_section_suffix_prefix(CScriptIniFile* self, LPCSTR section_suffix, LPCSTR line_prefix,
+	const ::luabind::functor<bool>& functor)
+{
+	typedef CInifile::Root sections_type;
+	sections_type& sections = self->sections();
+	lua_State* const lua = functor.lua_state();
+	R_ASSERT(lua);
+	R_ASSERT(section_suffix);
+	R_ASSERT(line_prefix);
+
+	const size_t suffix_length = xr_strlen(section_suffix);
+	const size_t prefix_length = xr_strlen(line_prefix);
+	for (sections_type::const_iterator section_it = sections.begin(), section_end = sections.end();
+		section_it != section_end; ++section_it)
+	{
+		LPCSTR const section = section_it->Name.c_str();
+		const size_t section_length = xr_strlen(section);
+		if (section_length < suffix_length ||
+			xr_strcmp(section + section_length - suffix_length, section_suffix))
+			continue;
+
+		for (const CInifile::Item& item : section_it->Data)
+		{
+			LPCSTR const name = item.first.c_str();
+			if (strncmp(name, line_prefix, prefix_length))
+				continue;
+
+			if (invoke_ini_line_callback(lua, functor, section, name, item.second.c_str()))
+				return;
+		}
 	}
 }
 #endif
@@ -236,6 +293,7 @@ void CScriptIniFile::script_register(lua_State* L)
 		.def("section_count", &CScriptIniFile::section_count)
 		.def("section_for_each", &::section_for_each)
 		.def("section_for_each_suffix", &::section_for_each_suffix)
+		.def("line_for_each_section_suffix_prefix", &::line_for_each_section_suffix_prefix)
 		.def("set_readonly", &CScriptIniFile::set_readonly)
 #endif
 		//Alundaio: END

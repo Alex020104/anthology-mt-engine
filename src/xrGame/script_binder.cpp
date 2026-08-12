@@ -15,6 +15,7 @@
 #include "script_game_object.h"
 #include "gameobject.h"
 #include "level.h"
+#include "../xrEngine/x_ray.h"
 
 // comment next string when commiting
 //#define DBG_DISABLE_SCRIPTS
@@ -135,6 +136,10 @@ void CScriptBinder::reload(LPCSTR section)
 BOOL CScriptBinder::net_Spawn(CSE_Abstract* DC)
 {
 	PROF_EVENT("CScriptBinder::net_Spawn");
+	CGameObject* const game_object = smart_cast<CGameObject*>(this);
+	const bool profile_actor_load = pApp && pApp->LoadSessionActive() && game_object &&
+		!xr_strcmp(game_object->cNameSect().c_str(), "actor");
+	const u64 profile_started_at = profile_actor_load ? CPU::QPC() : 0;
 #ifdef DEBUG_MEMORY_MANAGER
 	size_t									start = 0;
 	if (g_bMEMO)
@@ -146,7 +151,11 @@ BOOL CScriptBinder::net_Spawn(CSE_Abstract* DC)
 	{
 		try
 		{
-			return ((BOOL)m_object->net_Spawn(object));
+			const BOOL result = (BOOL)m_object->net_Spawn(object);
+			if (profile_actor_load)
+				Msg("* [actor-spawn/script-binder] net-spawn=%.2f ms",
+					double(CPU::QPC() - profile_started_at) * 1000.0 / double(CPU::qpc_freq));
+			return result;
 		}
 		catch (...)
 		{

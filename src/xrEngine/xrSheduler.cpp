@@ -349,7 +349,11 @@ void CSheduler::ProcessStep()
 	// then return to the configured per-frame batch automatically. This adapts
 	// Monolith's temporary scheduler_flush without requiring a modpack script or
 	// leaving a huge batch enabled during normal gameplay.
-	const u32 batch_size = Device.dwPrecacheFrame ? 65536u : u32(SchedulerBatchSize);
+	// A 65k loading batch monopolizes one core for a full frame on large saves.
+	// 2048 still drains a 37k-object Anthology backlog within the preserved 60
+	// logical precache frames, while allowing render/resource workers to make
+	// progress between batches instead of producing multi-second frame spikes.
+	const u32 batch_size = Device.dwPrecacheFrame ? 2048u : u32(SchedulerBatchSize);
 
 	{
 		xrSRWLockGuard g(ItemsLock);

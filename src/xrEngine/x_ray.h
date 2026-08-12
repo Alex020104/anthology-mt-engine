@@ -149,6 +149,7 @@ extern ENGINE_API void LogStartupMenuReady();
 extern ENGINE_API BOOL g_load_defer_full_lua_gc;
 extern ENGINE_API bool EngineShouldDeferFullLuaGC();
 extern ENGINE_API void EngineRecordDeferredFullLuaGC();
+extern ENGINE_API void EngineRecordSuppressedLuaJITFlush();
 
 //Discord
 struct rpc_info

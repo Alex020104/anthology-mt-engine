@@ -1013,3 +1013,84 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   new `[load-session/frame-callbacks]` ranking. Also compare moving shadows at
   the same location after the SSS rollback; no new game or shader-cache purge
   is required.
+
+## 2026-08-12 - v57 temporal stability, retained LuaJIT and native transition scan
+
+### Evidence from the capture and the latest log
+
+- The supplied `AnomalyDX11AVX.exe 2026.08.12 - 14.30.24.01.mp4` capture is
+  1920x1080 and about 11.16 seconds long. It shows temporal trails on moving
+  screen-space shadow boundaries in the main viewport; PiP is not active in
+  the recorded sequence. The fix therefore targets SSS history only and does
+  not change the PiP/SVP renderer or the base TAA shader.
+- The latest menu-save reached engine-ready in `37.208 s`, versus `47.820 s`
+  in the previous measured v55 run. The remaining large pieces were
+  server/Lua `9.272 s`, client spawn `15.760 s`, actor spawn `7.571 s`, and
+  precache wall time `22.978 s`.
+- The same-level quickload reached engine-ready in `45.506 s`. It spent
+  server/Lua `12.253 s`, client spawn `8.699 s`, actor spawn `8.035 s`, and
+  precache wall time `32.782 s`. One `CGamePersistent` callback consumed
+  `16.248 s`, while the main scheduler accounted for only `2.405 s`; blindly
+  increasing scheduler parallelism is therefore not supported by this log.
+- The old precache callback profile accidentally accumulated samples across
+  load sessions. Its reset now happens when the 60-frame precache begins, so
+  the next menu-load and quickload reports are independent.
+
+### SSS ghosting fix without PiP changes
+
+- A complete standalone addon was created at
+  `D:/ANTHOLOGY_DEV/addons/Anthology Visual - SSS Temporal Stability` and
+  installed as the highest-priority MO2 junction in the active profile.
+- Its `ssfx_sss.ps` lowers stale SSS history retention from 95% to 82%, adds
+  stronger depth-disocclusion rejection, and rejects residual motion before
+  blending the previous shadow mask. Shader SHA-256:
+  `53D548CBEF4D0A4612AB78090EC4EE45A3052BD38B8751990F8A9F5B5EA870A6`.
+- R4 already skips the SSS pass for `Device.m_SecondViewport.IsSVPFrame()`.
+  The addon does not override a PiP shader, does not change PiP matrices, and
+  does not touch the independent viewport history.
+
+### Load and frame-time changes
+
+- The pack calls `jit.flush()` together with full Lua collections at the
+  loading prompt. Full collections were already coalesced, but the JIT flush
+  still discarded every compiled trace immediately before gameplay. During an
+  active load session the engine now retains those traces and reports
+  `[load-session/lua-jit]`; outside loading, `jit.flush()` behaves unchanged.
+- The precache scheduler's temporary batch is reduced from 65,536 to 2,048.
+  It still drains the observed 37k-object backlog during the preserved 60
+  logical frames, but no longer monopolizes a single CPU core for a massive
+  batch while render/resource workers wait.
+- The small UI shader cache is no longer destroyed every 200 frames. It is
+  invalidated on `OnAssetsChanged()` instead. This removes periodic resource
+  recreation and the console/HUD opening spike without retaining stale assets
+  after a resource reload.
+- The AOL standalone addon now uses the new native
+  `line_for_each_section_suffix_prefix("_hud", "ts_", ...)` iterator. C++
+  filters the merged INI, so Lua is entered only for actual transition lines.
+  The full AOL behavior remains in its independent D-drive addon. Script
+  SHA-256:
+  `15CCFCB428C61709E4742953CFF0F7F1BD8C2ADE6A33436606C9D14437918069`.
+- Actor script-binder and persistent intro-event timings were added only while
+  a load session is active. Gameplay MT profiling was enabled in `user.ltx` so
+  the next log emits a 300-frame breakdown rather than relying on Task Manager
+  core percentages.
+
+### Build, installation and recovery
+
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully and were
+  installed to the game `bin` directory:
+  - regular DX11 EXE:
+    `55BE71012394CD4A28569F02D546CD8B9C8B2186BCAA8E2D779ACBAAC5D6159E`;
+  - regular DX11 PDB:
+    `49D845DBFE19D8A27B36891B9A9A3B3AE879D086E2A90FC946C7B8D08DB23031`;
+  - DX11-AVX EXE:
+    `6D26295FA833D0507FBFF79FD0BFE171600658D8A5A8AA2F0B58C6FA8061ED1F`;
+  - DX11-AVX PDB:
+    `09B066778CF9280BFAACE6F445629FB5E11498C54418808F316D1E40E09E5129`.
+- All replaced binaries, prior settings, shader, active mod list and previous
+  AOL addon are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260812_145747_v57_temporal_load_stutter`.
+- The next test does not require a new game. Test one menu-save load, then one
+  same-level quickload, and record about 60 seconds of gameplay. The requested
+  8-10 second target is not claimed until the new actor-binder and intro-event
+  subphase timings identify the remaining serialized work.
