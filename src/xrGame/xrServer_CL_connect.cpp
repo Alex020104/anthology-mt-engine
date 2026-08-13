@@ -85,6 +85,7 @@ void xrServer::SendConfigFinished(ClientID const& clientId)
 
 void xrServer::SendConnectionData(IClient* _CL)
 {
+	const u64 connection_started_at = CPU::QPC();
 	conn_spawned_ids.clear();
 	xrClientData* CL = (xrClientData*)_CL;
 	NET_Packet P;
@@ -103,20 +104,45 @@ void xrServer::SendConnectionData(IClient* _CL)
 	NativeLoadExecutor::Batch resource_batch;
 	try
 	{
+		xr_vector<xr_string> unique_visuals;
+		xr_unordered_set<xr_string> unique_visual_keys;
+		auto append_unique_visual = [&unique_visuals, &unique_visual_keys](const shared_str& visual)
+		{
+			if (!visual.size())
+				return;
+			xr_string key = visual.c_str();
+			std::transform(key.begin(), key.end(), key.begin(), [](char value)
+			{
+				return value == '/' ? '\\' : char(tolower(static_cast<unsigned char>(value)));
+			});
+			if (unique_visual_keys.insert(key).second)
+				unique_visuals.emplace_back(visual.c_str());
+		};
+		if (prepare_local_resources)
+		{
+			unique_visuals.reserve(prepared.size());
+			unique_visual_keys.reserve(prepared.size());
+			for (const PreparedClientSpawn& spawn : prepared)
+			{
+				append_unique_visual(spawn.actual_visual);
+				append_unique_visual(spawn.ltx_visual);
+			}
+		}
+
+		std::atomic_uint32_t texture_refs = 0;
 		if (prepare_local_resources)
 			resource_batch = executor.BeginBatch(executor.CurrentGeneration());
 		if (prepare_local_resources)
-		for (PreparedClientSpawn& spawn : prepared)
+		for (const xr_string& visual : unique_visuals)
 		{
-			auto prepare_resources = [&spawn, level_path]()
+			auto prepare_resources = [visual, level_path, &texture_refs]()
 			{
-				if (spawn.actual_visual.size())
-					::Render->model_CollectTextures(spawn.actual_visual.c_str(), level_path.c_str(), spawn.textures);
-				if (spawn.ltx_visual.size() && spawn.ltx_visual != spawn.actual_visual)
-					::Render->model_CollectTextures(spawn.ltx_visual.c_str(), level_path.c_str(), spawn.textures);
-				std::sort(spawn.textures.begin(), spawn.textures.end());
-				spawn.textures.erase(std::unique(spawn.textures.begin(), spawn.textures.end()), spawn.textures.end());
-				for (const xr_string& texture : spawn.textures)
+				xr_vector<xr_string> textures;
+				::Render->model_CollectTextures(visual.c_str(), level_path.c_str(), textures);
+				std::sort(textures.begin(), textures.end());
+				textures.erase(std::unique(textures.begin(), textures.end()), textures.end());
+				texture_refs.fetch_add(static_cast<u32>(textures.size()), std::memory_order_relaxed);
+				for (const xr_string& texture : textures)
 					Device.m_pRender->ResourcesPrefetchCreateTexture(texture.c_str(), level_path.c_str());
 			};
 			if (resource_batch.Valid())
@@ -124,12 +150,13 @@ void xrServer::SendConnectionData(IClient* _CL)
 			else
 				prepare_resources();
 		}
+		const u64 resource_wait_started_at = CPU::QPC();
 		if (resource_batch.Valid())
 			executor.Wait(resource_batch);
+		const u64 resource_wait_ticks = CPU::QPC() - resource_wait_started_at;
 
 		u32 order_hash = 0;
-		u32 texture_count = 0;
-		u32 model_count = 0;
+		const u64 send_started_at = CPU::QPC();
 		for (const PreparedClientSpawn& spawn : prepared)
 		{
 			#ifdef SPAWN_ANTIFREEZE
@@ -137,15 +164,16 @@ void xrServer::SendConnectionData(IClient* _CL)
 				Level().RegisterPreparedClientSpawnResource(spawn.id, spawn.parent_id, spawn.section,
 					spawn.actual_visual, spawn.ltx_visual, level_path.c_str());
 			#endif
-			model_count += spawn.actual_visual.size() || spawn.ltx_visual.size() ? 1u : 0u;
-			texture_count += static_cast<u32>(spawn.textures.size());
 			order_hash = crc32(&spawn.id, sizeof(spawn.id), order_hash);
 			order_hash = crc32(&spawn.parent_id, sizeof(spawn.parent_id), order_hash);
 			order_hash = crc32(spawn.section.c_str(), xr_strlen(spawn.section.c_str()), order_hash);
 			Perform_connect_spawn(spawn, CL, P);
 		}
-		Msg("* [client-spawn] prepared=%u models=%u textures=%u order_hash=%08x", static_cast<u32>(prepared.size()),
-			model_count, texture_count, order_hash);
+		const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+		Msg("* [client-spawn] prepared=%u unique_models=%u texture_refs=%u order_hash=%08x wait=%.2f ms send=%.2f ms total=%.2f ms",
+			static_cast<u32>(prepared.size()), static_cast<u32>(unique_visuals.size()), texture_refs.load(std::memory_order_relaxed),
+			order_hash, double(resource_wait_ticks) * ticks_to_ms, double(CPU::QPC() - send_started_at) * ticks_to_ms,
+			double(CPU::QPC() - connection_started_at) * ticks_to_ms);
 	}
 	catch (...)
 	{

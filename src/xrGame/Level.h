@@ -299,6 +299,7 @@ public:
 	xr_map<u16, prepared_client_spawn_resource> prepared_client_spawn_resources;
 	void RegisterPreparedClientSpawnResource(u16 id, u16 parent_id, const shared_str& section,
 		const shared_str& actual_visual, const shared_str& ltx_visual, LPCSTR canonical_level_path);
+	bool HasPreparedClientSpawnResource(u16 id);
 	bool PublishPreparedClientSpawnResource(NET_Packet& packet);
     bool PostponedSpawn(u16 id);
 	void ProcessSpawnEvents();

@@ -90,6 +90,7 @@ BOOL mt_load_spawn_decode = FALSE;
 
 struct spawn_and_prefetch_events
 {
+	CLevel* level = nullptr;
 	NET_Queue_Event* spawn_events = nullptr;
     spawn_events_data_map* spawn_events_data = nullptr;
     prefetch_event_queue* prefetch_events = nullptr;
@@ -139,6 +140,12 @@ void CLevel::RegisterPreparedClientSpawnResource(u16 id, u16 parent_id, const sh
 	resource.level_path = canonical_level_path ? canonical_level_path : "";
 	xrCriticalSectionGuard guard(prepared_client_spawn_guard);
 	prepared_client_spawn_resources[id] = std::move(resource);
+}
+
+bool CLevel::HasPreparedClientSpawnResource(u16 id)
+{
+	xrCriticalSectionGuard guard(prepared_client_spawn_guard);
+	return prepared_client_spawn_resources.find(id) != prepared_client_spawn_resources.end();
 }
 
 bool CLevel::PublishPreparedClientSpawnResource(NET_Packet& packet)
@@ -301,7 +308,7 @@ CLevel::CLevel() :
 	prefetch_thread_signal = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 	prefetch_thread_stopped = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 	R_ASSERT(prefetch_thread_signal && prefetch_thread_stopped);
-    auto events = new spawn_and_prefetch_events({ spawn_events, spawn_events_data, prefetch_events, prefetched_models,
+    auto events = new spawn_and_prefetch_events({ this, spawn_events, spawn_events_data, prefetch_events, prefetched_models,
 		&closeSignal, &prefetch_lock, &spawn_prefetch_busy, prefetch_thread_signal, prefetch_thread_stopped });
     thread_spawn(ProcessPrefetchEvents, "Pre-Spawn Prefetcher Thread", 0, events);
     Msg("CLevel::CLevel() Spawn Antifreeze initialized");
@@ -597,6 +604,7 @@ void CLevel::SortSpawnEventsQueue()
 void CLevel::ProcessPrefetchEvents(void* args)
 {
     auto events = reinterpret_cast<spawn_and_prefetch_events*>(args);
+	auto level = events->level;
     auto spawn_events = events->spawn_events;
     auto spawn_events_data = events->spawn_events_data;
     auto prefetch_events = events->prefetch_events;
@@ -644,34 +652,66 @@ void CLevel::ProcessPrefetchEvents(void* args)
 		if (saved_prefetch_events.empty())
 			continue;
 
-		for (const auto& E : saved_prefetch_events)
+		constexpr size_t publish_chunk_size = 32;
+		prefetch_event_queue ready_prefetch_events;
+		ready_prefetch_events.reserve(publish_chunk_size);
+		u32 published_events = 0;
+
+		auto publish_ready_events = [&]()
 		{
-			for (const auto& model : E.models)
+			if (ready_prefetch_events.empty())
+				return;
+
+			xrSRWLockGuard g(prefetch_lock);
+			for (auto& ready : ready_prefetch_events)
 			{
-				bool not_prefetched = false;
-				{
-					xrSRWLockGuard g(prefetch_lock, true);
-					not_prefetched = prefetched_models->find(model) == prefetched_models->end();
-				}
-				if (!not_prefetched)
-					continue;
-
-				::Render->models_PrefetchOne(model.c_str(), false);
-				xrSRWLockGuard g(prefetch_lock);
-				prefetched_models->insert(model);
+				const u16 id = ready.id;
+				spawn_events->insert(ready.p);
+				spawn_events_data->emplace(id, std::move(ready));
+				++published_events;
 			}
+			ready_prefetch_events.clear();
+		};
+
+		for (auto& E : saved_prefetch_events)
+		{
+			// Connection spawns already have worker-built blueprints. Recreating the
+			// same visual here made the blueprint useless and committed renderer/Lua
+			// state from this background thread. Runtime spawns keep the legacy path.
+			if (!level->HasPreparedClientSpawnResource(E.id))
+			{
+				for (const auto& model : E.models)
+				{
+					bool not_prefetched = false;
+					{
+						xrSRWLockGuard g(prefetch_lock, true);
+						not_prefetched = prefetched_models->find(model) == prefetched_models->end();
+					}
+					if (!not_prefetched)
+						continue;
+
+					::Render->models_PrefetchOne(model.c_str(), false);
+					xrSRWLockGuard g(prefetch_lock);
+					prefetched_models->insert(model);
+				}
+			}
+
+			// Keep the original server order, but expose completed objects in small
+			// chunks. The old all-or-nothing batch made geometry and NPCs appear late
+			// even when their models were already ready.
+			ready_prefetch_events.emplace_back(std::move(E));
+			if (ready_prefetch_events.size() >= publish_chunk_size)
+				publish_ready_events();
 		}
+		publish_ready_events();
 
 		{
-            xrSRWLockGuard g(prefetch_lock);
-            for (auto& E : saved_prefetch_events)
-            {
-                spawn_events->insert(E.p); // reinsert the event to spawn_events queue for further processing
-                spawn_events_data->emplace(E.id, E); // store the prefetch event data for later use in ProcessSpawnEvents
-            }
+			xrSRWLockGuard g(prefetch_lock);
 			*busy = false;
 
-            if (spawn_antifreeze_debug) Msg("[ProcessPrefetchEvents] finished, spawn_events queue size %d", spawn_events->queue.size());
+			if (spawn_antifreeze_debug)
+				Msg("[ProcessPrefetchEvents] finished, published %u, spawn_events queue size %d",
+					published_events, spawn_events->queue.size());
         }
     }
 }
@@ -858,11 +898,16 @@ void CLevel::ProcessSpawnEvents()
 
 		// Model publication can enter renderer Lua shader lookup. It must stay
 		// on the owner thread and immediately precede the original spawn.
-		if (spawn_data_it != spawn_events_data_copy.end())
+		if (spawn_data_it != spawn_events_data_copy.end() && !HasPreparedClientSpawnResource(obj_id))
 		{
 			for (const xr_string& model : spawn_data_it->second.models)
 			{
-				if (prefetched_models->insert(model).second)
+				bool needs_prefetch = false;
+				{
+					xrSRWLockGuard g(prefetch_lock);
+					needs_prefetch = prefetched_models->insert(model).second;
+				}
+				if (needs_prefetch)
 					::Render->models_PrefetchOne(model.c_str(), false);
 			}
 		}

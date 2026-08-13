@@ -1182,3 +1182,85 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   and at least 60 seconds in the same Bar scene. The 8-10 second and large FPS
   targets are not claimed until that test produces the new phase and MT-tail
   measurements.
+
+## 2026-08-13 - v59 spawn streaming, unique model preparation and GC pacing
+
+### Evidence after the interrupted test session
+
+- The latest complete log still showed save loads around `32-33 s` engine
+  ready. Static `level.geom` preparation was only `10-12 ms`; delayed visual
+  appearance was therefore not caused by serial level geometry I/O.
+- Client connection prepared `1,391-4,138` spawn objects and reported
+  `862-2,860` model references plus `1,901-4,661` texture references. Source
+  inspection showed that repeated object visuals each submitted their own
+  preparation task, even though many objects use the same model.
+- The legacy spawn-antifreeze thread held every dynamic object until the last
+  model in the batch was ready. It also called full `models_PrefetchOne` after
+  the newer server path had already built a safe R4 model blueprint, discarding
+  much of the parallel preparation and entering renderer state from a worker.
+- The remaining repeatable gameplay tails were in Lua GC: normal GC work was
+  sub-millisecond, but LuaJIT atomic phases produced approximately `72-183 ms`
+  task/wait maxima. System events contain no adjacent WHEA, NVMe/disk or NVIDIA
+  driver fault. `Kernel-Power 41` only confirms that the PC later lost power or
+  reset without a clean shutdown; it does not identify the PSU or the game as
+  the cause of that separate full-system event.
+
+### Loading and delayed-object changes
+
+- Connection resource preparation now deduplicates normalized visual names and
+  submits one worker job per unique model instead of one job per spawn object.
+  Parent-first packet ordering, model blueprint safety and texture prefetch are
+  preserved.
+- Prepared connection spawns no longer run the legacy full-model prefetch a
+  second time. The safe worker-built blueprint is committed only by the
+  existing owner-thread `PublishPreparedClientSpawnResource` path. Runtime
+  dynamic spawns without a registered blueprint retain the legacy fallback.
+- The spawn-antifreeze queue publishes completed objects in ordered chunks of
+  32 instead of an all-or-nothing batch. This lets already-ready parent-first
+  objects enter client spawning while later runtime models are still prepared,
+  reducing delayed NPC/geometry appearance without changing save data.
+- `[client-spawn]` now records object count, unique-model count, texture
+  references, resource wait, packet send and total connection time.
+
+### Stutter pacing and exact diagnostics
+
+- Active Lua GC uses a conservative hybrid: Monolith's separate GC task is
+  retained, while the incremental step is reduced to IX-Ray's `10` and one
+  explicit call per frame (`lua_parallel_gcstep 10`, budget `50 us`, call
+  amount `1`). The large LuaJIT atomic phase cannot be divided safely at the
+  engine call site, so this change reduces how aggressively the engine drives
+  cycles rather than pretending that the microsecond budget can preempt an
+  atomic collector phase.
+- Experimental `mt_task_manager` and `mt_ui` are disabled for this pack. Their
+  measured build did not improve the critical load path and increased the
+  concurrent Lua/UI surface. `mt_load_spawn_decode` is also disabled because
+  the measured decode stage was only about `55 ms`.
+- The `-dbg` command-line switch was removed. `mt_frame_profile 1` remains for
+  the next controlled run so GC and task tails can still be compared.
+- Added `device():performance_time_ms()` backed by QPC. The standalone
+  `Anthology Diagnostics - Actor Load Callbacks` addon now reports fractional
+  timings for individual `on_game_load` and `actor_on_first_update` handlers;
+  Lua 5.1 syntax validation passed. Installed script SHA-256:
+  `85090B19006D0B28EA8CBFDAE21F33E0B37224DDE6A02AB97525CF4141597EEA`.
+
+### Build, installation and recovery
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compiled and
+  linked successfully and were installed to the game `bin` directory. Source
+  and installed hashes match:
+  - regular DX11 EXE:
+    `4D2F839A6593E21A18238A9A4055EA3EC1BF32B0D47A9F892574E20D5CB038D9`;
+  - regular DX11 PDB:
+    `C081BBFBF64A83CEF694881D881E10726FADF9B0A4AC360CC0807FADF495C6F3`;
+  - DX11-AVX EXE:
+    `008D10DB82BD706ADAE3820F75E718D7FAC66D94B83BB0FBF105A760B6108E4A`;
+  - DX11-AVX PDB:
+    `26CF5235E95CA0DDDC0C34EF9132A8248105A6A2F144325E6D3111C4A3EED97D`.
+- The pre-v59 files are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260813_110455_v59_streaming_gc_diagnostics`; the
+  installed v59 package and symbols are mirrored at
+  `E:/ANTHOLOGY_BACKUPS/20260813_114213_v59_installed_streaming_gc`.
+- PiP, SSS, the temporal shadow fix, saves and shader cache were not modified.
+  No new game is required. The next test is one menu-save load, one same-level
+  quickload and 60 seconds of movement in the same scene; the 8-10 second load
+  target is not claimed until that log is measured.

@@ -42,6 +42,12 @@ u32 time_global(const CRenderDevice* self)
 	return (self->dwTimeGlobal);
 }
 
+double performance_time_ms(const CRenderDevice* self)
+{
+	THROW(self);
+	return double(CPU::QPC()) * 1000.0 / double(CPU::qpc_freq);
+}
+
 u32 time_continual(const CRenderDevice* self)
 {
 	THROW(self);
@@ -68,6 +74,7 @@ void CScriptRenderDevice::script_register(lua_State* L)
 		.def_readonly("fov", &CRenderDevice::fFOV)
 		.def_readonly("aspect_ratio", &CRenderDevice::fASPECT)
 		.def("time_global", &time_global)
+		.def("performance_time_ms", &performance_time_ms)
 		.def("time_continual", &time_continual)
 		.def_readonly("precache_frame", &CRenderDevice::dwPrecacheFrame)
 		.def_readonly("frame", &CRenderDevice::dwFrame)
