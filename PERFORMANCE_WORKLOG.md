@@ -1366,3 +1366,59 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260813_142300_v61_pre_gc_revert`. The active v61
   binaries and settings are mirrored at
   `E:/ANTHOLOGY_BACKUPS/20260813_143200_v61_installed_gc_reverted`.
+
+## 2026-08-13 - v62 frame-pacing isolation
+
+### Evidence and scope
+
+- The v61 gameplay report showed that loading improved enough to keep the
+  current solution unchanged, while ordinary play could still jump from about
+  `80` to `40 FPS`. This round does not modify R4/CFORM caches, spawn/resource
+  preparation, precache, Western Goods, PiP, SSS or any gameplay addon.
+- Historical MT frame samples show ordinary work near `15-17 ms`, interrupted
+  by secondary-task waits around `50-100+ ms`. The Lua GC worker accounted for
+  the recurring long tail; Windows System events around the latest run contain
+  no adjacent WHEA, display-driver, disk or NVMe fault.
+- `LUA_GCSTEP` installs a new automatic allocation threshold before returning.
+  That allowed a later Lua allocation to enter LuaJIT's non-preemptible atomic
+  phase from FrameMove even though the pack enabled the separate MT GC task.
+
+### Frame-pacing changes
+
+- After every renderer-overlapped incremental GC step, the automatic LuaJIT
+  allocation trigger is stopped again. The next explicit MT step still runs
+  normally because `LUA_GCSTEP` supplies its own threshold. Full load-end GC is
+  preserved, and normal automatic GC is restarted before the level VM is torn
+  down. This does not defer or skip an atomic phase; it keeps that phase on the
+  already synchronized MT task instead of letting it appear unpredictably in
+  FrameMove.
+- Runtime GC defaults and active settings use the previously less aggressive
+  `lua_parallel_gcstep 25`, `lua_parallel_gc_budget_us 100`, call amount `25`.
+  The rejected movement-dependent LuaJIT collector from v60 remains completely
+  absent.
+- MT telemetry now preserves all parts of the single worst frame in each
+  1,200-frame window and divides the game worker into scheduler,
+  `seqParallel`, and `seqFrameMT`. Four compact lines are emitted roughly every
+  20 seconds at 60 FPS, reducing diagnostic log I/O versus the old 300-frame
+  interval. `mt_frame_profile 1` is enabled for the controlled test.
+
+### Build and recovery
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Source-build and installed hashes match:
+  - regular DX11 EXE:
+    `77AFEF4A9DFFDF7527C09B81B798B7663BB02FE1689F166EF2EB42ED89D65931`;
+  - regular DX11 PDB:
+    `94F74E85DD4412CA6959E2A3E8A7F6E2256F23795AF77DEE5E8DBB86B38393FD`;
+  - DX11-AVX EXE:
+    `3716322FC0C02195CE914E33B13645DEEA6C9CB23AB57D97E308E898A992D9F7`;
+  - DX11-AVX PDB:
+    `5F4B0B2687F7D7F59F6F18276929AE5408CBE7C3DAA98ED85CBE2EBA31C3A596`.
+- Pre-change v61 binaries and settings are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260813_145429_v62_pre_frame_pacing`.
+- The exact installed v62 binaries, symbols and settings are mirrored at
+  `E:/ANTHOLOGY_BACKUPS/20260813_151000_v62_installed_frame_pacing`.
+- No new game and no shader-cache purge are required. The user should load the
+  same save and move through the same heavy scene for at least 60 seconds; the
+  new `worst-frame` and `worst-game-parts` lines will distinguish any remaining
+  renderer, GC, scheduler, callback or bone-calculation tail.

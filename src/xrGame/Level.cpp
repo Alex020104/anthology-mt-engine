@@ -1451,7 +1451,7 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-int psLua_ParallelGCStep = 75;
+int psLua_ParallelGCStep = 25;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
 
@@ -1487,11 +1487,25 @@ bool CLevel::Load(u32 dwNum)
 // demonized: called from Device, via Device.LuaGC pointer
 int CLevel::LuaGC()
 {
-    return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
+    lua_State* state = ai().script_engine().lua();
+    const int result = lua_gc(state, LUA_GCSTEP, psLua_ParallelGCStep);
+
+    // Keep automatic allocation-triggered GC out of FrameMove while the MT
+    // collector is active. LUA_GCSTEP temporarily supplies its own threshold,
+    // so every incremental step still runs on the renderer-overlapped worker;
+    // stopping again afterwards prevents an unrelated Lua allocation from
+    // entering LuaJIT's non-preemptible atomic phase on the main game thread.
+    if (psLua_ParallelGC)
+        lua_gc(state, LUA_GCSTOP, 0);
+
+    return result;
 }
 void CLevel::LuaGCFull()
 {
-    lua_gc(ai().script_engine().lua(), LUA_GCCOLLECT, 0);
+    lua_State* state = ai().script_engine().lua();
+    lua_gc(state, LUA_GCCOLLECT, 0);
+    if (psLua_ParallelGC)
+        lua_gc(state, LUA_GCSTOP, 0);
 }
 void CLevel::LuaGCDebug()
 {

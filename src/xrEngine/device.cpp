@@ -730,6 +730,10 @@ void CRenderDevice::on_idle()
 			u64 max_total = 0;
 			u64 max_secondary_wait = 0;
 			SFrameTaskProfile tasks;
+			u64 worst_frame_move = 0;
+			u64 worst_seq_render = 0;
+			u64 worst_secondary_wait = 0;
+			SFrameTaskProfile worst_tasks;
 		};
 		static SFrameProfileAccumulator profile;
 		const u64 total_ticks = frame_finished_at - mt_frame_started_at;
@@ -739,22 +743,38 @@ void CRenderDevice::on_idle()
 		profile.frame_move += mt_frame_move_ticks;
 		profile.seq_render += mt_seq_render_ticks;
 		profile.secondary_wait += wait_ticks;
-		profile.max_total = std::max(profile.max_total, total_ticks);
+		if (total_ticks > profile.max_total)
+		{
+			profile.max_total = total_ticks;
+			profile.worst_frame_move = mt_frame_move_ticks;
+			profile.worst_seq_render = mt_seq_render_ticks;
+			profile.worst_secondary_wait = wait_ticks;
+			profile.worst_tasks = task_profile;
+		}
 		profile.max_secondary_wait = std::max(profile.max_secondary_wait, wait_ticks);
 		profile.tasks.pre_render += task_profile.pre_render;
 		profile.tasks.post_transforms += task_profile.post_transforms;
 		profile.tasks.calculate_bones += task_profile.calculate_bones;
 		profile.tasks.game += task_profile.game;
+		profile.tasks.scheduler += task_profile.scheduler;
+		profile.tasks.seq_parallel += task_profile.seq_parallel;
+		profile.tasks.seq_frame_mt += task_profile.seq_frame_mt;
 		profile.tasks.lua_gc += task_profile.lua_gc;
 		profile.tasks.vision += task_profile.vision;
 		profile.tasks.max_pre_render = std::max(profile.tasks.max_pre_render, task_profile.max_pre_render);
 		profile.tasks.max_post_transforms = std::max(profile.tasks.max_post_transforms, task_profile.max_post_transforms);
 		profile.tasks.max_calculate_bones = std::max(profile.tasks.max_calculate_bones, task_profile.max_calculate_bones);
 		profile.tasks.max_game = std::max(profile.tasks.max_game, task_profile.max_game);
+		profile.tasks.max_scheduler = std::max(profile.tasks.max_scheduler, task_profile.max_scheduler);
+		profile.tasks.max_seq_parallel = std::max(profile.tasks.max_seq_parallel, task_profile.max_seq_parallel);
+		profile.tasks.max_seq_frame_mt = std::max(profile.tasks.max_seq_frame_mt, task_profile.max_seq_frame_mt);
 		profile.tasks.max_lua_gc = std::max(profile.tasks.max_lua_gc, task_profile.max_lua_gc);
 		profile.tasks.max_vision = std::max(profile.tasks.max_vision, task_profile.max_vision);
 
-		if (profile.frames >= 300)
+		// Four compact lines roughly every 20 seconds at 60 FPS are enough to
+		// retain hitch evidence without turning synchronous log I/O itself into
+		// a periodic frame-time disturbance.
+		if (profile.frames >= 1200)
 		{
 			const double ticks_to_average_ms = 1000.0 /
 				(double(CPU::qpc_freq) * double(profile.frames));
@@ -778,6 +798,29 @@ void CRenderDevice::on_idle()
 				profile.tasks.max_game * ticks_to_ms,
 				profile.tasks.max_lua_gc * ticks_to_ms,
 				profile.tasks.max_vision * ticks_to_ms);
+			Msg("* [mt-frame/profile] game-parts(avg/max scheduler/parallel/frame-mt)=%.2f/%.2f %.2f/%.2f %.2f/%.2f ms",
+				profile.tasks.scheduler * ticks_to_average_ms,
+				profile.tasks.max_scheduler * ticks_to_ms,
+				profile.tasks.seq_parallel * ticks_to_average_ms,
+				profile.tasks.max_seq_parallel * ticks_to_ms,
+				profile.tasks.seq_frame_mt * ticks_to_average_ms,
+				profile.tasks.max_seq_frame_mt * ticks_to_ms);
+			Msg("* [mt-frame/profile] worst-frame(total/frame/render/wait)=%.2f/%.2f/%.2f/%.2f ms "
+				"workers(pre/post/bones/game/lua-gc/vision)=%.2f/%.2f/%.2f/%.2f/%.2f/%.2f ms",
+				profile.max_total * ticks_to_ms,
+				profile.worst_frame_move * ticks_to_ms,
+				profile.worst_seq_render * ticks_to_ms,
+				profile.worst_secondary_wait * ticks_to_ms,
+				profile.worst_tasks.pre_render * ticks_to_ms,
+				profile.worst_tasks.post_transforms * ticks_to_ms,
+				profile.worst_tasks.calculate_bones * ticks_to_ms,
+				profile.worst_tasks.game * ticks_to_ms,
+				profile.worst_tasks.lua_gc * ticks_to_ms,
+				profile.worst_tasks.vision * ticks_to_ms);
+			Msg("* [mt-frame/profile] worst-game-parts(scheduler/parallel/frame-mt)=%.2f/%.2f/%.2f ms",
+				profile.worst_tasks.scheduler * ticks_to_ms,
+				profile.worst_tasks.seq_parallel * ticks_to_ms,
+				profile.worst_tasks.seq_frame_mt * ticks_to_ms);
 			profile = {};
 		}
 	}

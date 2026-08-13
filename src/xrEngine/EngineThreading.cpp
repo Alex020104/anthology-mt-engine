@@ -22,6 +22,9 @@ enum EFrameTaskProfile
 	FrameTaskPostTransforms,
 	FrameTaskCalculateBones,
 	FrameTaskGame,
+	FrameTaskScheduler,
+	FrameTaskSeqParallel,
+	FrameTaskSeqFrameMT,
 	FrameTaskLuaGC,
 	FrameTaskVision,
 	FrameTaskCount
@@ -73,12 +76,18 @@ SFrameTaskProfile XRay::Engine::ConsumeFrameTaskProfile()
 	result.post_transforms = frame_task_ticks[FrameTaskPostTransforms].exchange(0, std::memory_order_relaxed);
 	result.calculate_bones = frame_task_ticks[FrameTaskCalculateBones].exchange(0, std::memory_order_relaxed);
 	result.game = frame_task_ticks[FrameTaskGame].exchange(0, std::memory_order_relaxed);
+	result.scheduler = frame_task_ticks[FrameTaskScheduler].exchange(0, std::memory_order_relaxed);
+	result.seq_parallel = frame_task_ticks[FrameTaskSeqParallel].exchange(0, std::memory_order_relaxed);
+	result.seq_frame_mt = frame_task_ticks[FrameTaskSeqFrameMT].exchange(0, std::memory_order_relaxed);
 	result.lua_gc = frame_task_ticks[FrameTaskLuaGC].exchange(0, std::memory_order_relaxed);
 	result.vision = frame_task_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
 	result.max_pre_render = frame_task_max_ticks[FrameTaskPreRender].exchange(0, std::memory_order_relaxed);
 	result.max_post_transforms = frame_task_max_ticks[FrameTaskPostTransforms].exchange(0, std::memory_order_relaxed);
 	result.max_calculate_bones = frame_task_max_ticks[FrameTaskCalculateBones].exchange(0, std::memory_order_relaxed);
 	result.max_game = frame_task_max_ticks[FrameTaskGame].exchange(0, std::memory_order_relaxed);
+	result.max_scheduler = frame_task_max_ticks[FrameTaskScheduler].exchange(0, std::memory_order_relaxed);
+	result.max_seq_parallel = frame_task_max_ticks[FrameTaskSeqParallel].exchange(0, std::memory_order_relaxed);
+	result.max_seq_frame_mt = frame_task_max_ticks[FrameTaskSeqFrameMT].exchange(0, std::memory_order_relaxed);
 	result.max_lua_gc = frame_task_max_ticks[FrameTaskLuaGC].exchange(0, std::memory_order_relaxed);
 	result.max_vision = frame_task_max_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
 	return result;
@@ -198,7 +207,7 @@ void XRay::Engine::CalculateBonesThread()
 
 extern BOOL psLua_ParallelGC;
 int psLua_ParallelGC_CallAmount = 25;
-int psLua_ParallelGC_BudgetUs = 250;
+int psLua_ParallelGC_BudgetUs = 100;
 void XRay::Engine::GameThread()
 {
 	CFrameTaskTimer frame_task_timer(FrameTaskGame);
@@ -219,6 +228,7 @@ void XRay::Engine::GameThread()
 
 	if (!Device.Paused())
 	{
+		CFrameTaskTimer frame_task_timer(FrameTaskScheduler);
 		if (mt_Scheduler)
 		{
 			PROF_EVENT("Sheduler Deferred");
@@ -228,6 +238,7 @@ void XRay::Engine::GameThread()
 	}
 
 	{
+		CFrameTaskTimer frame_task_timer(FrameTaskSeqParallel);
 		PROF_EVENT("seqParallel");
 		for (u32 pit = 0; pit < Device.seqParallel.size(); pit++)
 			Device.seqParallel[pit]();
@@ -269,6 +280,7 @@ void XRay::Engine::GameThread()
         Device.secondary_tasks.run(LuaGC);
 
 	{
+		CFrameTaskTimer frame_task_timer(FrameTaskSeqFrameMT);
 		PROF_EVENT("seqFrameMT");
 		Device.seqFrameMT.Process(rp_Frame);
 	}
