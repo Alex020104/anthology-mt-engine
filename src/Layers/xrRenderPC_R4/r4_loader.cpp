@@ -784,6 +784,10 @@ void CRender::level_Load(IReader* fs)
 		Msg("* [LEVEL CACHE] R4 attach: %d ms (%s)", level_timer.GetElapsed_ms(), level_key.c_str());
 		return;
 	}
+	// Restore must run before the pressure test. At level_Unload the active
+	// level is still fully resident, which previously made same-level quickload
+	// evict the package it was about to reuse.
+	EvictLevelCacheUnderPressure();
 	R_ASSERT(!b_loaded);
 	const bool use_prepared_geometry = prepared_geometry && prepared_geometry->key.equal(level_key) &&
 		prepared_geometry->identity == level_identity && prepared_geometry->normal_geometry_ready &&
@@ -1099,7 +1103,15 @@ void CRender::level_Unload()
 		LevelStaticPackage* package = DetachLevelStaticPackage();
 		Msg("* [LEVEL CACHE] R4 retained: %s", package->key.c_str());
 		m_level_cache.push_back(package);
-		EvictLevelCacheUnderPressure();
+		while (m_level_cache.size() > 2)
+		{
+			LevelStaticPackage* stale = m_level_cache.front();
+			m_level_cache.erase(m_level_cache.begin());
+			Msg("* [LEVEL CACHE] R4 evicted by capacity: %s", stale->key.c_str());
+			dxRenderDeviceRender::Instance().Resources->ReleaseLevelShaderCache(
+				stale->key.c_str(), stale->identity);
+			xr_delete(stale);
+		}
 		return;
 	}
 

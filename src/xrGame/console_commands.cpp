@@ -197,6 +197,7 @@ extern BOOL r_optimize_torch;
 extern BOOL hud_frequent_updates;
 
 extern BOOL lua_use_functor_cache;
+extern int psLua_GCMovementDeferMs;
 
 extern BOOL g_legs_enabled;
 extern float legs_fwd_offset;
@@ -2654,6 +2655,7 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "lua_parallel_gc_budget_us", &psLua_ParallelGC_BudgetUs, 50, 5000);
 	CMD4(CCC_Integer, "lua_parallel_gc_debug", &psLua_ParallelGC_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_parallel_gc", &psLua_ParallelGC, 0, 1);
+	CMD4(CCC_Integer, "lua_gc_movement_defer_ms", &psLua_GCMovementDeferMs, 0, 60000);
 	CMD4(CCC_Integer, "load_defer_full_lua_gc", &g_load_defer_full_lua_gc, 0, 1);
 
 	CMD4(CCC_Integer, "lua_debug", &lua_debug, 0, 1);

@@ -1264,3 +1264,70 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   No new game is required. The next test is one menu-save load, one same-level
   quickload and 60 seconds of movement in the same scene; the 8-10 second load
   target is not claimed until that log is measured.
+
+## 2026-08-13 - v60 deterministic level-cache reuse and movement-safe Lua GC
+
+### Evidence from the v59 test log
+
+- Native resource preparation is working: 2,079 client spawns were reduced to
+  266 unique models and 690 texture references, with the resource barrier only
+  `126.75 ms`. R4/CFORM preparation itself was roughly `0.15-0.34 s`.
+- The repeatable save-load cost is now dominated by two serial mod callbacks:
+  Western Goods readable texture discovery used `5.88-6.30 s`, while its
+  random-dialog DXML scan used `1.33-1.40 s` on every load.
+- During ordinary movement the renderer stayed near `10 ms`, but LuaJIT GC
+  periodically produced non-preemptible atomic tails of `196-215 ms`. These
+  stalls explain the 50-90 FPS oscillation and walking microstutter more
+  directly than Windows assigning the main/game workers to cores 2 and 7.
+- The R4 and CFORM cache pressure test ran at level teardown, before the old
+  level released the rest of its memory. That transient high-water mark could
+  immediately evict the package intended for the next same-level quickload.
+
+### Changes
+
+- R4 and CFORM now try an exact level/identity restore before applying memory
+  pressure eviction. Retention no longer samples RAM at the teardown high-water
+  mark; each cache is capped at two packages as a separate safety bound.
+- Added an Anthology LuaJIT API step that completes incremental marking but can
+  stop immediately before the atomic phase and suspend automatic allocation
+  checks. While the actor is actively moving, the engine defers that atomic
+  phase until movement stops or a configurable 30-second safety limit expires.
+  Full load-end GC always resumes the collector first. The setting is exposed
+  as `lua_gc_movement_defer_ms` (`0` disables it).
+- Added a read-only `ui_texture_ids(prefix)` engine export over the UI atlas
+  already parsed in memory.
+- Added standalone `Anthology Performance - Western Goods Load Cache`: readable
+  pages now use the parsed atlas instead of reparsing every textures-descr XML
+  for every item. The current single `<rand_text>` dialog is parsed once per
+  process instead of walking the entire gameplay dialog list on each load.
+- No PiP, SSS, shader, save or unrelated gameplay script was changed.
+
+### Build, installation and recovery
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compiled and linked
+  successfully and are installed in the game `bin` directory. Source and
+  installed SHA-256 hashes match:
+  - regular DX11 EXE:
+    `FE4B1B6410AF33AB93B521E85783FC7DCCD266D8B4D2D4E75E37FDC7ECA8D3E8`;
+  - regular DX11 PDB:
+    `BCB737CFA8843E34E40C53928B933B841E12C3D9878CF88180702EB75FF0C0F0`;
+  - DX11-AVX EXE:
+    `4A1946F2AA2F2872481AB718B6B995649A24224065DD45D6D500C614252C4269`;
+  - DX11-AVX PDB:
+    `E1996A33AFAEFF961C2B53DA0545F62D92BDF98585B71B2BF267F722FEA07B67`.
+- The standalone patch source is mirrored at
+  `D:/ANTHOLOGY_DEV/addons/Anthology Performance - Western Goods Load Cache`,
+  connected to MO2 by a junction and enabled in the active HARD profile. Both
+  scripts pass Lua 5.1 syntax validation and match the tracked source hashes.
+- Removed the launcher `DBG` token and `-dbg`; disabled the completed
+  `mt_frame_profile` diagnostic and the accidental `470 FPS` cap. Active GC
+  settings are `lua_parallel_gcstep 75`, budget `100 us`, one call per frame
+  and `lua_gc_movement_defer_ms 30000`.
+- Pre-change recovery is at
+  `E:/ANTHOLOGY_BACKUPS/20260813_134804_v60_pre_cache_gc_modfix`; the exact
+  installed v60 package is mirrored at
+  `E:/ANTHOLOGY_BACKUPS/20260813_141105_v60_installed_cache_gc_modfix`.
+- No new game and no shader-cache purge are required. The result should be
+  tested from a fresh process, then with a same-level quickload and 60 seconds
+  of uninterrupted walking; measured 8-10 seconds is not claimed before that
+  real run produces a log.

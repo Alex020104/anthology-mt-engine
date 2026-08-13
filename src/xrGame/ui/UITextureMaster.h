@@ -52,6 +52,7 @@ public:
 	static void GetTextureShader(const shared_str& texture_name, ui_shader& sh);
 	static TEX_INFO FindItem(const shared_str& texture_name);
 	static u32 GetTextureCount() { return static_cast<u32>(m_textures.size()); }
+	static void GetTextureNamesWithPrefix(LPCSTR prefix, xr_vector<shared_str>& result);
 protected:
 	IC static bool IsSh(const shared_str& texture_name);
 

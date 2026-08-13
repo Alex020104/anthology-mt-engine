@@ -357,6 +357,18 @@ CUIEditBox* CScriptXmlInit::InitMPPlayerName(LPCSTR path, CUIWindow* parent)
 	return pWnd;
 }
 
+luabind::object ui_texture_ids(LPCSTR prefix)
+{
+	lua_State* state = ai().script_engine().lua();
+	luabind::object result = luabind::newtable(state);
+	xr_vector<shared_str> names;
+	CUITextureMaster::GetTextureNamesWithPrefix(prefix, names);
+	int index = 1;
+	for (const shared_str& name : names)
+		result[index++] = name.c_str();
+	return result;
+}
+
 #pragma optimize("s",on)
 void CScriptXmlInit::script_register(lua_State* L)
 {
@@ -402,6 +414,7 @@ void CScriptXmlInit::script_register(lua_State* L)
 		.def("InitMMShniaga", &CScriptXmlInit::InitMMShniaga)
 		.def("InitScrollView", &CScriptXmlInit::InitScrollView)
 		.def("InitListBox", &CScriptXmlInit::InitListBox)
-		.def("InitProgressBar", &CScriptXmlInit::InitProgressBar)
+		.def("InitProgressBar", &CScriptXmlInit::InitProgressBar),
+		def("ui_texture_ids", &ui_texture_ids)
 	];
 }

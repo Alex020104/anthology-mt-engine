@@ -1170,6 +1170,18 @@ LUA_API int lua_gc(lua_State *L, int what, int data)
       }
     break;
   }
+  case LUA_GCSTEPDEFERATOMIC: {
+    MSize a = (MSize)data << 10;
+    g->gc.threshold = (a <= g->gc.total) ? (g->gc.total - a) : 0;
+    while (g->gc.total >= g->gc.threshold) {
+      int step = lj_gc_step_defer_atomic(L);
+      if (step > 0) {
+	res = step;
+	break;
+      }
+    }
+    break;
+  }
   case LUA_GCSETPAUSE:
     res = (int)(g->gc.pause);
     g->gc.pause = (MSize)data;

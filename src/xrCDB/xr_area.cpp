@@ -63,6 +63,18 @@ void EvictStaticCformCacheUnderPressure()
 		xr_delete(package);
 	}
 }
+
+void TrimStaticCformCache()
+{
+	auto& cache = StaticCformCache();
+	while (cache.size() > 2)
+	{
+		StaticCformPackage* package = cache.front();
+		cache.erase(cache.begin());
+		Msg("* [LEVEL CACHE] CFORM evicted by capacity: %s", package->key.c_str());
+		xr_delete(package);
+	}
+}
 }
 
 //----------------------------------------------------------------------
@@ -110,7 +122,9 @@ CObjectSpace::~CObjectSpace()
 				++it;
 		}
 		cache.push_back(package);
-		EvictStaticCformCacheUnderPressure();
+		// Do not sample memory here: the old level and its resources are still
+		// resident, so this point produces a false pressure signal on quickload.
+		TrimStaticCformCache();
 	}
 
 	//moved to ~IGameLevel
@@ -216,7 +230,7 @@ void CObjectSpace::PrepareStatic(LPCSTR level_path)
 	package->model.build(vertices, header.vertcount, triangles, header.facecount);
 	FS.r_close(reader);
 	cache.push_back(package);
-	EvictStaticCformCacheUnderPressure();
+	TrimStaticCformCache();
 	Msg("* [LEVEL PREPARE] CFORM ready: %s", key.c_str());
 }
 
@@ -264,6 +278,9 @@ void CObjectSpace::Load(LPCSTR path, LPCSTR fname, CDB::build_callback build_cal
 			Msg("* [LEVEL CACHE] CFORM restored: %s", key.c_str());
 			return;
 		}
+		// A matching package was given the first chance to restore. Only stale
+		// packages may now be evicted if the process is genuinely short on RAM.
+		EvictStaticCformCacheUnderPressure();
 	}
 
 	m_static_cache_key = key;

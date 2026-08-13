@@ -29,6 +29,22 @@ void CUITextureMaster::FreeCachedShaders()
 	m_shaders.clear();
 }
 
+void CUITextureMaster::GetTextureNamesWithPrefix(LPCSTR prefix, xr_vector<shared_str>& result)
+{
+	result.clear();
+	if (!prefix || !prefix[0])
+		return;
+	const size_t prefix_length = xr_strlen(prefix);
+	auto it = m_textures.lower_bound(shared_str(prefix));
+	for (; it != m_textures.end(); ++it)
+	{
+		LPCSTR name = it->first.c_str();
+		if (strncmp(name, prefix, prefix_length) != 0)
+			break;
+		result.push_back(it->first);
+	}
+}
+
 void CUITextureMaster::ParseShTexInfo(LPCSTR xml_file)
 {
 	CUIXml xml;

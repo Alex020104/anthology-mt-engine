@@ -1452,8 +1452,29 @@ void CLevel::OnFrame()
 
 int psLUA_GCSTEP = 300;
 int psLua_ParallelGCStep = 75;
+int psLua_GCMovementDeferMs = 30000;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
+
+namespace
+{
+bool g_lua_gc_atomic_deferred = false;
+u32 g_lua_gc_atomic_deferred_at = 0;
+
+bool ActorIsActivelyMoving()
+{
+    return g_actor && g_actor->AnyMove() && !Device.Paused();
+}
+
+void ResumeDeferredLuaGC(lua_State* state)
+{
+    if (!g_lua_gc_atomic_deferred)
+        return;
+    lua_gc(state, LUA_GCRESTART, 0);
+    g_lua_gc_atomic_deferred = false;
+    g_lua_gc_atomic_deferred_at = 0;
+}
+}
 
 void CLevel::script_gc()
 {
@@ -1477,6 +1498,9 @@ void CLevel::script_gc()
 bool CLevel::Load(u32 dwNum)
 {
     inherited::Load(dwNum);
+    // Level recreation can keep the same script VM. Never leave its automatic
+    // threshold suspended if teardown happened during a deferred atomic phase.
+    ResumeDeferredLuaGC(ai().script_engine().lua());
     Msg("Device.LuaGC bind");
     Device.LuaGC.bind(&CLevel::LuaGC);
     Device.LuaGCFull.bind(&CLevel::LuaGCFull);
@@ -1487,11 +1511,39 @@ bool CLevel::Load(u32 dwNum)
 // demonized: called from Device, via Device.LuaGC pointer
 int CLevel::LuaGC()
 {
-    return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
+    lua_State* state = ai().script_engine().lua();
+    const bool moving = ActorIsActivelyMoving();
+    bool force_atomic = false;
+    if (g_lua_gc_atomic_deferred)
+    {
+        const u32 deferred_ms = Device.TimerAsync() - g_lua_gc_atomic_deferred_at;
+        if (moving && psLua_GCMovementDeferMs > 0 && deferred_ms < static_cast<u32>(psLua_GCMovementDeferMs))
+            return 0;
+        ResumeDeferredLuaGC(state);
+        // At the safety deadline the normal step must be allowed to execute
+        // atomic once. Re-entering the defer call here would postpone it
+        // forever while the actor keeps moving.
+        force_atomic = moving && psLua_GCMovementDeferMs > 0;
+    }
+
+    if (moving && psLua_GCMovementDeferMs > 0 && !force_atomic)
+    {
+        const int result = lua_gc(state, LUA_GCSTEPDEFERATOMIC, psLua_ParallelGCStep);
+        if (result == 2)
+        {
+            g_lua_gc_atomic_deferred = true;
+            g_lua_gc_atomic_deferred_at = Device.TimerAsync();
+            return 0;
+        }
+        return result;
+    }
+    return lua_gc(state, LUA_GCSTEP, psLua_ParallelGCStep);
 }
 void CLevel::LuaGCFull()
 {
-    lua_gc(ai().script_engine().lua(), LUA_GCCOLLECT, 0);
+    lua_State* state = ai().script_engine().lua();
+    ResumeDeferredLuaGC(state);
+    lua_gc(state, LUA_GCCOLLECT, 0);
 }
 void CLevel::LuaGCDebug()
 {
