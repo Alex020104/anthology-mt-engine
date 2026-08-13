@@ -669,7 +669,7 @@ static size_t gc_onestep(lua_State *L)
 }
 
 /* Perform a limited amount of incremental GC steps. */
-static int gc_step_limited(lua_State *L, int defer_atomic)
+int LJ_FASTCALL lj_gc_step(lua_State *L)
 {
   global_State *g = G(L);
   MSize lim;
@@ -681,13 +681,6 @@ static int gc_step_limited(lua_State *L, int defer_atomic)
   if (g->gc.total > g->gc.threshold)
     g->gc.debt += g->gc.total - g->gc.threshold;
   do {
-    if (defer_atomic && g->gc.state == GCSatomic) {
-      /* Keep automatic allocation checks from entering the non-preemptible
-      ** atomic phase until the engine explicitly restarts the collector. */
-      g->gc.threshold = LJ_MAX_MEM;
-      g->vmstate = ostate;
-      return 2;
-    }
     lim -= (MSize)gc_onestep(L);
     if (g->gc.state == GCSpause) {
       g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
@@ -695,15 +688,6 @@ static int gc_step_limited(lua_State *L, int defer_atomic)
       return 1;  /* Finished a GC cycle. */
     }
   } while ((int32_t)lim > 0);
-  if (defer_atomic && g->gc.state == GCSpropagate &&
-      gcref(g->gc.gray) == NULL) {
-    /* The next collector operation would only advance to GCSatomic. Stop
-    ** automatic GC now as well, otherwise an allocation on the game thread
-    ** could run the atomic phase before the next explicit engine GC step. */
-    g->gc.threshold = LJ_MAX_MEM;
-    g->vmstate = ostate;
-    return 2;
-  }
   if (g->gc.debt < GCSTEPSIZE) {
     g->gc.threshold = g->gc.total + GCSTEPSIZE;
     g->vmstate = ostate;
@@ -714,16 +698,6 @@ static int gc_step_limited(lua_State *L, int defer_atomic)
     g->vmstate = ostate;
     return 0;
   }
-}
-
-int LJ_FASTCALL lj_gc_step(lua_State *L)
-{
-  return gc_step_limited(L, 0);
-}
-
-int LJ_FASTCALL lj_gc_step_defer_atomic(lua_State *L)
-{
-  return gc_step_limited(L, 1);
 }
 
 /* Ditto, but fix the stack top first. */

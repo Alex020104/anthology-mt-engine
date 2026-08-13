@@ -1331,3 +1331,38 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   tested from a fresh process, then with a same-level quickload and 60 seconds
   of uninterrupted walking; measured 8-10 seconds is not claimed before that
   real run produces a log.
+
+## 2026-08-13 - v61 emergency removal of movement-deferred GC
+
+- The first v60 gameplay report showed an immediate collapse to roughly
+  `10 FPS`, so that build is not accepted for further testing.
+- Removed the complete `LUA_GCSTEPDEFERATOMIC` LuaJIT extension, its suspended
+  collector state, movement timer and console setting. The LuaJIT and
+  `CLevel::LuaGC` sources now match the last pre-v60 revision exactly.
+- Restored the conservative v59 runtime values: `lua_parallel_gcstep 10`,
+  `lua_parallel_gc_budget_us 50`, one call per frame. Debug/profile logging
+  remains disabled and there is no engine FPS cap.
+- Kept only the independent loading changes: R4/CFORM restore-before-pressure
+  ordering and the standalone Western Goods XML patch. The fresh log confirms
+  the Western Goods readable callback fell from approximately `5.9-6.3 s` to
+  `0.22 ms`; it does not execute per gameplay frame.
+- Before v61 finished building, the installed game binaries were immediately
+  rolled back to the known pre-v60 v59 hashes so the rejected 10-FPS binary
+  could not be launched again by accident.
+
+### Build and installation
+
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully after the
+  GC removal. Installed files match the source build hashes:
+  - regular DX11 EXE:
+    `58D55A6ADB29E94317BDDE3A9E8E46D841564C8C09C6263A3B94D4F600650E1A`;
+  - regular DX11 PDB:
+    `EE22E81AA54867DD2A4471D75DC8D11ABC80699C7CA863EA5C4C821389937E5C`;
+  - DX11-AVX EXE:
+    `E67E81DC9A44B9CEA74A02AE57D12D027AA0AB1D07AA2C3279A463C1A6C93AB4`;
+  - DX11-AVX PDB:
+    `982699652C638DB62CDEB5D03B6AB3BC9187793A436959086246B11C8AF99342`.
+- The rejected v60 installation is recoverable only for diagnosis at
+  `E:/ANTHOLOGY_BACKUPS/20260813_142300_v61_pre_gc_revert`. The active v61
+  binaries and settings are mirrored at
+  `E:/ANTHOLOGY_BACKUPS/20260813_143200_v61_installed_gc_reverted`.
