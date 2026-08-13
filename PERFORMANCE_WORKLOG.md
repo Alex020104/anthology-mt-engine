@@ -1422,3 +1422,55 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   same save and move through the same heavy scene for at least 60 seconds; the
   new `worst-frame` and `worst-game-parts` lines will distinguish any remaining
   renderer, GC, scheduler, callback or bone-calculation tail.
+
+## 2026-08-13 - v63 rejection and complete rollback of v62
+
+### Crash and stutter evidence
+
+- v62 is rejected. The gameplay log ends with `[SCRIPT ERROR]: not enough
+  memory`; the stack reaches `lj_err_mem` while Lua was growing its stack from
+  the keyboard callback path. Stopping the automatic collector after every MT
+  step allowed the Lua heap to grow until allocation failed.
+- The same log proves that this mechanism damaged frame pacing before the
+  crash: a worst frame waited `315.17 ms` for secondary work while the Lua GC
+  task consumed `311.17 ms`; a later sample waited `80.30 ms` with `88.85 ms`
+  in Lua GC. These are visible stutters, not a GPU or storage diagnosis.
+- MCM's options reset rewrote `r__framelimit` to `476`. That value is not a
+  60-FPS lock, but the active setting has still been restored to `0`.
+  `rs_v_sync` and `rs_refresh_60hz` remain off.
+
+### Corrective action
+
+- Removed the v62 `LUA_GCSTOP`/`LUA_GCRESTART` lifecycle changes completely.
+  Lua GC ownership and all executable source now match v61 exactly.
+- Removed the v62 per-stage/worst-frame diagnostic instrumentation as well, so
+  none of its extra timing atomics remain in normal play. Runtime diagnostics
+  are disabled with `mt_frame_profile 0`.
+- Restored the last smooth runtime values in the active `user.ltx`:
+  `lua_parallel_gcstep 10`, budget `50 us`, one call per frame. The installed
+  regular DX11 and DX11-AVX binaries were immediately restored to the exact v61
+  hashes before another launch could use v62.
+- The accepted v61 loading solution, R4/CFORM caches and standalone Western
+  Goods patch are retained unchanged. No PiP, SSS, shader or gameplay addon was
+  modified in this rollback.
+
+### Build, installation and recovery
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compiled and linked
+  successfully after the complete source rollback. The fresh build artifacts
+  were retained only as verification because PE/PDB build metadata changes
+  their hashes even when the executable source is identical.
+- The installed game deliberately keeps the exact known v61 pair instead of
+  replacing it with newly timestamped equivalents:
+  - regular DX11 EXE:
+    `58D55A6ADB29E94317BDDE3A9E8E46D841564C8C09C6263A3B94D4F600650E1A`;
+  - regular DX11 PDB:
+    `EE22E81AA54867DD2A4471D75DC8D11ABC80699C7CA863EA5C4C821389937E5C`;
+  - DX11-AVX EXE:
+    `E67E81DC9A44B9CEA74A02AE57D12D027AA0AB1D07AA2C3279A463C1A6C93AB4`;
+  - DX11-AVX PDB:
+    `982699652C638DB62CDEB5D03B6AB3BC9187793A436959086246B11C8AF99342`.
+- The corrected installed state is mirrored at
+  `E:/ANTHOLOGY_BACKUPS/20260813_152354_v63_installed_v61_rollback`.
+- No new game or shader-cache purge is required. Test from a fresh process;
+  the game itself has no active 60-FPS limiter in this configuration.

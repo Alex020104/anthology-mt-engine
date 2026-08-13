@@ -6,18 +6,12 @@ struct SFrameTaskProfile
 	u64 post_transforms = 0;
 	u64 calculate_bones = 0;
 	u64 game = 0;
-	u64 scheduler = 0;
-	u64 seq_parallel = 0;
-	u64 seq_frame_mt = 0;
 	u64 lua_gc = 0;
 	u64 vision = 0;
 	u64 max_pre_render = 0;
 	u64 max_post_transforms = 0;
 	u64 max_calculate_bones = 0;
 	u64 max_game = 0;
-	u64 max_scheduler = 0;
-	u64 max_seq_parallel = 0;
-	u64 max_seq_frame_mt = 0;
 	u64 max_lua_gc = 0;
 	u64 max_vision = 0;
 };
