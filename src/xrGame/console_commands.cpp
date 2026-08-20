@@ -2648,7 +2648,8 @@ void CCC_RegisterCommands()
     // Moved lua_gcstep outside of DEBUG to allow for easier experimentation.
 	CMD4(CCC_Integer, "lua_gcstep", &psLUA_GCSTEP, 1, 1000);
 
-	// demonized: GC step that is used for repeated calls on second thread while frame is rendering, limit to small values
+	// Compatibility names retained for existing user.ltx files. The incremental
+	// collector is owner-thread budgeted; LuaJIT VM access is never concurrent.
 	CMD4(CCC_Integer, "lua_parallel_gcstep", &psLua_ParallelGCStep, 1, 100);
 	CMD4(CCC_Integer, "lua_parallel_gc_call_amount", &psLua_ParallelGC_CallAmount, 1, 50);
 	CMD4(CCC_Integer, "lua_parallel_gc_budget_us", &psLua_ParallelGC_BudgetUs, 50, 5000);

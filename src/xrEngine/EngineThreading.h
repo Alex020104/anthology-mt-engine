@@ -24,6 +24,8 @@ namespace XRay::Engine
     void PreRenderPostTransformsThread();
 	void CalculateBonesThread();
 	void GameThread();
+	u64 BeginLuaGCTaskProfile();
+	void EndLuaGCTaskProfile(u64 started_at);
 	u64 BeginVisionTaskProfile();
 	void EndVisionTaskProfile(u64 started_at);
 	SFrameTaskProfile ConsumeFrameTaskProfile();

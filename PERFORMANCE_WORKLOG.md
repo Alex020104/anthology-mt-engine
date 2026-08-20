@@ -1474,3 +1474,52 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260813_152354_v63_installed_v61_rollback`.
 - No new game or shader-cache purge is required. Test from a fresh process;
   the game itself has no active 60-FPS limiter in this configuration.
+
+## 2026-08-20 - v64 Lua VM owner-thread safety
+
+### Crash and stutter cause
+
+- The latest post-load crash reaches `lj_gc_step` while Lua UI/luabind work is
+  active. The previous `lua_parallel_gc` implementation submitted a second
+  nested worker from `GameThread` and then continued into `seqFrameMT`; both
+  paths could touch the single LuaJIT VM concurrently.
+- LuaJIT's allocator and collector are not safe for concurrent access to the
+  same state. The renderer eventually waited for that worker at frame end, so
+  the implementation could also turn a long atomic GC phase into the observed
+  periodic secondary-wait spike instead of removing it.
+
+### Corrective action
+
+- Removed the renderer-overlapped Lua GC task. Incremental collection now runs
+  from `CLevel::OnFrame` on the Lua VM owner thread. The existing
+  `lua_parallel_gcstep`, call-count and microsecond-budget settings are retained
+  as compatibility controls and still split normal collection into small
+  explicit steps; they no longer mean concurrent VM access.
+- The `mtLUA_GC` flag can no longer move `script_gc`, script physics commander
+  work or the collector into `seqParallel`. Safe native renderer, bone,
+  particle, scheduler and vision jobs remain multithreaded.
+- `mt_frame_profile` still attributes Lua GC time separately through explicit
+  owner-thread timing, allowing later test logs to distinguish a remaining Lua
+  atomic phase from scheduler, render or vision work.
+- Full collections coalesced at the end of a load session remain unchanged.
+  No GC stop/restart mechanism was reintroduced, so the v62 out-of-memory
+  regression remains absent.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compiled and linked
+  successfully. Source-build and installed hashes match:
+  - regular DX11 EXE:
+    `79819A97BC3484270504D183B56CB8BF48D3AA3ED4D5272CA506FC3E6EBC3441`;
+  - regular DX11 PDB:
+    `26D92BC9F8C6029D27B42FD0343BA753A228C508EF2E108CA9F67D8AC61A366E`;
+  - DX11-AVX EXE:
+    `844CC7D8BB11FEF092BB60293A1160331D8F99BD179374CDB8E9BDAE7B46F111`;
+  - DX11-AVX PDB:
+    `21F7ECEA61D4680B81F4125380AAAB9992E6FEA815AFE8601FF378C050D2D317`.
+- The exact previous v61 binaries and active `appdata/user.ltx` are recoverable
+  from `E:/ANTHOLOGY_BACKUPS/20260820_214337_v64_pre_owner_lua_gc`.
+- Runtime settings and all gameplay addons were deliberately left unchanged;
+  the four standalone Catspaw/Dot Marks/Tactic Compass/Interactive PDA patches
+  remain disabled so this GC ownership change can be measured independently.
+- No new game or shader-cache purge is required.

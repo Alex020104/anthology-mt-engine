@@ -60,6 +60,17 @@ u64 XRay::Engine::BeginVisionTaskProfile()
 	return mt_FrameProfile ? CPU::QPC() : 0;
 }
 
+u64 XRay::Engine::BeginLuaGCTaskProfile()
+{
+	return mt_FrameProfile ? CPU::QPC() : 0;
+}
+
+void XRay::Engine::EndLuaGCTaskProfile(u64 started_at)
+{
+	if (started_at)
+		RecordFrameTask(FrameTaskLuaGC, CPU::QPC() - started_at);
+}
+
 void XRay::Engine::EndVisionTaskProfile(u64 started_at)
 {
 	if (started_at)
@@ -233,41 +244,6 @@ void XRay::Engine::GameThread()
 			Device.seqParallel[pit]();
 		Device.seqParallel.clear();
 	}
-
-    // demonized: While Renderer prepares frame and GPU renders it, use time opportunity to repeatedly call Lua GC with small step value
-    // Reduces stutters since less work will be done in main GC step or no work at all
-    static auto LuaGC = []()
-    {
-		CFrameTaskTimer frame_task_timer(FrameTaskLuaGC);
-        PROF_EVENT("seqLuaGC");
-		const u64 started_at = CPU::QPC();
-		const u64 budget_ticks = CPU::qpc_freq * static_cast<u64>(psLua_ParallelGC_BudgetUs) / 1000000ULL;
-        // Do at least once
-        do
-        {
-            Device.LuaGCCount++;
-            if (Device.LuaGC() == 1) // 1 informs that GC cycle is complete
-            {
-                Device.LuaGCDone = true;
-                break;
-            }
-
-			// A large Lua heap can otherwise occupy a PPL worker for the whole
-			// render and turn the final task_group wait into a CPU-side frame stall.
-		} while (Device.isRendering.load(std::memory_order_relaxed) &&
-			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
-			CPU::QPC() - started_at < budget_ticks);
-    };
-    // Full collections requested by Lua during a load session are coalesced
-    // into one owner-thread collection immediately before control is returned
-    // to the player. Running incremental GC here at the same time only makes
-    // the render thread wait for LuaJIT's non-preemptible atomic phase on every
-    // precache frame and leaves less garbage for the coalesced collection to
-    // reclaim. Outside loading the existing renderer-overlapped path remains
-    // unchanged.
-    if (psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
-        Device.secondary_tasks.run(LuaGC);
-
 	{
 		PROF_EVENT("seqFrameMT");
 		Device.seqFrameMT.Process(rp_Frame);
