@@ -2092,8 +2092,11 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		to_ms(m_load_session.precache_present_ticks),
 		to_ms(m_load_session.precache_secondary_wait_ticks), to_ms(serial_other_ticks));
 	m_load_session.active = false;
-	if (Sound)
-		Sound->source_prefetch_start();
+	// Keep the bulk optional sound manifest paused while a level is active.
+	// Level-requested sources were already promoted by source_prefetch_prepare()
+	// during loading; continuing through tens of thousands of unrelated OGG
+	// headers here causes recurring I/O/decode interference during gameplay.
+	// The prefetch worker is resumed on disconnect/main-menu instead.
 }
 
 void CApplication::LoadBegin()

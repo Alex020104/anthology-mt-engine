@@ -1523,3 +1523,52 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   the four standalone Catspaw/Dot Marks/Tactic Compass/Interactive PDA patches
   remain disabled so this GC ownership change can be measured independently.
 - No new game or shader-cache purge is required.
+
+## 2026-08-20 - v65 periodic-tick isolation and runtime sound-prefetch pause
+
+### Capture and log evidence
+
+- The latest 12.32-second 60-FPS capture contains three distinct multi-frame
+  presentation stalls during continuous camera motion: approximately 67 ms at
+  2.92 s, 83 ms at 6.60 s and 50 ms at 10.28 s. Their 3.65-3.68-second spacing
+  confirms a periodic CPU/runtime event rather than ordinary FPS variance.
+- The overlay reports only 18-35% GPU use around the stalls. The previous log
+  had no `mt-frame/profile` samples because the active `appdata/user.ltx` had
+  reverted to `mt_frame_profile 0`.
+- The same active file had also reverted from the last smooth GC controls to
+  `lua_parallel_gcstep 76`, 25 calls and a 250-us per-frame budget. It is now
+  restored to step 10, one call and 50 us, with busy-hands debugging disabled.
+  The compact 300-frame MT profiler is enabled for the next controlled run.
+- Sound prefetch resumed as soon as the load session ended with 36,796 optional
+  sources still queued. Runtime prefetch then opened/prepared one unrelated OGG
+  every 10 ms throughout play, despite all level-requested sources already
+  being promoted during loading.
+
+### Corrective action
+
+- Bulk optional sound prefetch now remains paused while a level is active. The
+  loader still prepares requested sound metadata, and any unprepared sound can
+  still use the existing synchronous demand path. Bulk prefetch resumes after
+  disconnect/in the main menu, removing sustained background I/O and decode
+  contention from gameplay.
+- No gameplay addon, PiP, SSS, renderer, save format or load-cache mechanism was
+  changed in this isolation build.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully. Installed
+  artifacts match their source-build hashes:
+  - regular DX11 EXE:
+    `09FDFC777B3DD34D4BD8F70239FAA6E9D228A01747802FA3C878F4466C8D629E`;
+  - regular DX11 PDB:
+    `9371764E6486714D8C0DB8FFE97D11C1B27FCBA13F189AF5A9C0266A12CA1ADE`;
+  - DX11-AVX EXE:
+    `5AAD6F652A2AC5FE5124F329D3A57D351355498FC7D6906FCF3A13404F8CAB9D`;
+  - DX11-AVX PDB:
+    `1F3F2D23C346A6A6DF3E4CB0F38198BE9174BCBE33B75D8C65D85813C5CCEFF8`.
+- The exact previous v64 binaries, symbols and corrected active settings are
+  recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260820_221350_v65_pre_sound_prefetch_pause`.
+- No new game or shader-cache purge is required. Test the same save and record
+  at least 20 seconds of continuous camera motion; the next log will contain
+  `[mt-frame/profile]` aggregates even if a residual tick remains.
