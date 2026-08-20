@@ -64,40 +64,16 @@ void CSE_ALifeOnlineOfflineGroup::update()
 	if (!bfActive())
 		return;
 
-	const Fvector previous_group_position = o_Position;
 	brain().update();
-	Fvector group_translation;
-	group_translation.sub(o_Position, previous_group_position);
-	const bool group_moved = !fis_zero(group_translation.square_magnitude());
-	const bool group_is_on_current_level = ai().game_graph().valid_vertex_id(m_tGraphID) &&
-		ai().game_graph().vertex(m_tGraphID)->level_id() == alife().graph().level().level_id();
 
 	MEMBERS::iterator I = m_members.begin();
 	MEMBERS::iterator E = m_members.end();
 	for (; I != E; ++I)
 	{
-		MEMBER* member = (*I).second;
-		// Preserve the formation acquired from smart-terrain jobs after the
-		// squad has been online once. Offline simulation moves the complete
-		// formation by the squad delta instead of collapsing every member to
-		// the squad centre, which made all NPCs reappear in one point.
-		if (group_moved)
-			member->o_Position.add(group_translation);
-		member->m_tNodeID = m_tNodeID;
-		member->m_tGraphID = m_tGraphID;
-		member->m_fDistance = m_fDistance;
-		if (group_moved && group_is_on_current_level)
-		{
-			member->synchronize_location();
-			// A translated formation point can fall outside a narrow AI mesh.
-			// Prefer a safe centre fallback for that member to an invalid spawn.
-			if (!ai().level_graph().valid_vertex_id(member->m_tNodeID) ||
-				!ai().level_graph().inside(member->m_tNodeID, member->o_Position))
-			{
-				member->o_Position = o_Position;
-				member->m_tNodeID = m_tNodeID;
-			}
-		}
+		((*I).second)->o_Position = o_Position;
+		((*I).second)->m_tNodeID = m_tNodeID;
+		((*I).second)->m_tGraphID = m_tGraphID;
+		((*I).second)->m_fDistance = m_fDistance;
 	}
 	return;
 }

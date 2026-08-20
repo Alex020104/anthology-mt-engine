@@ -47,7 +47,22 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
             return;
         }
     }
-    
+
+	// May 2026 Monolith optimization, adapted for Anthology: reject dynamic
+	// world visuals hidden by the level HOM before creating render packets.
+	// The normal-pass guard keeps HUD/PiP-specific queues out of this test.
+	if (ps_r__common_flags.test(RFLAG_HOM_DYNAMIC))
+	{
+#if RENDER!=R_R1
+		if (i_mask[CDSGraphManager::fl_normal])
+#endif
+		{
+			Fbox world_bb;
+			world_bb.xform(pVisual->vis.box, *xform);
+			if (!RImplementation.HOM.visible(world_bb))
+				return;
+		}
+	}
 
 	// Distortive geometry should be marked and R2 special-cases it
 	// a) Allow to optimize RT order

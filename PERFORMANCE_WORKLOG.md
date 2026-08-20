@@ -1789,3 +1789,75 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   save after loading so the obsolete Interactive PDA payload is purged, then
   measure continuous movement for at least two minutes with the RF detector,
   compass, Dot Marks and Interactive PDA enabled.
+
+## 2026-08-21 - v69 CoP smart jobs and GPU-bound base performance
+
+### Fresh transition/profile evidence
+
+- The Skadovsk/Jupiter run proves the secondary game worker is active. Stable
+  frames spend approximately 7-11 ms in serial frame work, 9-13 ms in the game
+  worker and only 0.3-1.6 ms waiting for that worker. More worker threads alone
+  cannot double this result.
+- The same samples spend 16-30 ms inside `seqRender`; on Jupiter the common
+  range is 22-30 ms. This is the current 33-45 FPS limiter, while the serial
+  CPU side by itself would permit roughly 90-110 FPS.
+- The active renderer profile had SSFX settings well above the engine defaults:
+  AO 8, SSR 4, directional/omni SSS 18/6 and both material/terrain POM at 36
+  samples. The active file also retains high sun, high volumetric sunshafts,
+  volumetric lighting/smoke, water reflections and a 110 m detail radius.
+
+### May Monolith dynamic-HOM adaptation
+
+- Adapted themrdemonized Monolith commit `ec01e1169e` (2026-05-25). With
+  `r__hom_dynamic on`, dynamic world visuals fully hidden by the level HOM are
+  rejected before render packets are built. This targets populated interiors
+  and bases where many NPCs/objects are behind solid geometry.
+- The normal-world-pass guard from the source change is retained, so HUD and
+  PiP-specific render queues are not subjected to this culling path. The path
+  is independently reversible at runtime with `r__hom_dynamic off`.
+
+### Balanced RTX 5070 / 1080p GPU profile
+
+- Applied IL 16, AO 4, SSR 2, directional/omni SSS 12/4, material POM 16 with
+  refinement disabled and terrain POM 12 to the actual active
+  `appdata/user.ltx`.
+- Texture quality, resolution, sun quality, volumetric lighting, water
+  reflections, vegetation density/radius, PiP and the temporal SSS shadow fix
+  are unchanged. The exact profile is tracked in
+  `modpack-patches/Anthology Performance v69 - RTX 5070 1080p GPU Profile`
+  and mirrored under `D:/ANTHOLOGY_DEV/addons`.
+- Shader quality values participate in the shader cache key. New variants may
+  compile during the first run, but a manual cache purge is not required.
+
+### CoP-style smart job placement
+
+- The v67 formation translation was the reason the reported centre spawn did
+  not improve: translating a formation between differently shaped smarts put
+  members outside the destination AI mesh, and its safety fallback collapsed
+  them back to the squad centre.
+- Restored the stock server-group movement behaviour and moved placement to the
+  original CoP-style smart-job stage. The standalone addon wraps
+  `smart_terrain.setup_gulag_and_logic_on_spawn` and repeats the existing
+  `db.spawned_vertex_by_id` redirect for already initialized jobs. Returning
+  NPCs now enter online at their assigned camp, guard, patrol or work vertex.
+- The wrapper performs no per-frame scan and writes no new save state. Existing
+  saves are supported after one offline -> online cycle; no new game is needed.
+- `CALifeSimulator::set_switch_factor` is exported to Lua. The addon now sets
+  factor 0.10 and centre distance 330 directly, removing the recurring
+  `Unknown command: al_switch_factor` log error while retaining approximately
+  297 m online / 363 m offline thresholds.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compiled and
+  linked successfully. Installed files match their build hashes:
+  - regular DX11 EXE: `184E5558B889771223E34E11F39466F22E588F71F8FC94A72DFED05F526556D2`;
+  - regular DX11 PDB: `498E12D2AC54DB8BC14C597E87701A3993DE31FE7AD0856BB72E7E85F3484EF4`;
+  - DX11-AVX EXE: `3058C133CDFD9D06731158AEB91AA2A4791A066DCB93C341F9373F3E1BA2A4E9`;
+  - DX11-AVX PDB: `05D6485922660ED7F76E7A461A6FB0771BF8A20384D0D16E68673FEF39981224`.
+- `Anthology A-Life v69 - CoP Smart Jobs 300m` is enabled in the active HARD
+  MO2 profile and the obsolete v67 A-Life addon is disabled. All original mod
+  scripts remain untouched.
+- Complete pre-v69 sources, binaries, symbols, active settings, MO2 list and
+  old A-Life addon are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_0120_v69_pre_cop_jobs_gpu_profile`.

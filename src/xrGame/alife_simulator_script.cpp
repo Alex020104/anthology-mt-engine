@@ -663,6 +663,7 @@ void CALifeSimulator::script_register(lua_State* L)
 		.def("disable_info", &AlifeRemoveInfo)
 		.def("switch_distance", &CALifeSimulator::switch_distance)
 		.def("set_switch_distance", &CALifeSimulator::set_switch_distance)
+		.def("set_switch_factor", &CALifeSimulator::set_switch_factor)
 		//Alundaio: renamed to set_switch_distance from switch_distance
 		//Alundaio: extend alife simulator exports
 		.def("teleport_object", &::teleport_object)
