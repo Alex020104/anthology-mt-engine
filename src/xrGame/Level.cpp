@@ -1464,29 +1464,15 @@ void CLevel::script_gc()
 		m_ph_commander_scripts->update();
 	}
 
-	// LuaJIT owns one VM and is not safe to collect concurrently with script/UI
-	// callbacks. Keep the small-step/budget behaviour of lua_parallel_gc, but
-	// execute it here on the VM owner thread after the level callbacks instead
-	// of racing the renderer-overlapped GameThread task.
-	PROF_EVENT("CLevel::script_gc");
-	const u64 profile_started_at = XRay::Engine::BeginLuaGCTaskProfile();
-	const int step = psLua_ParallelGC ? psLua_ParallelGCStep : psLUA_GCSTEP;
-	const int max_calls = psLua_ParallelGC ? psLua_ParallelGC_CallAmount : 1;
-	const u64 budget_ticks = psLua_ParallelGC ?
-		CPU::qpc_freq * static_cast<u64>(psLua_ParallelGC_BudgetUs) / 1000000ULL : 0;
-	const u64 started_at = CPU::QPC();
-	Device.LuaGCCount = 0;
-	Device.LuaGCDone = false;
-	do
+	// The parallel mode is executed by GameThread only after seqFrameMT has
+	// completed. This owner-thread fallback remains for the regular mode.
+	if (!(psLua_ParallelGC && Device.LuaGC))
 	{
-		++Device.LuaGCCount;
-		if (lua_gc(ai().script_engine().lua(), LUA_GCSTEP, step) == 1)
-		{
-			Device.LuaGCDone = true;
-			break;
-		}
-	} while (Device.LuaGCCount < max_calls && CPU::QPC() - started_at < budget_ticks);
-	XRay::Engine::EndLuaGCTaskProfile(profile_started_at);
+		PROF_EVENT("CLevel::script_gc");
+		const u64 profile_started_at = XRay::Engine::BeginLuaGCTaskProfile();
+		lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLUA_GCSTEP);
+		XRay::Engine::EndLuaGCTaskProfile(profile_started_at);
+	}
 	
 }
 

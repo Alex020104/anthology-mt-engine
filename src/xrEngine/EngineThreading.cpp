@@ -248,4 +248,30 @@ void XRay::Engine::GameThread()
 		PROF_EVENT("seqFrameMT");
 		Device.seqFrameMT.Process(rp_Frame);
 	}
+
+	// Match current Monolith's useful idle-time placement without its former
+	// nested-task race: all script MT callbacks above are complete before the
+	// single secondary worker touches the LuaJIT VM. The main thread can keep
+	// preparing/rendering the frame, and the frame-time/budget guards prevent
+	// ordinary propagation work from extending past that overlap window.
+	if (psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
+	{
+		CFrameTaskTimer lua_gc_profile(FrameTaskLuaGC);
+		PROF_EVENT("seqLuaGC");
+		const u64 started_at = CPU::QPC();
+		const u64 budget_ticks = CPU::qpc_freq * static_cast<u64>(psLua_ParallelGC_BudgetUs) / 1000000ULL;
+		Device.LuaGCCount = 0;
+		Device.LuaGCDone = false;
+		do
+		{
+			++Device.LuaGCCount;
+			if (Device.LuaGC() == 1)
+			{
+				Device.LuaGCDone = true;
+				break;
+			}
+		} while (Device.isRendering.load(std::memory_order_relaxed) &&
+			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
+			CPU::QPC() - started_at < budget_ticks);
+	}
 }

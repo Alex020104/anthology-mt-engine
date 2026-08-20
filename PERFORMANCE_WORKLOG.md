@@ -1572,3 +1572,59 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - No new game or shader-cache purge is required. Test the same save and record
   at least 20 seconds of continuous camera motion; the next log will contain
   `[mt-frame/profile]` aggregates even if a residual tick remains.
+
+## 2026-08-20 - v66 serialized idle-time Lua GC
+
+### v65 profile result
+
+- The first fresh run with `mt_frame_profile 1` showed that pausing optional
+  sound prefetch did work: it remained suspended throughout the active level
+  and resumed only after disconnect. The unchanged visible tick therefore was
+  not caused by background sound reads.
+- The profile identified the periodic hard stall directly. Lua GC maxima were
+  182.04, 210.23, 225.34, 200.88, 217.58 and 238.57 ms; the corresponding
+  worst complete frames were 205.59, 244.46, 260.00, 264.60, 245.92 and
+  271.29 ms. Those spikes are large enough to explain the visible recurring
+  freeze without relying on an overlay estimate.
+- v64 made access to the single LuaJIT VM safe, but running every GC step on
+  the frame/VM-owner thread exposed LuaJIT's indivisible long collector phases
+  directly as frame stalls. A smaller step or budget can delay such a phase;
+  it cannot interrupt it after the phase has begun.
+
+### Corrective action
+
+- Adapted the current Monolith idle-time ordering instead of restoring the old
+  nested-task implementation. `GameThread` now completes `seqFrameMT` first,
+  then performs incremental Lua GC on that same secondary thread while the
+  main thread is rendering. Script MT callbacks and GC therefore never touch
+  the LuaJIT VM concurrently.
+- `CLevel::script_gc` keeps script-physics commander work on the owner thread,
+  but no longer repeats collection there when parallel GC is enabled. The
+  ordinary non-parallel fallback is unchanged.
+- Load sessions still defer this background collector, preserving the stable
+  loading path and the existing end-of-load full-GC coalescing.
+- Runtime controls are set to step 75, at most 25 calls and a 5000-us overlap
+  budget. Work stops sooner when rendering ends. `mt_frame_profile 1` remains
+  enabled so the next test can verify both GC time and the worker-wait tail.
+- This does not split LuaJIT's atomic collector internals, which would require
+  coordinated mutator-barrier changes. It instead moves that unavoidable work
+  into an established renderer-overlap window without reintroducing concurrent
+  Lua execution.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully. Installed
+  artifacts match their source-build SHA-256 hashes:
+  - regular DX11 EXE:
+    `DF0BE7E5E4D3C1A3C8E5A54512A6F6C3DCE4D3C9B69A6018DE0E3B1833B87722`;
+  - regular DX11 PDB:
+    `5EC387E13F1E2EDAA21E06926276B13FE4095CBAEDCD69481D6E775E11B31A1A`;
+  - DX11-AVX EXE:
+    `1297CEA4FE167D91615093CEC0EE924816A72AAD19D77BEB795094B80E1BEDA7`;
+  - DX11-AVX PDB:
+    `CFB18C518B2D35A2DAA5B8E0931B60A4BEDB87CD2044BAC8392005EF3AE699C6`.
+- The exact previous v65 binaries, symbols and active runtime configuration
+  are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260820_224000_v66_pre_serialized_idle_gc`.
+- No new game or cache purge is required. Test from a fresh process with the
+  same save so the next profile is directly comparable to v65.
