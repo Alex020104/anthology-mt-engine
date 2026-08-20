@@ -1714,3 +1714,78 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   flashlights at night/indoors. A group already collapsed by an older engine
   must first spread normally while online; subsequent transitions preserve the
   resulting member offsets.
+
+## 2026-08-21 - v68 four-addon stutter isolation
+
+### Scope and isolation
+
+- Added four new standalone v68 MO2 addons rather than re-enabling the earlier
+  experiments: Catspaw PAW, Interaction Dot Marks, Tactic Compass and
+  Interactive PDA. The old four patches remain present but disabled.
+- Working copies live under `D:/ANTHOLOGY_DEV/addons` and the active HARD
+  profile consumes them through directory junctions. Original addon files and
+  every unrelated mod remain untouched.
+- The complete pre-v68 mod list, old MO2/working patches and source scripts are
+  recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260820_235423_v68_pre_four_addons`.
+
+### Catspaw PAW
+
+- `item_radio.scan_online_sources()` previously probed all 65,534 possible IDs
+  every five seconds while the RF detector was active. It now visits actual
+  online binder objects and explicitly tracked RF targets only. This removes a
+  periodic global lookup sweep without changing RF scan frequency or UI rate.
+- Temporary-pin cleanup now returns immediately until the earliest known pin
+  can expire, and its maintenance timer is staggered away from the former
+  five-second collision point.
+
+### Interaction Dot Marks
+
+- Fixed a movement-state error: the reference actor position was never
+  advanced, so after the first movement the addon could rebuild pickup tables
+  and perform movement scans indefinitely.
+- Current targeting remains frame-rate driven. Near scans are limited to at
+  most 5 Hz, the large predictive scan runs at most every three seconds and
+  only while travelling, and independent scanners receive staggered initial
+  deadlines instead of firing together immediately after loading.
+
+### Tactic Compass
+
+- Direction, map-marker motion and waveform animation still update every
+  rendered frame. The rejected experimental 33 ms/30 Hz render cap is not used.
+- MCM layout reads and per-category marker definitions are cached for 250 ms;
+  reusable UI vectors/rectangles reduce transient Lua allocations.
+- A save containing `init_markers` skips the duplicate 65,534-ID marker scan.
+  New games or legacy saves without this state retain the original one-time
+  catalogue build.
+- Stale map-spot validation is processed eight IDs per frame every two seconds
+  instead of walking every marker every frame. Fast and medium enemy radius
+  scans are staggered and cannot execute on the same frame.
+
+### Interactive PDA
+
+- Disabled an invisible synthetic workload which grew a table toward 65,534
+  entries and serialized it into every save. Existing `pda_x_t` data is ignored
+  on load and removed on the next save.
+- The potential task-giver catalogue is built from actual `SIMBOARD.squads`,
+  persisted, and maintained by NPC spawn callbacks instead of probing every
+  possible ALife ID on every load.
+- Remote trading reuses the classified catalogue. Raid and local status
+  searches iterate `SIMBOARD.squads`; the emission sender loop is bounded and
+  cannot spin forever when fewer than four eligible senders exist.
+- Task, active-task and cooldown timers are staggered after load. The permanent
+  actor-update callback associated only with the removed synthetic workload is
+  no longer registered.
+
+### Validation and test scope
+
+- All eleven overridden Lua scripts pass the Lua 5.1 parser after preserving
+  the two source files which require Windows-1251 encoding.
+- Repository and `D:/ANTHOLOGY_DEV/addons` SHA-256 hashes match for every v68
+  file. Control hashes also confirm the source Catspaw, Dot Marks, Compass and
+  Interactive PDA mods were not edited.
+- No engine rebuild, new game or cache purge is required; installed v67 DX11
+  and DX11-AVX binaries remain unchanged. Use the same save, create one fresh
+  save after loading so the obsolete Interactive PDA payload is purged, then
+  measure continuous movement for at least two minutes with the RF detector,
+  compass, Dot Marks and Interactive PDA enabled.

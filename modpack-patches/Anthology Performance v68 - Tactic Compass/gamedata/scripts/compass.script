@@ -1,0 +1,118 @@
+-- Adapted From: A.N.T.H.O.L.O.G.Y. --
+-- Original author(?): Zateynik Melinite
+-- Credits: Strogglet15, Tronex, RavenAscendant --
+-- Reworked by: explorerbee --
+
+local HUD = nil
+
+local screen_center = (tc_variables and tc_variables.TC_SCREEN_CENTER) or 512
+local compass_width = (tc_variables and tc_variables.TC_COMPASS_WIDTH) or 600
+local compass_up = (tc_variables and tc_variables.TC_COMPASS_UP) or 721
+local compass_down = (tc_variables and tc_variables.TC_COMPASS_DOWN) or 19
+
+local is_show_compass = true
+
+class "HUDCompass" (CUIScriptWnd)
+
+function HUDCompass:__init()
+    super()
+
+    self:InitControls()
+end
+
+function HUDCompass:InitControls()
+    self:SetAutoDelete(true)
+
+    self.tmr = 0
+    self.next_config_refresh = 0
+    self.compass_pos_state = 0
+    self.compass_offset_x = 0
+    self.compass_offset_y = 0
+    self.compass_pos = vector2()
+    self.compass_rect = Frect()
+
+    self.xml = CScriptXmlInit()
+    local xml = self.xml
+    self.xml:ParseFile("ui_compass.xml")
+
+    self.compass_container = xml:InitStatic("compass_container", self)
+    self.cardinal_dir = xml:InitStatic("compass_container:cardinal_dir", self.compass_container)
+    self.static_compass = xml:InitStatic("compass_container:static_frame", self.compass_container)
+end
+
+function HUDCompass:Update()
+    CUIScriptWnd.Update(self)
+    local tg = time_global()
+    -- Direction remains frame-rate smooth. Only MCM reads are cached.
+    self:Refresh(tg)
+
+	if self.tmr > tg then return end
+	self.tmr = tg + 250
+
+    self.compass_container:Show(is_show_compass and main_hud_shown())
+end
+
+function HUDCompass:Refresh(tg)
+    tg = tg or time_global()
+    if self.next_config_refresh <= tg then
+        self.next_config_refresh = tg + 250
+        self.compass_pos_state = (compass_mcm and compass_mcm.get_config and compass_mcm.get_config("tc_main/compass_sc_pos")) or 0
+        self.compass_offset_x = tonumber(compass_mcm and compass_mcm.get_config and compass_mcm.get_config("tc_main/compass_pos_x")) or 0
+        self.compass_offset_y = tonumber(compass_mcm and compass_mcm.get_config and compass_mcm.get_config("tc_main/compass_pos_y")) or 0
+    end
+
+    local angle = compass_utils.calc_angle()
+
+    local frect_x1 = angle * 10
+    local frect_y1 = 0
+
+    local cardinal_dir_init_width = 2400
+    local cardinal_dir_init_height = 100
+
+    local frect_x2 = frect_x1 + cardinal_dir_init_width
+    local frect_y2 = frect_y1 + cardinal_dir_init_height
+
+    local compass_x = screen_center - compass_width / 2 + self.compass_offset_x
+    local compass_y = ((self.compass_pos_state == 1) and compass_up or compass_down) + self.compass_offset_y
+
+    self.compass_container:SetWndPos(self.compass_pos:set(compass_x, compass_y))
+
+    self.cardinal_dir:SetTextureRect(self.compass_rect:set(frect_x1, frect_y1, frect_x2, frect_y2))
+end
+
+function HUDCompass:__finalize()
+end
+
+function activate_compass()
+    if HUD == nil then
+        HUD = HUDCompass()
+        get_hud():AddDialogToRender(HUD)
+        HUD:Refresh()
+    end
+end
+
+function deactivate_compass()
+    if HUD ~= nil then
+        get_hud():RemoveDialogToRender(HUD)
+        HUD = nil
+    end
+end
+
+function compass_toggle(key)
+    if not compass_mcm or not compass_mcm.get_config then return end
+    if key ~= compass_mcm.get_config("tc_keybinds/keybind") then return end
+
+    is_show_compass = not is_show_compass
+end
+
+function tactic_compass_is_visible()
+    return is_show_compass
+end
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", activate_compass)
+    RegisterScriptCallback("actor_on_net_destroy", deactivate_compass)
+	RegisterScriptCallback("actor_on_before_death", deactivate_compass)
+
+    RegisterScriptCallback("on_key_press", compass_toggle)
+end
