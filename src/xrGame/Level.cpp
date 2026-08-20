@@ -1447,7 +1447,7 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-int psLua_ParallelGCStep = 75;
+int psLua_ParallelGCStep = 20;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
 extern int psLua_ParallelGC_CallAmount;

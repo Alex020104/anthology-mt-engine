@@ -1861,3 +1861,64 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Complete pre-v69 sources, binaries, symbols, active settings, MO2 list and
   old A-Life addon are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260821_0120_v69_pre_cop_jobs_gpu_profile`.
+
+## 2026-08-21 - v70 stutter rollback, covered world warm-up and menu 60 FPS
+
+### Fresh v69 evidence and dynamic-HOM correction
+
+- The latest gameplay profiles show healthy averages around 16-20 ms but
+  irregular GameThread/secondary-wait tails of roughly 50-190 ms. Lua GC alone
+  reaches approximately 30-46 ms in several 300-frame windows, matching the
+  reported ticks rather than a permanently inactive secondary worker.
+- The active runtime profile had raised the GC overlap budget to its maximum
+  5000 us with a 76-unit step and 25 calls. v70 uses a 20-unit step, eight calls
+  and a 1000-us budget to reduce the duration of an indivisible LuaJIT step.
+- The experimental per-child-visual HOM path from Monolith commit `ec01e1169e`
+  duplicated the renderer's existing once-per-renderable spatial HOM test.
+  Upstream commit `27d0968b85` later disabled this experiment by default for
+  the same branch. v70 follows that correction with `r__hom_dynamic off`; the
+  established renderable-level HOM rejection remains active.
+
+### Covered normal-world warm-up
+
+- Added `load_world_warmup_ms` (0-10000, default and active value 5000). Once
+  the legacy precache ends and load queues first drain, the engine keeps the
+  loading screen and input block active while executing normal
+  `dwPrecacheFrame == 0` world, script, scheduler and render frames.
+- The phase finishes only after both the time budget and queue-drain conditions
+  are satisfied. Lazy geometry/textures, online objects and script work are
+  therefore allowed to settle before the player sees or controls the world.
+- This does not restore 60 expensive world renders or change the sparse
+  precache callbacks. The log now records
+  `[load-session/warmup] begin/complete`, including frame count and elapsed
+  wall time, so the next user test can separate covered warm-up from loading.
+
+### Menu-only limiter
+
+- Added `r__menu_framelimit` (0-240, default and active value 60). It applies to
+  the main/pause menu only; `r__framelimit 0` leaves gameplay uncapped and an
+  active load session bypasses the menu limiter.
+- Replaced the old full-frame ECO busy loop with a coarse `Sleep` plus a short
+  scheduler-yield tail. This limits menu GPU/CPU load without burning a core
+  while waiting for the next 60 Hz frame.
+
+### Installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `90D141B320E9243A2E11C09D092DCAF2DFE1E5CBA89F4987D5544EF86523A432`;
+  - regular DX11 PDB:
+    `DF29D8D56963F4796218701574F5538AAB4046E5123553B3F1AD28F391B3859D`;
+  - DX11-AVX EXE:
+    `864FDD55FC62BED05B3352972AE6F116065AE01AAC74826432388826A578DAAB`;
+  - DX11-AVX PDB:
+    `776BEC98D00688CC3D3C080D4C04D995E5DCE17C955F69D2A18C045D5342F60D`.
+- The exact active settings are mirrored as the standalone audit profile
+  `D:/ANTHOLOGY_DEV/addons/Anthology Performance v70 - Stutter Warmup Menu 60`
+  and tracked under `modpack-patches`; no unrelated addon script was changed.
+- Complete pre-v70 sources, binaries, symbols, runtime config, MO2 list and
+  control log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v70_pre_stutter_warmup_menu60`.
+- No new game or shader-cache purge is required. Test the same save and keep
+  `mt_frame_profile 1` enabled for direct before/after tail comparison.

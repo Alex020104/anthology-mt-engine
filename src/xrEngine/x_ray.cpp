@@ -1637,6 +1637,7 @@ extern ENGINE_API BOOL g_bootComplete = FALSE;
 ENGINE_API BOOL g_load_defer_full_lua_gc = TRUE;
 static u32 g_load_session_deferred_full_lua_gc = 0;
 static u32 g_load_session_suppressed_luajit_flush = 0;
+int ps_load_world_warmup_ms = 5000;
 
 ENGINE_API bool EngineShouldDeferFullLuaGC()
 {
@@ -2002,6 +2003,33 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 	if (!m_load_session.active || !m_load_session.precache_started || Device.dwPrecacheFrame ||
 		!g_loading_events.empty() || !level_ready || !control_ready || !queues_drained)
 		return;
+
+	// Run normal (dwPrecacheFrame == 0) game and render frames while the load
+	// screen is still covering the world. The regular 60-frame precache keeps
+	// Lua-visible timing intact but intentionally skips most expensive world
+	// renders; this phase lets deferred geometry, textures, online objects,
+	// scripts and scheduler work settle before input and the final image are
+	// exposed. It is time bounded and independently configurable.
+	if (ps_load_world_warmup_ms > 0)
+	{
+		const u32 now = Device.TimerAsync();
+		if (!m_load_session.world_warmup_started)
+		{
+			m_load_session.world_warmup_started = true;
+			m_load_session.world_warmup_started_at = now;
+			m_load_session.world_warmup_frames = 0;
+			Msg("* [load-session/warmup] begin target=%d ms", ps_load_world_warmup_ms);
+			return;
+		}
+
+		++m_load_session.world_warmup_frames;
+		const u32 elapsed = now - m_load_session.world_warmup_started_at;
+		if (elapsed < static_cast<u32>(ps_load_world_warmup_ms))
+			return;
+
+		Msg("* [load-session/warmup] complete frames=%u elapsed=%u ms",
+			m_load_session.world_warmup_frames, elapsed);
+	}
 
 	LoadSessionPhaseBegin(LoadSessionResourceWait);
 	try

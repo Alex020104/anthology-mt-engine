@@ -52,6 +52,9 @@ private:
 		string32 scenario;
 		u32 started_at;
 		u32 precache_started_at;
+		u32 world_warmup_started_at;
+		u32 world_warmup_frames;
+		bool world_warmup_started;
 		u64 native_generation;
 		u64 resource_generation;
 		u64 client_event_hash;

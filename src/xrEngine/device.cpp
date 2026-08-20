@@ -166,9 +166,6 @@ extern bool use_discord;
 extern Fvector4 ps_ssfx_grass_interactive;
 
 #ifdef ECO_RENDER
-std::chrono::high_resolution_clock::time_point tlastf = std::chrono::high_resolution_clock::now(), tcurrentf = std::
-	                                               chrono::high_resolution_clock::now();
-std::chrono::duration<float> time_span;
 ENGINE_API float refresh_rate = 0;
 #endif // ECO_RENDER
 
@@ -420,6 +417,7 @@ float GetMonitorRefresh()
 }
 
 extern int ps_framelimiter;
+extern int ps_menu_framelimiter;
 extern u32 g_screenmode;
 
 CTimer FreezeTimer;
@@ -642,27 +640,63 @@ void CRenderDevice::on_idle()
 	secondary_tasks.run(&XRay::Engine::GameThread);
 	
 #ifdef ECO_RENDER // ECO_RENDER START
-	if (Device.Paused() || IsMainMenuActive() || ps_framelimiter)
 	{
 		PROF_EVENT("Eco Render");
+		using limiter_clock = std::chrono::steady_clock;
+		static limiter_clock::time_point previous_frame = limiter_clock::now();
+		static bool limiter_armed = false;
 
-		if (refresh_rate == 0)
-			refresh_rate = GetMonitorRefresh();
+		const bool loading = Device.dwPrecacheFrame || !g_loading_events.empty() ||
+			load_screen_renderer.IsActive() || (pApp && pApp->LoadSessionActive());
+		const bool menu_limit_active = !loading && IsMainMenuActive() && ps_menu_framelimiter > 0;
+		const int target_fps = ps_framelimiter > 0 ? ps_framelimiter :
+			(menu_limit_active ? ps_menu_framelimiter : 0);
+		float target_seconds = target_fps > 0 ? 1.f / float(target_fps) : 0.f;
 
-		float rr;
-
-		if (ps_framelimiter)
-			rr = 1.f / ps_framelimiter;
-		else
-			rr = refresh_rate;
-
-		time_span = std::chrono::duration_cast<std::chrono::duration<float>>(tcurrentf - tlastf);
-		while (time_span.count() < rr)
+		// Preserve the old paused-game eco behaviour without throttling an active
+		// load. Menu limiting is explicit and defaults to 60 FPS.
+		if (!loading && target_seconds <= 0.f && Device.Paused())
 		{
-			tcurrentf = std::chrono::high_resolution_clock::now();
-			time_span = std::chrono::duration_cast<std::chrono::duration<float>>(tcurrentf - tlastf);
+			if (refresh_rate == 0)
+				refresh_rate = GetMonitorRefresh();
+			target_seconds = refresh_rate;
 		}
-		tlastf = std::chrono::high_resolution_clock::now();
+
+		if (target_seconds > 0.f)
+		{
+			const auto now = limiter_clock::now();
+			if (!limiter_armed)
+			{
+				previous_frame = now;
+				limiter_armed = true;
+			}
+			else
+			{
+				const auto target = previous_frame +
+					std::chrono::duration_cast<limiter_clock::duration>(std::chrono::duration<float>(target_seconds));
+				auto current = now;
+				auto remaining = target - current;
+				const auto one_ms = std::chrono::milliseconds(1);
+
+				// Give the CPU to the OS for the coarse part, then yield only for
+				// the short remainder. This avoids the old full-frame busy spin.
+				if (remaining > std::chrono::milliseconds(2))
+				{
+					const auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(remaining) - one_ms;
+					Sleep(static_cast<DWORD>(sleep_ms.count()));
+				}
+				while ((current = limiter_clock::now()) < target)
+					SwitchToThread();
+
+				// Do not accumulate a catch-up burst after a long external stall.
+				const auto frame_period = target - previous_frame;
+				previous_frame = current - target > frame_period ? current : target;
+			}
+		}
+		else
+		{
+			limiter_armed = false;
+		}
 	}
 #endif // ECO_RENDER END
 

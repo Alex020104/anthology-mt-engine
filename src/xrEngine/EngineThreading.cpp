@@ -208,8 +208,8 @@ void XRay::Engine::CalculateBonesThread()
 }
 
 extern BOOL psLua_ParallelGC;
-int psLua_ParallelGC_CallAmount = 25;
-int psLua_ParallelGC_BudgetUs = 250;
+int psLua_ParallelGC_CallAmount = 8;
+int psLua_ParallelGC_BudgetUs = 1000;
 void XRay::Engine::GameThread()
 {
 	CFrameTaskTimer frame_task_timer(FrameTaskGame);

@@ -118,7 +118,11 @@ xr_token screenshot_mode_token [ ] = {
 extern int psSkeletonUpdate;
 extern float r__dtex_range;
 
-Flags32 ps_r__common_flags = {RFLAG_HOM_DYNAMIC}; // All renders
+// The per-visual dynamic HOM path is intentionally opt-in. It can reduce the
+// number of submitted packets in dense interiors, but it repeats a CPU-side
+// box transform and HOM query for every child visual. The renderer already
+// performs the cheaper spatial-sphere HOM rejection once per renderable.
+Flags32 ps_r__common_flags = {/*RFLAG_NO_RAM_TEXTURES*/}; // All renders
 
 //int		ps_r__Supersample			= 1		;
 int ps_r__LightSleepFrames = 10;

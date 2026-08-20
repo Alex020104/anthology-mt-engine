@@ -675,7 +675,11 @@ void CGamePersistent::OnFrame()
 		}
 	}
 
-	if (!g_dedicated_server && Device.dwPrecacheFrame == 0 && !m_intro && m_intro_event.empty())
+	// A load session may keep running normal world frames after the legacy
+	// precache reaches zero. Keep the cover visible until resource queues and
+	// the bounded world warm-up have both completed.
+	if (!g_dedicated_server && Device.dwPrecacheFrame == 0 && !m_intro && m_intro_event.empty() &&
+		(!pApp || !pApp->LoadSessionActive()))
 		load_screen_renderer.stop();
 
 	if (!m_pMainMenu->IsActive())
