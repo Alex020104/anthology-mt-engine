@@ -2001,7 +2001,14 @@ void CApplication::LoadSessionRecordClientEvent(
 void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bool queues_drained)
 {
 	if (!m_load_session.active || !m_load_session.precache_started || Device.dwPrecacheFrame ||
-		!g_loading_events.empty() || !level_ready || !control_ready || !queues_drained)
+		!g_loading_events.empty())
+		return;
+
+	// Empty client queues are a load-completion condition only until the covered
+	// world warm-up begins. Normal world frames continuously create and consume
+	// game events, so requiring an empty queue again after that point can keep the
+	// load session (and its input lock) alive forever.
+	if (!m_load_session.world_warmup_started && (!level_ready || !control_ready || !queues_drained))
 		return;
 
 	// Run normal (dwPrecacheFrame == 0) game and render frames while the load
@@ -2027,6 +2034,8 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		if (elapsed < static_cast<u32>(ps_load_world_warmup_ms))
 			return;
 
+		if (!queues_drained)
+			Msg("* [load-session/warmup] completing with active runtime queues");
 		Msg("* [load-session/warmup] complete frames=%u elapsed=%u ms",
 			m_load_session.world_warmup_frames, elapsed);
 	}

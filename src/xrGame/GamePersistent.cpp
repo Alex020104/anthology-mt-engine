@@ -530,6 +530,12 @@ void CGamePersistent::update_logo_intro()
 
 void CGamePersistent::game_loaded()
 {
+	// Do not show a key prompt while the covered world warm-up still owns the
+	// loading screen and input is intentionally blocked. Keep this event bound;
+	// it will run again and expose the prompt as soon as the session finalizes.
+	if (pApp && pApp->LoadSessionActive())
+		return;
+
 	if (Device.dwPrecacheFrame <= 2)
 	{
 		if (g_pGameLevel &&

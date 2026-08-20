@@ -1922,3 +1922,51 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260821_v70_pre_stutter_warmup_menu60`.
 - No new game or shader-cache purge is required. Test the same save and keep
   `mt_frame_profile 1` enabled for direct before/after tail comparison.
+
+## 2026-08-21 - v71 covered-warmup deadlock hotfix
+
+### Confirmed cause
+
+- The first v70 test log reached `intro_start game_loaded` and then recorded
+  `[load-session/warmup] begin target=5000 ms`, but never recorded the matching
+  completion line. The session was finally cancelled on disconnect after
+  43315 ms. This confirms a load-session deadlock rather than a save crash.
+- v70 required `queues_drained` on every call to `LoadSessionTryFinish`.
+  Normal `dwPrecacheFrame == 0` world frames continuously enqueue runtime game
+  events, so the warmup timer path was never entered again. Because input is
+  deliberately blocked while a load session is active, the `Zone awaits`
+  screen could not respond to a key.
+
+### Correction
+
+- Level readiness, player control and empty load queues remain mandatory before
+  the covered warmup starts. This preserves the original load-safety barrier.
+- After that barrier has been crossed once, runtime queues no longer gate the
+  timer. The five-second wall-time budget now always reaches completion and the
+  load generation is finalized, releasing both the loading screen and input.
+- A diagnostic line reports when completion occurs with active runtime queues;
+  this is expected normal-world work and no longer represents unfinished load
+  queues.
+- The `game_loaded` key-prompt event remains bound while the load session is
+  active. `Zone awaits` is therefore shown only after the warmup has finalized
+  and input can respond, instead of advertising a key while input is locked.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `B3FEFA87CB9AE79F248BCA14BA7CA25081F231131F81964166BBE32E84312A04`;
+  - regular DX11 PDB:
+    `1D761D904C65AF2447B93BB4201E27465CA826CB3951E51B42AA3D8848D96C6B`;
+  - DX11-AVX EXE:
+    `8EE27125960E308FB669BB1F4412F2359B236D0B9E2E878200EC67E46ED7D9E7`;
+  - DX11-AVX PDB:
+    `8677B86220B4EC2556C6CBFF67801B808407BCAEC5920EBDA69C23D77CDA5532`.
+- The unchanged active tuning is mirrored under
+  `D:/ANTHOLOGY_DEV/addons/Anthology Performance v71 - Warmup Deadlock Fix`
+  and tracked under `modpack-patches`. No unrelated addon script was touched.
+- The complete pre-v71 engine binaries, symbols, source, active profile and
+  failing log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v71_pre_warmup_deadlock_fix`.
+- No new game or shader-cache purge is required. Test the same save.
