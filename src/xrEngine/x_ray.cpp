@@ -1637,7 +1637,7 @@ extern ENGINE_API BOOL g_bootComplete = FALSE;
 ENGINE_API BOOL g_load_defer_full_lua_gc = TRUE;
 static u32 g_load_session_deferred_full_lua_gc = 0;
 static u32 g_load_session_suppressed_luajit_flush = 0;
-int ps_load_world_warmup_ms = 5000;
+int ps_load_world_warmup_ms = 0;
 
 ENGINE_API bool EngineShouldDeferFullLuaGC()
 {

@@ -1970,3 +1970,47 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   failing log are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260821_v71_pre_warmup_deadlock_fix`.
 - No new game or shader-cache purge is required. Test the same save.
+
+## 2026-08-21 - v72 measured regression rollback
+
+### Evidence from the v71 test
+
+- The fresh load session recorded covered world warm-up beginning with a
+  5000-ms target and completing after 167 frames in 5019 ms. This was a direct
+  fixed addition to every save load, so v72 changes the default and active
+  `load_world_warmup_ms` value to zero. The optional mechanism remains present.
+- Post-load MT profiles were render-bound: average render time was 22.63–25.11
+  ms while average FrameMove time was 7.49–9.32 ms. Consequently, adding engine
+  workers could not double FPS in this capture.
+- Inspection of the active runtime profile found an unintended return to AO 8,
+  IL 32, SSR 4, SSS 18/6, POM 36/refine 1 and terrain POM 36. v72 restores the
+  previously agreed balanced values: AO 4, IL 16, SSR 2, SSS 12/4, POM 16 with
+  refinement off and terrain POM 12.
+- The visible periodic tails still aligned with GameThread/Lua GC work, with a
+  sampled Lua GC maximum of 72.84 ms. v72 rolls the experimental v70 slicing
+  defaults back to the user-accepted v66 overlap profile: step 75, 25 calls and
+  a 5000-us budget. It does not attempt unsafe concurrent access to one Lua VM.
+- `r__hom_dynamic` remains off. Enabling the experimental per-child path would
+  repeat the existing spatial HOM work and risks restoring CPU spikes.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `134F5553554A914FA24F3731C8F110AFDE093640BA193D4B500849256C4E0AF7`;
+  - regular DX11 PDB:
+    `338FB1FC2A110D28331869074EA1D284D43DD755AD175450AFE2E3E6AA09DB7B`;
+  - DX11-AVX EXE:
+    `95008E861DD39A55886AF09C0AC9256BCBF8B5E59AD52B58C34ED89C78CCC33C`;
+  - DX11-AVX PDB:
+    `D0E68EA33F0AB5744F8E835004941E33F7B98D9AD88D411A6B51EE2C83F30FD8`.
+- The exact active settings are mirrored as the standalone audit profile
+  `D:/ANTHOLOGY_DEV/addons/Anthology Performance v72 - Regression Rollback`
+  and tracked under `modpack-patches`. No addon script or MO2 ordering was
+  changed.
+- Complete pre-v72 binaries, symbols, relevant sources, active `user.ltx`, MO2
+  list and fresh log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v72_pre_regression_rollback`.
+- No new game or shader-cache purge is required. Test the same save. The game
+  was not launched during build or installation.
