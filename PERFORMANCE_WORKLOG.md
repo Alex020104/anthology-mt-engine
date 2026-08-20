@@ -2014,3 +2014,70 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260821_v72_pre_regression_rollback`.
 - No new game or shader-cache purge is required. Test the same save. The game
   was not launched during build or installation.
+
+## 2026-08-21 - v73 adaptive frame pacing and LOD/HOM pass
+
+### Fresh v72 evidence
+
+- The tested save reached engine-ready in 49266 ms. Its precache contained 58
+  logical frames and spent 26331 ms in FrameMove callbacks, including a
+  16253-ms CLevel callback tail. This confirms that the reported visible
+  ten-second settling phase was not the disabled fixed world-warmup timer.
+- After engine-ready, `aaaa_script_fixes_mp.luagc_cleanup` ran two full Lua
+  collections and a LuaJIT trace flush between continual timestamps 98381 and
+  100148: approximately 1.77 seconds of synchronous post-load work.
+- Subsequent 300-frame windows showed GameThread maxima from roughly 44 to 284
+  ms and Lua GC maxima from roughly 36 to 55 ms while render averages remained
+  around 7-11 ms. The remaining ticks were therefore primarily CPU/game-work
+  tails in this capture, not steady GPU saturation.
+
+### Adaptive Lua GC and diagnostics
+
+- A standalone late-loading script unregisters only the redundant
+  `on_loading_screen_key_prompt` full-GC callback. The original modpack script
+  is untouched; engine load-session GC coalescing remains intact.
+- Incremental Lua GC keeps Lua VM ownership on GameThread. It now waits eight
+  seconds after load completion, skips already-busy frames, uses at most a
+  1200-us overlap budget and six calls, and no longer forces one call after the
+  renderer has already completed. Active step size is reduced from 75 to 10.
+- New `[mt-frame/profile] game-breakdown` output separates scheduler,
+  `seqParallel` and `seqFrameMT` averages/maxima and reports GC calls plus busy
+  and post-load skips. The next real gameplay log can identify the remaining
+  GameThread spike source directly.
+
+### LOD and HOM work
+
+- HOM occlusion results are cached only within the render-view that produced
+  them. Main-camera and PiP passes use separate markers, avoiding cross-camera
+  hidden-result reuse. HOM triangle-to-camera ranges are computed once before
+  sorting instead of repeatedly inside its comparison function.
+- LOD impostors select their best three facets in a linear eight-item pass
+  rather than sorting eight pairs for every impostor each frame. Multi-batch
+  indexing and zero-capacity protection were corrected as part of the same
+  render path audit.
+- Active SSA LOD thresholds now use a real fade interval (`56/48`) instead of
+  `50/50`; `r__geometry_lod 0.85` shifts distant geometry modestly toward LOD.
+  Experimental per-child dynamic HOM remains disabled because it duplicates
+  established renderable-level rejection and previously increased CPU tails.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compiled and
+  linked successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `33F51E4F421DE895A256AC8A824C3F09D1666456A07FD1CDC6EE37F2480C1C30`;
+  - regular DX11 PDB:
+    `FC79518DE23E7E048AA60B84E05D92FDF9451D96696716F06A4E0910BB454BD6`;
+  - DX11-AVX EXE:
+    `6758CFB5AB5C5EA0AD43D62A2152518FE7CFDBE79F3F168CF39262C26159802F`;
+  - DX11-AVX PDB:
+    `03379E0059E3A4736BD8A4E2789047E6ED84D94672ADFB254CCC51A79798DFB1`.
+- `Anthology Performance v73 - Adaptive Frame LOD HOM` is installed and
+  enabled in the active HARD MO2 profile. Identical tracked and development
+  copies are kept under `modpack-patches` and `D:/ANTHOLOGY_DEV/addons`.
+- The exact pre-v73 binaries, symbols, source, active settings, MO2 list and
+  control log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v73_pre_adaptive_lod_hom`. The source archive
+  SHA-256 is
+  `7FB0CD3A0D708B2667560F79B7E2BBEC4189C2A693731C4D5F836904C0C3EB4B`.
+- No new game or shader-cache purge is required. The game was not launched.

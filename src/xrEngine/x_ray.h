@@ -151,6 +151,7 @@ extern ENGINE_API CApplication* pApp;
 extern ENGINE_API void LogStartupMenuReady();
 extern ENGINE_API BOOL g_load_defer_full_lua_gc;
 extern ENGINE_API bool EngineShouldDeferFullLuaGC();
+extern ENGINE_API bool EnginePostLoadGCCooldownActive(u32 cooldown_ms);
 extern ENGINE_API void EngineRecordDeferredFullLuaGC();
 extern ENGINE_API void EngineRecordSuppressedLuaJITFlush();
 

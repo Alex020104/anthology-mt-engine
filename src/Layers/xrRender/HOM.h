@@ -25,6 +25,7 @@ private:
 #endif
 
 	xr_atomic_u32 MT_frame_rendered;
+	u32 m_view_marker;
 	xrCriticalSection m_mt_render_guard;
 
 	void Render_DB(CFrustum& base);

@@ -1,0 +1,21 @@
+-- Anthology v73: the engine already coalesces deferred full collections while
+-- the loading screen is active. Remove the later duplicate pair of full GCs
+-- and LuaJIT trace flush registered by aaaa_script_fixes_mp; in the measured
+-- save this callback blocked the first visible frames for about 1.77 seconds.
+
+local function disabled_cleanup()
+end
+
+function on_game_start()
+	local fixes = aaaa_script_fixes_mp
+	if fixes and fixes.luagc_cleanup then
+		-- Cover both VFS callback orders. If the original module ran first, remove
+		-- its registered function. If it runs later, its on_game_start resolves
+		-- the replacement below and registers the harmless no-op instead.
+		if UnregisterScriptCallback then
+			pcall(UnregisterScriptCallback, "on_loading_screen_key_prompt", fixes.luagc_cleanup)
+		end
+		fixes.luagc_cleanup = disabled_cleanup
+		printf("~[Anthology v73] redundant post-load full Lua GC/JIT flush disabled")
+	end
+end

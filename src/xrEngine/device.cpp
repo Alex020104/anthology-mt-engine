@@ -776,12 +776,21 @@ void CRenderDevice::on_idle()
 		profile.tasks.post_transforms += task_profile.post_transforms;
 		profile.tasks.calculate_bones += task_profile.calculate_bones;
 		profile.tasks.game += task_profile.game;
+		profile.tasks.game_scheduler += task_profile.game_scheduler;
+		profile.tasks.game_parallel += task_profile.game_parallel;
+		profile.tasks.game_frame_mt += task_profile.game_frame_mt;
 		profile.tasks.lua_gc += task_profile.lua_gc;
 		profile.tasks.vision += task_profile.vision;
+		profile.tasks.lua_gc_calls += task_profile.lua_gc_calls;
+		profile.tasks.lua_gc_skipped_busy += task_profile.lua_gc_skipped_busy;
+		profile.tasks.lua_gc_skipped_postload += task_profile.lua_gc_skipped_postload;
 		profile.tasks.max_pre_render = std::max(profile.tasks.max_pre_render, task_profile.max_pre_render);
 		profile.tasks.max_post_transforms = std::max(profile.tasks.max_post_transforms, task_profile.max_post_transforms);
 		profile.tasks.max_calculate_bones = std::max(profile.tasks.max_calculate_bones, task_profile.max_calculate_bones);
 		profile.tasks.max_game = std::max(profile.tasks.max_game, task_profile.max_game);
+		profile.tasks.max_game_scheduler = std::max(profile.tasks.max_game_scheduler, task_profile.max_game_scheduler);
+		profile.tasks.max_game_parallel = std::max(profile.tasks.max_game_parallel, task_profile.max_game_parallel);
+		profile.tasks.max_game_frame_mt = std::max(profile.tasks.max_game_frame_mt, task_profile.max_game_frame_mt);
 		profile.tasks.max_lua_gc = std::max(profile.tasks.max_lua_gc, task_profile.max_lua_gc);
 		profile.tasks.max_vision = std::max(profile.tasks.max_vision, task_profile.max_vision);
 
@@ -809,6 +818,17 @@ void CRenderDevice::on_idle()
 				profile.tasks.max_game * ticks_to_ms,
 				profile.tasks.max_lua_gc * ticks_to_ms,
 				profile.tasks.max_vision * ticks_to_ms);
+			Msg("* [mt-frame/profile] game-breakdown avg(scheduler/parallel/frame-mt)=%.2f/%.2f/%.2f ms "
+				"max=%.2f/%.2f/%.2f ms gc(calls/busy/postload)=%llu/%llu/%llu",
+				profile.tasks.game_scheduler * ticks_to_average_ms,
+				profile.tasks.game_parallel * ticks_to_average_ms,
+				profile.tasks.game_frame_mt * ticks_to_average_ms,
+				profile.tasks.max_game_scheduler * ticks_to_ms,
+				profile.tasks.max_game_parallel * ticks_to_ms,
+				profile.tasks.max_game_frame_mt * ticks_to_ms,
+				static_cast<unsigned long long>(profile.tasks.lua_gc_calls),
+				static_cast<unsigned long long>(profile.tasks.lua_gc_skipped_busy),
+				static_cast<unsigned long long>(profile.tasks.lua_gc_skipped_postload));
 			profile = {};
 		}
 	}

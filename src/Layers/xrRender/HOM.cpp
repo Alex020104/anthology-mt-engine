@@ -36,6 +36,7 @@ CHOM::CHOM()
 	bEnabled = FALSE;
 	m_pModel = 0;
 	m_pTris = 0;
+	m_view_marker = 1;
 #ifdef DEBUG
 	Device.seqRender.Add(this,REG_PRIORITY_LOW-1000);
 #endif
@@ -205,21 +206,9 @@ class pred_fb
 {
 public:
 	occTri* m_pTris;
-	Fvector camera;
 public:
 	pred_fb(occTri* _t) : m_pTris(_t)
 	{
-	}
-
-	pred_fb(occTri* _t, Fvector& _c) : m_pTris(_t), camera(_c)
-	{
-	}
-
-	ICF bool operator()(const CDB::RESULT& _1, const CDB::RESULT& _2) const
-	{
-		occTri& t0 = m_pTris[_1.id];
-		occTri& t1 = m_pTris[_2.id];
-		return camera.distance_to_sqr(t0.center) < camera.distance_to_sqr(t1.center);
 	}
 
 	ICF bool operator()(const CDB::RESULT& _1) const
@@ -259,7 +248,15 @@ void CHOM::Render_DB(CFrustum& base)
 
 	Fvector COP = Device.vCameraPosition;
 	end = std::remove_if(it, end, pred_fb(m_pTris));
-	std::sort(it, end, pred_fb(m_pTris, COP));
+	for (CDB::RESULT* cursor = it; cursor != end; ++cursor)
+		cursor->range = COP.distance_to_sqr(m_pTris[cursor->id].center);
+	if (end - it > 1)
+	{
+		std::sort(it, end, [](const CDB::RESULT& left, const CDB::RESULT& right)
+		{
+			return left.range < right.range;
+		});
+	}
 
 	// Build frustum with near plane only
 	CFrustum clip;
@@ -324,6 +321,8 @@ void CHOM::Render_DB(CFrustum& base)
 void CHOM::Render(CFrustum& base)
 {
 	if (!bEnabled) return;
+	if (++m_view_marker == 0)
+		m_view_marker = 1;
 
 	Device.Statistic->RenderCALC_HOM.Begin();
 	Raster.clear();
@@ -399,14 +398,19 @@ BOOL CHOM::visible(Fsphere& S)
 
 BOOL CHOM::visible(vis_data& vis)
 {
-	if (Device.dwFrame < vis.hom_frame) return TRUE; // not at this time :)
 	if (!bEnabled) return TRUE; // return - everything visible
+	const u32 frame_current = Device.dwFrame;
+	// Reuse a visibility result only inside the exact HOM view that produced it.
+	// Main view, PiP and secondary render passes receive different markers, so a
+	// hidden result from one camera can never leak into another camera.
+	if (vis.hom_tested == m_view_marker)
+		return vis.hom_frame != frame_current + 1;
+	if (frame_current < vis.hom_frame) return TRUE; // not at this time :)
 
 	// Now, the test time comes
 	// 0. The object was hidden, and we must prove that each frame	- test		| frame-old, tested-new, hom_res = false;
 	// 1. The object was visible, but we must to re-check it		- test		| frame-new, tested-???, hom_res = true;
 	// 2. New object slides into view								- delay test| frame-old, tested-old, hom_res = ???;
-	u32 frame_current = Device.dwFrame;
 	// u32	frame_prev		= frame_current-1;
 
 #ifdef DEBUG
@@ -424,7 +428,7 @@ BOOL CHOM::visible(vis_data& vis)
 		// hidden	- shedule to next frame
 	}
 	vis.hom_frame = frame_current + delay;
-	vis.hom_tested = frame_current;
+	vis.hom_tested = m_view_marker;
 #ifdef DEBUG
 	Device.Statistic->RenderCALC_HOM.End	();
 #endif

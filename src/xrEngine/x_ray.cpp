@@ -1637,11 +1637,23 @@ extern ENGINE_API BOOL g_bootComplete = FALSE;
 ENGINE_API BOOL g_load_defer_full_lua_gc = TRUE;
 static u32 g_load_session_deferred_full_lua_gc = 0;
 static u32 g_load_session_suppressed_luajit_flush = 0;
+static std::atomic<u64> g_load_session_completed_qpc{};
 int ps_load_world_warmup_ms = 0;
 
 ENGINE_API bool EngineShouldDeferFullLuaGC()
 {
 	return g_load_defer_full_lua_gc && pApp && pApp->LoadSessionActive();
+}
+
+ENGINE_API bool EnginePostLoadGCCooldownActive(u32 cooldown_ms)
+{
+	if (!cooldown_ms)
+		return false;
+	const u64 completed_at = g_load_session_completed_qpc.load(std::memory_order_acquire);
+	if (!completed_at)
+		return false;
+	const u64 cooldown_ticks = CPU::qpc_freq * static_cast<u64>(cooldown_ms) / 1000ULL;
+	return CPU::QPC() - completed_at < cooldown_ticks;
 }
 
 ENGINE_API void EngineRecordDeferredFullLuaGC()
@@ -1679,6 +1691,7 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 		LoadSessionCancel("superseded");
 
 	ZeroMemory(&m_load_session, sizeof(m_load_session));
+	g_load_session_completed_qpc.store(0, std::memory_order_release);
 	g_load_session_deferred_full_lua_gc = 0;
 	g_load_session_suppressed_luajit_flush = 0;
 	m_load_session.started_at = Device.TimerAsync();
@@ -1788,6 +1801,7 @@ void CApplication::LoadSessionCancel(LPCSTR reason)
 			g_load_session_suppressed_luajit_flush);
 	g_load_session_deferred_full_lua_gc = 0;
 	g_load_session_suppressed_luajit_flush = 0;
+	g_load_session_completed_qpc.store(0, std::memory_order_release);
 	ZeroMemory(&m_load_session, sizeof(m_load_session));
 	if (failure)
 		std::rethrow_exception(failure);
@@ -2128,6 +2142,7 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 		to_ms(m_load_session.precache_end_ticks),
 		to_ms(m_load_session.precache_present_ticks),
 		to_ms(m_load_session.precache_secondary_wait_ticks), to_ms(serial_other_ticks));
+	g_load_session_completed_qpc.store(CPU::QPC(), std::memory_order_release);
 	m_load_session.active = false;
 	// Keep the bulk optional sound manifest paused while a level is active.
 	// Level-requested sources were already promoted by source_prefetch_prepare()

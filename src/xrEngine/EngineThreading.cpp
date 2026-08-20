@@ -22,6 +22,9 @@ enum EFrameTaskProfile
 	FrameTaskPostTransforms,
 	FrameTaskCalculateBones,
 	FrameTaskGame,
+	FrameTaskGameScheduler,
+	FrameTaskGameParallel,
+	FrameTaskGameFrameMT,
 	FrameTaskLuaGC,
 	FrameTaskVision,
 	FrameTaskCount
@@ -29,6 +32,9 @@ enum EFrameTaskProfile
 
 std::atomic<u64> frame_task_ticks[FrameTaskCount]{};
 std::atomic<u64> frame_task_max_ticks[FrameTaskCount]{};
+std::atomic<u64> frame_lua_gc_calls{};
+std::atomic<u64> frame_lua_gc_skipped_busy{};
+std::atomic<u64> frame_lua_gc_skipped_postload{};
 
 void RecordFrameTask(EFrameTaskProfile task, u64 elapsed)
 {
@@ -84,12 +90,21 @@ SFrameTaskProfile XRay::Engine::ConsumeFrameTaskProfile()
 	result.post_transforms = frame_task_ticks[FrameTaskPostTransforms].exchange(0, std::memory_order_relaxed);
 	result.calculate_bones = frame_task_ticks[FrameTaskCalculateBones].exchange(0, std::memory_order_relaxed);
 	result.game = frame_task_ticks[FrameTaskGame].exchange(0, std::memory_order_relaxed);
+	result.game_scheduler = frame_task_ticks[FrameTaskGameScheduler].exchange(0, std::memory_order_relaxed);
+	result.game_parallel = frame_task_ticks[FrameTaskGameParallel].exchange(0, std::memory_order_relaxed);
+	result.game_frame_mt = frame_task_ticks[FrameTaskGameFrameMT].exchange(0, std::memory_order_relaxed);
 	result.lua_gc = frame_task_ticks[FrameTaskLuaGC].exchange(0, std::memory_order_relaxed);
 	result.vision = frame_task_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
+	result.lua_gc_calls = frame_lua_gc_calls.exchange(0, std::memory_order_relaxed);
+	result.lua_gc_skipped_busy = frame_lua_gc_skipped_busy.exchange(0, std::memory_order_relaxed);
+	result.lua_gc_skipped_postload = frame_lua_gc_skipped_postload.exchange(0, std::memory_order_relaxed);
 	result.max_pre_render = frame_task_max_ticks[FrameTaskPreRender].exchange(0, std::memory_order_relaxed);
 	result.max_post_transforms = frame_task_max_ticks[FrameTaskPostTransforms].exchange(0, std::memory_order_relaxed);
 	result.max_calculate_bones = frame_task_max_ticks[FrameTaskCalculateBones].exchange(0, std::memory_order_relaxed);
 	result.max_game = frame_task_max_ticks[FrameTaskGame].exchange(0, std::memory_order_relaxed);
+	result.max_game_scheduler = frame_task_max_ticks[FrameTaskGameScheduler].exchange(0, std::memory_order_relaxed);
+	result.max_game_parallel = frame_task_max_ticks[FrameTaskGameParallel].exchange(0, std::memory_order_relaxed);
+	result.max_game_frame_mt = frame_task_max_ticks[FrameTaskGameFrameMT].exchange(0, std::memory_order_relaxed);
 	result.max_lua_gc = frame_task_max_ticks[FrameTaskLuaGC].exchange(0, std::memory_order_relaxed);
 	result.max_vision = frame_task_max_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
 	return result;
@@ -208,11 +223,15 @@ void XRay::Engine::CalculateBonesThread()
 }
 
 extern BOOL psLua_ParallelGC;
-int psLua_ParallelGC_CallAmount = 25;
-int psLua_ParallelGC_BudgetUs = 5000;
+int psLua_ParallelGC_CallAmount = 6;
+int psLua_ParallelGC_BudgetUs = 1200;
+BOOL psLua_ParallelGC_Adaptive = TRUE;
+int psLua_ParallelGC_FrameBudgetUs = 12000;
+int psLua_ParallelGC_PostLoadDelayMs = 8000;
 void XRay::Engine::GameThread()
 {
 	CFrameTaskTimer frame_task_timer(FrameTaskGame);
+	const u64 game_work_started_at = CPU::QPC();
 	PROF_THREAD("Secondary Task 2")
 		
 	// we has granted permission to execute
@@ -232,6 +251,7 @@ void XRay::Engine::GameThread()
 	{
 		if (mt_Scheduler)
 		{
+			CFrameTaskTimer scheduler_profile(FrameTaskGameScheduler);
 			PROF_EVENT("Sheduler Deferred");
 			::Engine.Sheduler.UpdateDeferred();
 			::Engine.Sheduler.UpdateFinalize();
@@ -239,12 +259,14 @@ void XRay::Engine::GameThread()
 	}
 
 	{
+		CFrameTaskTimer parallel_profile(FrameTaskGameParallel);
 		PROF_EVENT("seqParallel");
 		for (u32 pit = 0; pit < Device.seqParallel.size(); pit++)
 			Device.seqParallel[pit]();
 		Device.seqParallel.clear();
 	}
 	{
+		CFrameTaskTimer frame_mt_profile(FrameTaskGameFrameMT);
 		PROF_EVENT("seqFrameMT");
 		Device.seqFrameMT.Process(rp_Frame);
 	}
@@ -256,22 +278,44 @@ void XRay::Engine::GameThread()
 	// ordinary propagation work from extending past that overlap window.
 	if (psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
 	{
+		if (EnginePostLoadGCCooldownActive(static_cast<u32>(psLua_ParallelGC_PostLoadDelayMs)))
+		{
+			frame_lua_gc_skipped_postload.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+
+		const u64 now = CPU::QPC();
+		const u64 game_work_ticks = now - game_work_started_at;
+		u64 budget_ticks = CPU::qpc_freq * static_cast<u64>(psLua_ParallelGC_BudgetUs) / 1000000ULL;
+		if (psLua_ParallelGC_Adaptive)
+		{
+			const u64 frame_budget_ticks = CPU::qpc_freq *
+				static_cast<u64>(psLua_ParallelGC_FrameBudgetUs) / 1000000ULL;
+			if (game_work_ticks >= frame_budget_ticks ||
+				!Device.isRendering.load(std::memory_order_relaxed))
+			{
+				frame_lua_gc_skipped_busy.fetch_add(1, std::memory_order_relaxed);
+				return;
+			}
+			budget_ticks = std::min(budget_ticks, frame_budget_ticks - game_work_ticks);
+		}
+
 		CFrameTaskTimer lua_gc_profile(FrameTaskLuaGC);
 		PROF_EVENT("seqLuaGC");
 		const u64 started_at = CPU::QPC();
-		const u64 budget_ticks = CPU::qpc_freq * static_cast<u64>(psLua_ParallelGC_BudgetUs) / 1000000ULL;
 		Device.LuaGCCount = 0;
 		Device.LuaGCDone = false;
-		do
+		while (Device.isRendering.load(std::memory_order_relaxed) &&
+			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
+			CPU::QPC() - started_at < budget_ticks)
 		{
 			++Device.LuaGCCount;
+			frame_lua_gc_calls.fetch_add(1, std::memory_order_relaxed);
 			if (Device.LuaGC() == 1)
 			{
 				Device.LuaGCDone = true;
 				break;
 			}
-		} while (Device.isRendering.load(std::memory_order_relaxed) &&
-			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
-			CPU::QPC() - started_at < budget_ticks);
+		}
 	}
 }

@@ -19,30 +19,34 @@ void CDSGraphManager::r_dsgraph_render_lods(bool _setup_zb, bool _clear)
 	if (RGraph.mapLOD.empty())
 		return;
 
-    static auto sortFuncReverse = [](const auto& a, const auto& b) { return b < a; };
-	if (_setup_zb)
-        std::sort(RGraph.mapLOD.begin(), RGraph.mapLOD.end());
-    else
-        std::sort(RGraph.mapLOD.begin(), RGraph.mapLOD.end(), sortFuncReverse);
+	if (RGraph.mapLOD.size() > 1)
+	{
+		static auto sortFuncReverse = [](const auto& a, const auto& b) { return b < a; };
+		if (_setup_zb)
+			std::sort(RGraph.mapLOD.begin(), RGraph.mapLOD.end());
+		else
+			std::sort(RGraph.mapLOD.begin(), RGraph.mapLOD.end(), sortFuncReverse);
+	}
 
 	// *** Fill VB and generate groups
 	u32 shid = _setup_zb ? SE_R1_LMODELS : SE_R1_NORMAL_LQ;
 	FLOD* firstV = (FLOD*)RGraph.mapLOD[0].pVisual;
-	ref_selement cur_S = firstV->shader->E[shid];
 	float ssaRange = r_ssaLOD_A - r_ssaLOD_B;
 	if (ssaRange < EPS_S) ssaRange = EPS_S;
 
 	const u32 uiVertexPerImposter = 4;
-	const u32 uiImpostersFit = RCache.Vertex.GetSize()
-		/ (firstV->geom->vb_stride * uiVertexPerImposter);
+	const u32 uiImpostersFit = _max(1u, RCache.Vertex.GetSize()
+		/ (firstV->geom->vb_stride * uiVertexPerImposter));
 
 	//Msg						("dbg_lods: shid[%d],firstV[%X]",shid,u32((void*)firstV));
 	//Msg						("dbg_lods: shader[%X]",u32((void*)firstV->shader._get()));
 	//Msg						("dbg_lods: shader_E[%X]",u32((void*)cur_S._get()));
 
-	for (u32 i = 0; i < RGraph.mapLOD.size(); i++)
+	for (u32 i = 0; i < RGraph.mapLOD.size();)
 	{
+		const u32 batch_start = i;
 		const u32 iBatchSize = _min((u32)RGraph.mapLOD.size() - i, uiImpostersFit);
+		ref_selement cur_S = RGraph.mapLOD[batch_start].pVisual->shader->E[shid];
 		int cur_count = 0;
 		u32 vOffset;
 		FLOD::_hw* V = (FLOD::_hw*)RCache.Vertex.Lock(iBatchSize * uiVertexPerImposter, firstV->geom->vb_stride,
@@ -76,20 +80,38 @@ void CDSGraphManager::r_dsgraph_render_lods(bool _setup_zb, bool _clear)
 
 			// gen geometry
 			FLOD::_face* facets = lodV->facets;
-			svector<std::pair<float, u32>, 8> selector;
-			for (u32 s = 0; s < 8; s++) selector.push_back(mk_pair(Ldir.dotproduct(facets[s].N), s));
-			static auto sort_pred = [](const std::pair<float, u32>& _1, const std::pair<float, u32>& _2) { return _1.first < _2.first; };
-			std::sort(selector.begin(), selector.end(), sort_pred);
-
-			float dot_best = selector[selector.size() - 1].first;
-			float dot_next = selector[selector.size() - 2].first;
-			float dot_next_2 = selector[selector.size() - 3].first;
-			u32 id_best = selector[selector.size() - 1].second;
-			u32 id_next = selector[selector.size() - 2].second;
+			float dot_best = -2.f;
+			float dot_next = -2.f;
+			float dot_next_2 = -2.f;
+			u32 id_best = 0;
+			u32 id_next = 0;
+			for (u32 s = 0; s < 8; ++s)
+			{
+				const float dot = Ldir.dotproduct(facets[s].N);
+				if (dot > dot_best)
+				{
+					dot_next_2 = dot_next;
+					dot_next = dot_best;
+					id_next = id_best;
+					dot_best = dot;
+					id_best = s;
+				}
+				else if (dot > dot_next)
+				{
+					dot_next_2 = dot_next;
+					dot_next = dot;
+					id_next = s;
+				}
+				else if (dot > dot_next_2)
+				{
+					dot_next_2 = dot;
+				}
+			}
 
 			// Now we have two "best" planes, calculate factor, and approx normal
 			float fA = dot_best, fB = dot_next, fC = dot_next_2;
-			float alpha = 0.5f + 0.5f * (1 - (fB - fC) / (fA - fC));
+			const float dot_range = _max(fA - fC, EPS_S);
+			float alpha = 0.5f + 0.5f * (1 - (fB - fC) / dot_range);
 			int iF = iFloor(alpha * 255.5f);
 			u32 uF = u32(clampr(iF, 0, 255));
 
@@ -119,7 +141,7 @@ void CDSGraphManager::r_dsgraph_render_lods(bool _setup_zb, bool _clear)
 		RCache.set_xform_world(Fidentity);
 		for (u32 uiPass = 0; uiPass < SHADER_PASSES_MAX; ++uiPass)
 		{
-			int current = 0;
+			u32 current = batch_start;
 			u32 vCurOffset = vOffset;
 
 			for (int& p_count : lstLODgroups)
