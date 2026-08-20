@@ -97,7 +97,9 @@ bool CSE_ALifeGroupAbstract::synchronize_location()
 	for (; I != E; ++I)
 		ai().alife().objects().object(*I)->synchronize_location();
 
-	CSE_ALifeDynamicObject& member = *ai().alife().objects().object(*I);
+	// I is equal to E after the loop above. Dereferencing it was undefined and
+	// could feed a bogus group position into later online/offline transitions.
+	CSE_ALifeDynamicObject& member = *ai().alife().objects().object(m_tpMembers.front());
 	object->o_Position = member.o_Position;
 	object->m_tNodeID = member.m_tNodeID;
 

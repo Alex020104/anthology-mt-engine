@@ -1,0 +1,21 @@
+local SWITCH_CENTER = 330
+local SWITCH_FACTOR = 0.10
+
+local function apply_alife_profile()
+	local simulation = alife()
+	if not simulation then return end
+
+	-- A 330 m centre with the engine's 0.10 hysteresis switches objects online
+	-- at approximately 297 m and back offline past approximately 363 m. This
+	-- prevents rapid online/offline churn at the visible 300 m boundary.
+	exec_console_cmd(string.format("al_switch_factor %.2f", SWITCH_FACTOR))
+	simulation:set_switch_distance(SWITCH_CENTER)
+	printf("* [anthology/alife] online distance ~= 297 m, offline distance ~= 363 m")
+end
+
+function on_game_start()
+	-- Actor binder creation happens for new games, save loads and transitions,
+	-- so the profile is reapplied to every newly constructed ALife simulator
+	-- without installing a permanent actor_on_update callback.
+	RegisterScriptCallback("actor_on_first_update", apply_alife_profile)
+end

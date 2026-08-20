@@ -1628,3 +1628,89 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260820_224000_v66_pre_serialized_idle_gc`.
 - No new game or cache purge is required. Test from a fresh process with the
   same save so the next profile is directly comparable to v65.
+
+## 2026-08-20 - v67 mod performance and persistent A-Life groups
+
+### Frozen v66 baseline and profile evidence
+
+- The user-confirmed smoother v66 state is frozen before this work as annotated
+  tag `anthology-v66-known-good-20260820`, pointing to commit
+  `d40c597c5de35999f9879e59b31dc2c1eea1513f`.
+- Its complete installed binaries, symbols, active `user.ltx` and control log
+  are also recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260820_2305_v66_known_good`.
+- The v66 active-game profile no longer shows the v65 Lua-GC catastrophes. In
+  representative heavy-scene samples, complete/frame-render/worker-wait means
+  were approximately 23-30 / 8-9.5 / 14-20 / 0.4-0.7 ms. Lua GC commonly used
+  about 5 ms but overlapped rendering. The remaining cost is therefore split
+  between main game/Lua work and rendering rather than a stalled MT worker.
+
+### Standalone WTF 4.2 performance patch
+
+- Added `Anthology Performance - WTF 4.2` as a standalone addon. The original
+  `[QUE] wtf 4_2` files are untouched.
+- WTF task status processing no longer repeats actions, subtask traversal,
+  callbacks and map-target work once per rendered frame for every active task.
+  Each task instead receives a deterministic staggered 75-125 ms update slot;
+  terminal completion or failure is still returned immediately.
+- The cadence table is runtime-only and is rebuilt on load, so no timer based on
+  `time_global()` is serialized into saves. Finished tasks remove their slot.
+- The addon source is tracked under `modpack-patches`, its working copy is at
+  `D:/ANTHOLOGY_DEV/addons/Anthology Performance - WTF 4.2`, and MO2 consumes it
+  through a directory junction. Lua 5.1 syntax validation passes.
+
+### Persistent approximately 300 m A-Life groups
+
+- Added `Anthology A-Life - Persistent 300m Groups` as a separate addon. At the
+  first actor update it applies `al_switch_factor 0.10` and switch distance 330,
+  yielding approximately 297 m online and 363 m offline thresholds with
+  hysteresis. It has no per-frame callback and adds nothing to a save.
+- `CSE_ALifeOnlineOfflineGroup::update()` now translates each offline member by
+  the squad's movement delta instead of overwriting every member with the same
+  squad-centre coordinate. This preserves an established formation across
+  offline/online transitions and removes the engine-side one-point respawn.
+- Current-level member positions are synchronized against the AI map after the
+  translation. Invalid graph vertices and per-member points outside the AI mesh
+  have guarded fallbacks to the squad centre rather than unsafe access.
+- Fixed an independent undefined-behaviour bug in
+  `CSE_ALifeGroupAbstract::synchronize_location()`: it previously dereferenced
+  the loop iterator after the iterator had already reached `end()`.
+- The addon source is tracked under `modpack-patches`, its working copy is at
+  `D:/ANTHOLOGY_DEV/addons/Anthology A-Life - Persistent 300m Groups`, and MO2
+  consumes it through a directory junction. Lua 5.1 syntax validation passes.
+
+### NPC dynamic-light budget for the expanded online radius
+
+- Actor flashlight behaviour is unchanged. NPC torch glow remains visible at
+  range, while its expensive dynamic spot/omni lights are active only within
+  `r__npc_torch_dynamic_distance` (75 m in the active configuration).
+- The lights are enabled again automatically as an NPC approaches, including
+  nearby and indoor encounters. The new console variable accepts 0-300 m and
+  can be tuned without another build; `ai_use_torch_dynamic_lights on` and
+  `r__optimize_torch 1` remain enabled.
+- This bounds the render cost of keeping more NPCs online instead of paying for
+  dynamic shadow-casting lights across the entire approximately 300 m radius.
+
+### Installation, rollback and test scope
+
+- Both standalone addons are enabled at the top of the active
+  `Anthology 2.1 HARD Сложный` MO2 profile. The earlier Catspaw, Dot Marks,
+  Tactic Compass and Interactive PDA experimental patches remain disabled; no
+  unrelated mod, PiP, SSS or script was modified.
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully after the
+  final A-Life safety guard. Installed artifacts match their build SHA-256:
+  - regular DX11 EXE:
+    `C193E20590D0E1445BA9F0F5AE8B95DE313409283C9A804380D3B7D76C44557F`;
+  - regular DX11 PDB:
+    `B42D5D389461683F634D7AA0F318A75EFC1F70417ADFC30BC7AC396C4E0E00F7`;
+  - DX11-AVX EXE:
+    `EA991944A023681BEE5CEBC350E7CA5E00B99ADF2207B9717A7488AA2D703105`;
+  - DX11-AVX PDB:
+    `C2E9C7C00CDA23AE711B22CBB0AA78A110AF6DDF2C1A7847CB628B9097D67764`.
+- The pre-v67 engine sources, original WTF script and MO2 mod list are backed up
+  at `E:/ANTHOLOGY_BACKUPS/20260820_2330_v67_pre_perf_alife`.
+- No new game or cache purge is required. Test the same save: active WTF tasks,
+  a populated smart terrain, leaving and returning to an NPC group, and NPC
+  flashlights at night/indoors. A group already collapsed by an older engine
+  must first spread normally while online; subsequent transitions preserve the
+  resulting member offsets.

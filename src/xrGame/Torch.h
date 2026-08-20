@@ -38,6 +38,7 @@ private:
 	inline bool can_use_dynamic_lights();
 	bool isFlickering;
 	bool lightRenderState;
+	bool m_dynamic_lights_active;
 	float lastFlicker;
 	int l_flickerChance;
 	float l_flickerDelay;

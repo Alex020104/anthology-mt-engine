@@ -194,6 +194,7 @@ extern float IK_CALC_SSA;
 extern float IK_ALWAYS_CALC_DIST;
 extern BOOL r_optimize_calculate_bones;
 extern BOOL r_optimize_torch;
+extern float r_npc_torch_dynamic_distance;
 extern BOOL hud_frequent_updates;
 
 extern BOOL lua_use_functor_cache;
@@ -3096,6 +3097,7 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Float, "ik_always_calc_dist", &IK_ALWAYS_CALC_DIST, 10, 50);
     CMD4(CCC_Integer, "r__optimize_calculate_bones", &r_optimize_calculate_bones, 0, 1);
     CMD4(CCC_Integer, "r__optimize_torch", &r_optimize_torch, 0, 1);
+    CMD4(CCC_Float, "r__npc_torch_dynamic_distance", &r_npc_torch_dynamic_distance, 0.f, 300.f);
 	CMD4(CCC_Integer, "hud_frequent_updates", &hud_frequent_updates, 0, 1);
 
 	CMD4(CCC_Integer, "g_progressive_stamina_cost", &progressiveStaminaCost, 0, 1);

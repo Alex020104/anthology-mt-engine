@@ -26,6 +26,7 @@ static const Fvector OMNI_OFFSET = {-0.2f, +0.1f, -0.1f};
 static const float OPTIMIZATION_DISTANCE = 100.f;
 
 static bool stalker_use_dynamic_lights = false;
+float r_npc_torch_dynamic_distance = 75.f;
 
 extern ENGINE_API int g_current_renderer;
 
@@ -60,6 +61,7 @@ CTorch::CTorch(void)
 
 	isFlickering = false;
 	lightRenderState = false;
+	m_dynamic_lights_active = false;
 	lastFlicker = 0.0f;
 	l_flickerChance = 0;
 	l_flickerDelay = 0.0f;
@@ -98,7 +100,20 @@ inline bool CTorch::can_use_dynamic_lights()
 	if (!owner)
 		return (true);
 
-	return (owner->can_use_dynamic_lights());
+	if (!owner->can_use_dynamic_lights())
+		return false;
+
+	// Keep the actor torch untouched. Distant NPC spot lights are expensive,
+	// especially with a ~300 m ALife online radius; their glow remains visible
+	// while the shadowed dynamic light is enabled again on approach.
+	if (!H_Parent()->cast_actor() && r_npc_torch_dynamic_distance > 0.f)
+	{
+		const float distance_sqr = H_Parent()->XFORM().c.distance_to_sqr(Device.vCameraPosition);
+		if (distance_sqr > _sqr(r_npc_torch_dynamic_distance))
+			return false;
+	}
+
+	return true;
 }
 
 void CTorch::Load(LPCSTR section)
@@ -151,16 +166,17 @@ void CTorch::Switch(bool light_on)
 
 	m_switched_on = light_on;
 	lightRenderState = light_on;
-	if (can_use_dynamic_lights())
+	const bool dynamic_lights_active = light_on && can_use_dynamic_lights();
+	light_render->set_active(dynamic_lights_active);
+	light_omni->set_active(dynamic_lights_active);
+	m_dynamic_lights_active = dynamic_lights_active;
+	if (dynamic_lights_active)
 	{
-		light_render->set_active(light_on);
-
 		if(light_on && H_Parent() && H_Parent()->cast_actor())
 		{
 			m_prev_hp.x = -H_Parent()->cast_actor()->cam_Active()->yaw;
 			m_prev_hp.y = -H_Parent()->cast_actor()->cam_Active()->pitch;
 		}
-		light_omni->set_active(light_on);
 	}
 	glow_render->set_active(light_on);
 
@@ -288,11 +304,10 @@ void CTorch::SwitchLightOnly()
 {
 	lightRenderState = !lightRenderState;
 
-	if (can_use_dynamic_lights())
-	{
-		light_render->set_active(lightRenderState);
-		light_omni->set_active(lightRenderState);
-	}
+	const bool dynamic_lights_active = lightRenderState && can_use_dynamic_lights();
+	light_render->set_active(dynamic_lights_active);
+	light_omni->set_active(dynamic_lights_active);
+	m_dynamic_lights_active = dynamic_lights_active;
 
 	glow_render->set_active(lightRenderState);
 
@@ -324,6 +339,14 @@ void CTorch::Update()
 				SwitchLightOnly();
 			lastFlicker = tg;
 		}
+	}
+
+	const bool dynamic_lights_active = lightRenderState && can_use_dynamic_lights();
+	if (dynamic_lights_active != m_dynamic_lights_active)
+	{
+		light_render->set_active(dynamic_lights_active);
+		light_omni->set_active(dynamic_lights_active);
+		m_dynamic_lights_active = dynamic_lights_active;
 	}
 
 	Fmatrix M = PKinematics(Visual())->LL_GetTransform(guid_bone);
@@ -438,6 +461,7 @@ void CTorch::Update()
 			m_switched_on = false;
 			light_render->set_active(false);
 			light_omni->set_active(false);
+			m_dynamic_lights_active = false;
 			glow_render->set_active(false);
 		}
 	}

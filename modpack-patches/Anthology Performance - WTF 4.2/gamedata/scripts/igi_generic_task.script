@@ -1,0 +1,253 @@
+TASKS_VERSION = "4.2.2"
+TASK_SETUP = {}
+TASKS_CACHE = {}
+
+local trace_dbg = igi_helper.trace_dbg
+local trace_assert = igi_helper.trace_assert
+local TASK_STATUSES = igi_subtask.TASK_STATUSES
+local last_tasks_version
+NIL_ERROR = false
+
+-- Anthology: task_manager can ask every active WTF task for its status every
+-- rendered frame. The original function below consequently walked actions,
+-- subtasks, callbacks and map targets at the render rate. Keep task state
+-- responsive while moving that polling to a staggered 75-125 ms cadence.
+-- This table is deliberately runtime-only: time_global values must never be
+-- serialized into a save and reused after the process clock has restarted.
+local next_status_update = {}
+
+local function task_update_delay(task_id)
+	local hash = 0
+	local text = tostring(task_id or "")
+	for i = 1, #text do
+		hash = (hash + string.byte(text, i) * i) % 51
+	end
+	return 75 + hash
+end
+
+local function terminal_status(CACHE)
+	if not CACHE._queue then
+		if CACHE.status == TASK_STATUSES.FAILED then return "fail" end
+		if CACHE.status == TASK_STATUSES.COMPLETED and not igi_rewards.has_material_rewards(CACHE) then
+			return "complete"
+		end
+	end
+end
+
+function on_game_start()
+    RegisterScriptCallback("save_state",save_state)
+    RegisterScriptCallback("load_state",load_state)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	printf("Weird Tasks Framework "..TASKS_VERSION.." initialised")
+end
+
+function actor_on_first_update()
+	if NIL_ERROR then
+		news_manager.send_tip(db.actor,
+			"Something is nil! Check nonnil() calls. WTF is not initialised.", nil, nil,
+			30000)
+	end
+
+	if last_tasks_version ~= TASKS_VERSION then
+		printf("Weird Tasks Framework: Updating " .. (TASKS_CACHE.TASKS_VERSION or "nil")
+			.. " -> " .. TASKS_VERSION)
+		news_manager.send_tip(db.actor, "WTF: Update complete. Glad to see you here. Welcome to WTF " .. TASKS_VERSION, nil, nil, 30000)
+	end
+end
+
+function save_state(m_data)
+	m_data.igi_tasks_cache = TASKS_CACHE
+	m_data.igi_last_tasks_version = TASKS_VERSION
+end
+
+function load_state(m_data)
+	TASKS_CACHE = m_data.igi_tasks_cache or {}
+	last_tasks_version = m_data.igi_last_tasks_version
+	next_status_update = {}
+	local now = time_global()
+	for task_id in pairs(TASKS_CACHE) do
+		next_status_update[task_id] = now + task_update_delay(task_id)
+	end
+end
+
+function get_cache(task_id)
+	return TASKS_CACHE[task_id]
+end
+
+function get_setup_cache(task_id)
+	return TASK_SETUP[task_id]
+end
+
+function process_macros(task_id, macro_level)
+	local CACHE = get_cache(task_id)
+	trace_assert(CACHE and macro_level, "No CACHE or macro_level in process_macros call")
+	trace_assert(macro_level ~= "@", "@$ macros may not be processed manually.")
+
+	trace_dbg("Before processing macros", macro_level, CACHE)
+	igi_text_processor.resolve_and_link_cache(CACHE, macro_level)
+    trace_dbg("After processing macros", macro_level, CACHE)
+
+	return CACHE
+end
+
+function add_entities(task_id, ...)
+	local CACHE = get_cache(task_id)
+	trace_assert(CACHE ~= nil, "update_entities: CACHE not found for task_id", task_id)
+
+	local args = {...}
+	CACHE._queue = CACHE._queue or {add = {}, rem = {}}
+	for _, v in ipairs(args) do
+		trace_assert(type(CACHE[v]) == "table", "update_entities: entity table not found: ", v)
+		CACHE._queue.add[#CACHE._queue.add+1] = v
+	end
+	return #args
+end
+
+function remove_entities(task_id, ...)
+	local CACHE = get_cache(task_id)
+	trace_assert(CACHE ~= nil, "update_entities: CACHE not found for task_id", task_id)
+
+	local args = {...}
+	CACHE._queue = CACHE._queue or {add = {}, rem = {}}
+	for _, v in ipairs(args) do
+		CACHE._queue.rem[#CACHE._queue.rem+1] = v
+	end
+	return #args
+end
+---------------------------< Precondition >---------------------------
+function try_prepare_quest(task_id, task_data, tg_id)
+	trace_dbg("validate "..task_id, task_data)
+	trace_assert(task_data, "WTF: validate_task: no task data")
+
+	local CACHE = igi_taskdata.finalize_task_cache(task_data, task_id, tg_id)
+	igi_text_processor.resolve_and_link_cache(CACHE, "")
+
+	CACHE.__entities = CACHE.entities
+	CACHE.entities = {}
+	igi_subtask.enable_entities('__entities', CACHE)
+
+	igi_text_processor.resolve_and_link_cache(CACHE, "")
+
+	if igi_mcm.get_task_value(CACHE.quest_id, "disabled") then return end
+	if not igi_mcm.get_options_value("disable_preconditions") then
+		for _, val in pairs(CACHE.preconditions or {}) do
+			if not val then return end
+		end
+	end
+
+	for _, val in pairs(CACHE.requirements or {}) do
+		if not val then return end
+	end
+
+	trace_dbg("setup "..task_id, task_data)
+	CACHE.preconditions = nil	-- not needed anymore
+	TASK_SETUP[task_id] = CACHE
+	trace_dbg("CACHE after setup "..task_id, TASK_SETUP[task_id])
+	return TASK_SETUP[task_id]
+end
+
+--< Effect >--------------------------------------------------
+function setup_quest(task_id)
+	--This function will be called on_job_descr
+	igi_description.show_description(get_setup_cache(task_id))
+end
+--< Init >----------------------------------------------------
+function initialise_CACHE(task_id)
+	local CACHE = TASK_SETUP[task_id]
+	TASKS_CACHE[task_id] = CACHE
+	TASK_SETUP[task_id] = nil
+
+	igi_subtask.init_entities('__entities', CACHE)
+
+	process_macros(task_id, "1")
+
+	igi_callbacks.invoke_callbacks("on_first_run", CACHE)
+	next_status_update[task_id] = 0
+end
+
+--< Status >--------------------------------------------------
+function quest_status(task_id)
+	local CACHE = get_cache(task_id)
+	local result = terminal_status(CACHE)
+	if result then return result end
+
+	local now = time_global()
+	if now < (next_status_update[task_id] or 0) then return end
+	next_status_update[task_id] = now + task_update_delay(task_id)
+
+	---------------------------<ACTIONS>---------------------
+	igi_subtask.update_entities(CACHE)
+	igi_actions.update_actions(CACHE)
+	igi_subtask.process_subtasks(CACHE)
+	igi_callbacks.invoke_callbacks("on_task_update", CACHE)
+
+	---------------------------<STAGE>----------------------
+	result = terminal_status(CACHE)
+	if result then return result end
+
+	igi_subtask.update_current_map_target(CACHE)
+end
+--< Target >--------------------------------------------------
+function quest_target(task_id)
+	--This function point to a task target in PDA
+	local CACHE = get_cache(task_id)
+
+	-- trace target in debug mode
+	--[[ local target_id = CACHE.current_target_id
+	if target_id and igi_mcm.get_options_value("debug") then
+		local se_obj = alife_object(target_id)
+		if se_obj then
+			local sec = se_obj and se_obj:section_name() or "nil"
+			trace_dbg("target "..tostring(target_id).." is "..sec)
+		end
+	end ]]
+
+	return CACHE.quest_targets
+end
+--< Text >--------------------------------------------------
+function quest_text(task_id,field)
+	--This function return a text for title_functor and descr_functor
+	local CACHE = get_cache(task_id)
+
+	if field == "descr" and CACHE.status ~= TASK_STATUSES.RUNNING then
+		field = "done"
+	end
+
+	local text = igi_description.get_task_text(CACHE.description_key, field, CACHE.task_giver_id)
+	local desc = field ~= "name" and ("\\n "..igi_description.get_description(CACHE)) or ""
+	local mark = igi_mcm.get_options_value("wtf_task_mark") and "[WTF] " or ""
+	return mark..text..desc
+end
+--< Reward >--------------------------------------------------
+function finish_quest(task_id)
+	local CACHE = get_cache(task_id)
+
+	igi_subtask.finish_all_subtasks(CACHE)
+	igi_rewards.collect_and_give_rewards(CACHE)
+
+	if (CACHE.status ~= igi_subtask.TASK_STATUSES.FAILED) then
+		igi_callbacks.invoke_callbacks("on_complete", CACHE)
+		igi_subtask.invoke_controller("on_complete", CACHE)
+		process_macros(task_id, "on_complete")
+	else
+		igi_callbacks.invoke_callbacks("on_fail", CACHE)
+		igi_subtask.invoke_controller("on_fail", CACHE)
+		process_macros(task_id, "on_fail")
+	end
+
+	igi_callbacks.invoke_callbacks("on_finish", CACHE)
+	process_macros(task_id, "on_finish")
+
+	next_status_update[task_id] = nil
+	TASKS_CACHE[task_id] = nil
+end
+
+function first_finished_igi_task(tg_id)
+	for task_id, cache in pairs(TASKS_CACHE) do
+		if cache.task_giver_id == tg_id
+			and (cache.status == TASK_STATUSES.READY_TO_FINISH
+				or cache.status == TASK_STATUSES.COMPLETED) then
+			return task_id
+		end
+	end
+end
