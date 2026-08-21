@@ -505,13 +505,15 @@ void CDetailManager::UpdateVisibleM()
 			if (sp.id == DetailSlot::ID_Empty)
 				continue;
 
-			for (SlotItemVec& items : sp.r_items)
+			auto& source_items = sp.items;
+			auto& render_items = sp.r_items;
+			for (SlotItemVec& items : render_items)
 				items.clear_not_free();
 
 			const float R = objects[sp.id]->bv_sphere.R;
 			const float Rq_drcp = R * R * dist_sq_rcp;
-			SlotItem** items_begin = sp.items.data();
-			SlotItem** items_end = items_begin + sp.items.size();
+			SlotItem** items_begin = source_items.data();
+			SlotItem** items_end = items_begin + source_items.size();
 			for (SlotItem** item_iterator = items_begin; item_iterator != items_end; ++item_iterator)
 			{
 				SlotItem& item = **item_iterator;
@@ -545,7 +547,7 @@ void CDetailManager::UpdateVisibleM()
 				matrix._11 *= scale; matrix._21 *= scale; matrix._31 *= scale;
 				matrix._12 *= scale; matrix._22 *= scale; matrix._32 *= scale;
 				matrix._13 *= scale; matrix._23 *= scale; matrix._33 *= scale;
-				sp.r_items[vis_id].push_back(*item_iterator);
+				render_items[vis_id].push_back(*item_iterator);
 
 				if (S.hidden)
 				{

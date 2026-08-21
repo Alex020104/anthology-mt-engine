@@ -51,6 +51,7 @@ IGame_Level::~IGame_Level()
 	xr_delete(m_pCameras);
 	// Unregister
 	Device.seqParallel.clear_not_free();
+	Device.seqParallelNames.clear_not_free();
 	Device.seqRender.Remove(this);
 	Device.seqFrame.Remove(this);
 	CCameraManager::ResetPP();

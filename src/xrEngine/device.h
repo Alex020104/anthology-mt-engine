@@ -240,6 +240,9 @@ public:
 	CRegistrator<pureFrame> seqFrameMT;
 	CRegistrator<pureDeviceReset> seqDeviceReset;
 	xr_vector<xr_delegate<void()>> seqParallel;
+	// Static diagnostic labels stay aligned with seqParallel. Keeping the label
+	// as LPCSTR avoids shared_str allocations for every NPC task on every frame.
+	xr_vector<LPCSTR> seqParallelNames;
 
 	// ForserX: Pre-Render sequence
 	xr_vector<xr_delegate<void()>> seqParallelRender;
@@ -464,6 +467,12 @@ public:
 	// Multi-threading
 	xr_task_group secondary_tasks;
 
+	ICF void add_to_seq_parallel(const xr_delegate<void()>& delegate, LPCSTR name)
+	{
+		seqParallel.push_back(delegate);
+		seqParallelNames.push_back(name ? name : "legacy");
+	}
+
 	ICF void remove_from_seq_parallel(const xr_delegate<void()>& delegate)
 	{
 		xr_vector<xr_delegate<void()>>::iterator I = std::find(
@@ -472,7 +481,12 @@ public:
 			delegate
 		);
 		if (I != seqParallel.end())
+		{
+			const size_t index = static_cast<size_t>(I - seqParallel.begin());
 			seqParallel.erase(I);
+			if (index < seqParallelNames.size())
+				seqParallelNames.erase(seqParallelNames.begin() + index);
+		}
 	}
 
 	//AVO: elapsed famed counter (by alpet)

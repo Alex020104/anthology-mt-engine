@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "xrSheduler.h"
 #include "xr_object.h"
+#include "EngineThreading.h"
 
 #include "../xrCore/profiler.h"
 
@@ -335,7 +336,7 @@ void CSheduler::Pop()
 	PopImpl();
 }
 
-int SchedulerBatchSize = 256;
+int SchedulerBatchSize = 128;
 BOOL SchedulerLog = FALSE;
 void CSheduler::ProcessStep()
 {
@@ -345,6 +346,10 @@ void CSheduler::ProcessStep()
 	ItemsBatch.clear();
 	u32 ItemsCount = Items.size();
 	float target = psShedulerTarget;
+	static u64 profile_slowest_ticks = 0;
+	static shared_str profile_slowest_name;
+	static u32 profile_updates = 0;
+	static u32 profile_last_frame = 0;
 	// Drain the deferred startup backlog while the loading precache is active,
 	// then return to the configured per-frame batch automatically. This adapts
 	// Monolith's temporary scheduler_flush without requiring a modpack script or
@@ -391,8 +396,11 @@ void CSheduler::ProcessStep()
 			if (m_bTerminating)
 				break;
 
-			// Stop if really underestimated the cost of batch, check every 8th item
-			if ((i % 8) == 0 && Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
+			// Enforce the scheduler's existing time budget after every object. Large
+			// modpacks can put several expensive Lua-backed objects next to each
+			// other; checking only every eighth object turns a 10 ms budget into a
+			// visible 60-100 ms frame tail.
+			if (Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
 			{
 				psShedulerTarget += (psShedulerReaction * 3);
 				break;
@@ -413,7 +421,18 @@ void CSheduler::ProcessStep()
 			u32 dwUpdate = dwMin + iFloor(float(dwMax - dwMin) * scale);
 			clamp(dwUpdate, u32(_max(dwMin, u32(20))), dwMax);
 
+			const u64 update_started_at = mt_FrameProfile ? CPU::QPC() : 0;
 			T.Object->shedule_Update(clampr(Elapsed, u32(1), u32(_max(u32(T.Object->shedule.t_max), u32(1000)))));
+			if (update_started_at)
+			{
+				const u64 update_ticks = CPU::QPC() - update_started_at;
+				++profile_updates;
+				if (update_ticks > profile_slowest_ticks)
+				{
+					profile_slowest_ticks = update_ticks;
+					profile_slowest_name = T.scheduled_name;
+				}
+			}
 
 			// Fill item structure
 			Item TNext;
@@ -491,6 +510,18 @@ void CSheduler::ProcessStep()
 	
 	// always try to decrease target
 	psShedulerTarget -= psShedulerReaction;
+	if (mt_FrameProfile && Device.dwFrame - profile_last_frame >= 300)
+	{
+		const double slowest_ms = CPU::qpc_freq ?
+			double(profile_slowest_ticks) * 1000.0 / double(CPU::qpc_freq) : 0.0;
+		Msg("* [mt-frame/profile] scheduler slowest=%s %.2f ms, updates=%u, batch=%d",
+			profile_slowest_name.size() ? *profile_slowest_name : "none",
+			slowest_ms, profile_updates, SchedulerBatchSize);
+		profile_slowest_ticks = 0;
+		profile_slowest_name = nullptr;
+		profile_updates = 0;
+		profile_last_frame = Device.dwFrame;
+	}
 }
 
 void CSheduler::UpdateInit()

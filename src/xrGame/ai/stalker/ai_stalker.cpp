@@ -1027,8 +1027,9 @@ void CAI_Stalker::UpdateCL()
 			I	= std::find(Device.seqParallel.begin(),Device.seqParallel.end(),f);
 			VERIFY							(I == Device.seqParallel.end());
 #endif
-					Device.seqParallel.push_back(
-						xr_make_delegate(this, &CAI_Stalker::update_object_handler));
+					Device.add_to_seq_parallel(
+						xr_make_delegate(this, &CAI_Stalker::update_object_handler),
+						"stalker.object_handler");
 				}
 				else
 				{

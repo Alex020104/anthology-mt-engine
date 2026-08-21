@@ -18,6 +18,7 @@
 #include <luabind/class_info.hpp>
 
 extern ENGINE_API bool EngineShouldDeferFullLuaGC();
+extern ENGINE_API bool EngineShouldSuppressExplicitLuaMaintenance();
 extern ENGINE_API void EngineRecordDeferredFullLuaGC();
 extern ENGINE_API void EngineRecordSuppressedLuaJITFlush();
 
@@ -32,7 +33,7 @@ int load_aware_collectgarbage(lua_State* L)
 	const bool default_collect = argument_count == 0;
 	const bool explicit_collect = argument_count > 0 && lua_type(L, 1) == LUA_TSTRING &&
 		!xr_strcmp(lua_tostring(L, 1), "collect");
-	if ((default_collect || explicit_collect) && EngineShouldDeferFullLuaGC())
+	if ((default_collect || explicit_collect) && EngineShouldSuppressExplicitLuaMaintenance())
 	{
 		EngineRecordDeferredFullLuaGC();
 		lua_pushinteger(L, 0);
@@ -50,7 +51,7 @@ int load_aware_collectgarbage(lua_State* L)
 int load_aware_jit_flush(lua_State* L)
 {
 	const int argument_count = lua_gettop(L);
-	if (EngineShouldDeferFullLuaGC())
+	if (EngineShouldSuppressExplicitLuaMaintenance())
 	{
 		// Flushing every LuaJIT trace at the loading prompt makes the first
 		// gameplay seconds recompile the whole modpack and creates visible

@@ -457,7 +457,8 @@ void CCustomMonster::UpdateCL()
 		*/
 
 		if (g_mt_config.test(mtSoundPlayer))
-			Device.seqParallel.push_back(xr_make_delegate(this, &CCustomMonster::update_sound_player));
+			Device.add_to_seq_parallel(
+				xr_make_delegate(this, &CCustomMonster::update_sound_player), "monster.sound_player");
 		else
 		{
 			START_PROFILE("CustomMonster/client_update/sound_player")

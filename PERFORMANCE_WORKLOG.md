@@ -2081,3 +2081,63 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   SHA-256 is
   `7FB0CD3A0D708B2667560F79B7E2BBEC4189C2A693731C4D5F836904C0C3EB4B`.
 - No new game or shader-cache purge is required. The game was not launched.
+
+## 2026-08-21 - v74 GC and scheduler frame-tail pass
+
+### Fresh v73 evidence
+
+- The fresh test log contains the v73 `[mt-frame/profile] game-breakdown`
+  records, confirming that the new engine binary was active.
+- Lua GC maxima repeatedly reached roughly 105-242 ms and closely matched the
+  GameThread maxima. About 1650-1714 GC calls were made per 300-frame window,
+  which is almost the configured six calls every frame.
+- `seqParallel` reached roughly 152 ms in its worst sample. Scheduler tails were
+  about 69-96 ms, with a separate 906-ms transition sample during loading.
+- The renderer averages had already improved, so these recurring tails were
+  CPU/GameThread work rather than a steady rendering-quality bottleneck.
+- The standalone v73 Lua marker was absent. The still-running Mod Organizer had
+  restored its in-memory `modlist.txt`, and the old callback consequently ran
+  two full Lua collections plus a LuaJIT flush about three seconds after load.
+
+### Tail corrections and lossless work
+
+- Incremental GC now performs one minimal step (`1`) in an eligible frame,
+  instead of six calls with step `10`. Its overlap budget is 500 us and the
+  busy-frame threshold is 9 ms. The previous eight-second hiatus is removed so
+  mark debt cannot accumulate and then enter an oversized LuaJIT atomic phase.
+- Level load applies `pause=125` and `stepmul=100`. This starts collection before
+  the heap grows as far while preserving Lua VM ownership on GameThread; the
+  one Lua VM is not accessed concurrently from an unsafe worker.
+- The 12-second post-load suppression of explicit full `collectgarbage()` and
+  `jit.flush()` is now enforced in the engine wrappers. It no longer depends on
+  MO2 successfully enabling a late-loading script addon.
+- Scheduler keeps its existing time budget but checks it after every scheduled
+  object instead of every eighth. Its normal batch returns from 256 to 128; no
+  scheduled update frequency, game logic, NPC count or visual setting changes.
+- Named `seqParallel` entries and per-object scheduler profiling now report the
+  worst task every 300 frames. This makes a remaining tick attributable to a
+  concrete subsystem on the next test rather than inferred from core usage.
+- IX-Ray's safe DetailManager hot-loop reference caching was adapted without
+  changing blade selection, density, distance, shaders or rendered output.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `31726E038A0703A4A63E6F6062249799546B2750D334F36CCC566D47103B9D8A`;
+  - regular DX11 PDB:
+    `729F4AA2482145859E5083961EA38CC5904892E2B2F8EBA40670F8EBD097D90F`;
+  - DX11-AVX EXE:
+    `E0E7813ADBC7281FCA1A0529EC4717C090F8ABF22232863DC05E62367D4CC899`;
+  - DX11-AVX PDB:
+    `3E1F01521B74FA50C958E6430229C144CF3E025D5545EE7A593BAABBCB18296E`.
+- `Anthology Performance v74 - GC Scheduler Tail` is installed under MO2 and
+  mirrored under `D:/ANTHOLOGY_DEV/addons`; the active runtime profile is also
+  applied directly to `appdata/user.ltx`.
+- Complete pre-v74 binaries, symbols, source, settings, MO2 list and fresh log
+  are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v74_pre_gc_scheduler_tail`. The source archive
+  SHA-256 is
+  `1E0EE4BC06CD36416C6D07C4D4D4BF741A090E256AAB95F44CF2E472A0847285`.
+- No new game or shader-cache purge is required. The game was not launched.

@@ -1309,7 +1309,8 @@ void CLevel::OnFrame()
 	if (!g_dedicated_server)
 	{
 		if (g_mt_config.test(mtMap))
-			Device.seqParallel.push_back(xr_make_delegate(m_map_manager, &CMapManager::Update));
+			Device.add_to_seq_parallel(
+				xr_make_delegate(m_map_manager, &CMapManager::Update), "map.update");
 		else
 			MapManager().Update();
 
@@ -1424,8 +1425,8 @@ void CLevel::OnFrame()
 	{
 		if (g_mt_config.test(mtLevelSounds))
 		{
-			Device.seqParallel.push_back(xr_make_delegate(
-				m_level_sound_manager, &CLevelSoundManager::Update));
+			Device.add_to_seq_parallel(xr_make_delegate(
+				m_level_sound_manager, &CLevelSoundManager::Update), "level.sound_manager");
 		}
 		else
 			m_level_sound_manager->Update();
@@ -1447,11 +1448,13 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-int psLua_ParallelGCStep = 10;
+int psLua_ParallelGCStep = 1;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
 extern int psLua_ParallelGC_CallAmount;
 extern int psLua_ParallelGC_BudgetUs;
+int psLua_ParallelGCPause = 125;
+int psLua_ParallelGCStepMul = 100;
 
 void CLevel::script_gc()
 {
@@ -1480,6 +1483,10 @@ void CLevel::script_gc()
 bool CLevel::Load(u32 dwNum)
 {
     inherited::Load(dwNum);
+	const int old_pause = lua_gc(ai().script_engine().lua(), LUA_GCSETPAUSE, psLua_ParallelGCPause);
+	const int old_step_mul = lua_gc(ai().script_engine().lua(), LUA_GCSETSTEPMUL, psLua_ParallelGCStepMul);
+	Msg("* [Lua GC] incremental profile pause=%d (was %d), stepmul=%d (was %d)",
+		psLua_ParallelGCPause, old_pause, psLua_ParallelGCStepMul, old_step_mul);
     Msg("Device.LuaGC bind");
     Device.LuaGC.bind(&CLevel::LuaGC);
     Device.LuaGCFull.bind(&CLevel::LuaGCFull);

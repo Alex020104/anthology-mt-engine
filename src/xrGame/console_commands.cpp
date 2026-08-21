@@ -88,6 +88,8 @@ extern int psLua_ParallelGC_BudgetUs;
 extern BOOL psLua_ParallelGC_Adaptive;
 extern int psLua_ParallelGC_FrameBudgetUs;
 extern int psLua_ParallelGC_PostLoadDelayMs;
+extern int psLua_ParallelGCPause;
+extern int psLua_ParallelGCStepMul;
 extern BOOL psLua_ParallelGC_debug;
 extern BOOL psLua_ParallelGC;
 extern BOOL lua_debug;
@@ -2660,6 +2662,8 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "lua_parallel_gc_adaptive", &psLua_ParallelGC_Adaptive, 0, 1);
 	CMD4(CCC_Integer, "lua_parallel_gc_frame_budget_us", &psLua_ParallelGC_FrameBudgetUs, 4000, 33000);
 	CMD4(CCC_Integer, "lua_parallel_gc_postload_delay_ms", &psLua_ParallelGC_PostLoadDelayMs, 0, 30000);
+	CMD4(CCC_Integer, "lua_parallel_gc_pause", &psLua_ParallelGCPause, 100, 300);
+	CMD4(CCC_Integer, "lua_parallel_gc_stepmul", &psLua_ParallelGCStepMul, 25, 400);
 	CMD4(CCC_Integer, "lua_parallel_gc_debug", &psLua_ParallelGC_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_parallel_gc", &psLua_ParallelGC, 0, 1);
 	CMD4(CCC_Integer, "load_defer_full_lua_gc", &g_load_defer_full_lua_gc, 0, 1);

@@ -1309,7 +1309,8 @@ void CBulletManager::CommitEvents() // @ the start of frame
 	m_Events.clear_and_reserve();
 
 	if (g_mt_config.test(mtBullets)) {
-		Device.seqParallel.push_back(xr_make_delegate(this, &CBulletManager::UpdateWorkload));
+		Device.add_to_seq_parallel(
+			xr_make_delegate(this, &CBulletManager::UpdateWorkload), "bullets.workload");
 	}
 	else 
 	{

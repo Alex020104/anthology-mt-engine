@@ -39,7 +39,8 @@ public:
 	void register_to_process()
 	{
 		m_object->m_wait_for_distributed_computation = true;
-		Device.seqParallel.push_back(xr_make_delegate(this, &CDetailPathBuilder::process));
+		Device.add_to_seq_parallel(
+			xr_make_delegate(this, &CDetailPathBuilder::process), "ai.detail_path");
 	}
 
 	void process_impl(bool separate_computing = true)

@@ -14,12 +14,15 @@ struct SFrameTaskProfile
 	u64 lua_gc_calls = 0;
 	u64 lua_gc_skipped_busy = 0;
 	u64 lua_gc_skipped_postload = 0;
+	u64 game_parallel_items = 0;
 	u64 max_pre_render = 0;
 	u64 max_post_transforms = 0;
 	u64 max_calculate_bones = 0;
 	u64 max_game = 0;
 	u64 max_game_scheduler = 0;
 	u64 max_game_parallel = 0;
+	u64 max_game_parallel_item = 0;
+	LPCSTR max_game_parallel_item_name = nullptr;
 	u64 max_game_frame_mt = 0;
 	u64 max_lua_gc = 0;
 	u64 max_vision = 0;
