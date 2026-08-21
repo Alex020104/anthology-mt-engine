@@ -2571,7 +2571,7 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260821_v81_pre_low_churn_scans`.
 - A new game and shader-cache purge are not required. The game was not launched.
 
-## 2026-08-21 - v82 Lua GC frame pacing candidate
+## 2026-08-21 - v82 Lua GC frame pacing
 
 ### Synchronized video and log evidence
 
@@ -2615,14 +2615,14 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   between `lj_gc_step()` calls and therefore cannot interrupt LuaJIT atomic;
   v82 adapts the pacing idea but gates entry into atomic itself.
 
-### Validation and candidate artifacts
+### Validation, installation and rollback
 
 - The standalone v82 companion passes the Lua 5.1 parser from both the tracked
   source copy and `D:/ANTHOLOGY_DEV/addons`. It is linked into MO2 and enabled
   above the three v81 modules; the superseded v79 continuous-GC companion is
   disabled.
 - Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully. Candidate
-  hashes are:
+  and installed hashes match exactly:
   - regular DX11 EXE:
     `F68BD1CCA4A88E8550415B61725209A3711765E6791F4EBBFB5629B724EE9249`;
   - regular DX11 PDB:
@@ -2632,5 +2632,14 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - DX11-AVX PDB:
     `113CA9578E5C3A59FF3BD31EDB3C4C5798F8D3B47BE61FFF9D2612A6C3CAD628`.
 - The startup marker is `[anthology/v82] thresholded motion-safe Lua GC active`.
-  A new game and shader-cache purge are not required. Installation remains
-  pending while the currently running v81 game process owns the AVX binary.
+- The previous game window left an unresponsive v81 process after closing. Its
+  graceful-close timeout expired, so only that orphaned PID was terminated
+  before replacement. No game process was active during installation.
+- Exact v81 rollback files remain at
+  `E:/ANTHOLOGY_BACKUPS/20260821_v81_stutter_baseline`. The complete v82
+  candidate, source snapshot, addon, profile and synchronized log are stored at
+  `E:/ANTHOLOGY_BACKUPS/20260821_v82_lua_gc_frame_pacing_candidate`.
+- MO2 was closed cleanly and restarted. V82 is first in the active HARD profile,
+  the superseded v79 continuous-GC companion is disabled, and the accepted v81
+  HUD modules plus v80 CoP placement module remain enabled.
+- A new game and shader-cache purge are not required. The game was not launched.
