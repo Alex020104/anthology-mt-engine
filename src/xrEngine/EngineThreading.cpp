@@ -245,16 +245,15 @@ void XRay::Engine::CalculateBonesThread()
 }
 
 extern BOOL psLua_ParallelGC;
-// v78: retain the accepted v66 collector step, but normalize the amount of GC
-// work by real frame duration. The fixed v77 25-call/5-ms allowance consumed
-// roughly the same large slice on every frame and erased the high-FPS gain.
-int psLua_ParallelGC_CallAmount = 25;
-int psLua_ParallelGC_BudgetUs = 5000;
+// v79: keep the small v76 render-overlap slice that produced the accepted FPS.
+// Collection starts immediately after loading instead of leaving an eight-second
+// debt window. Do not scale the allowance up when FPS falls: that positive
+// feedback was the v78 regression.
+int psLua_ParallelGC_CallAmount = 6;
+int psLua_ParallelGC_BudgetUs = 1200;
 BOOL psLua_ParallelGC_Adaptive = TRUE;
 int psLua_ParallelGC_FrameBudgetUs = 12000;
 int psLua_ParallelGC_PostLoadDelayMs = 0;
-int psLua_ParallelGC_TargetCallsPerSecond = 600;
-int psLua_ParallelGC_TargetBudgetUsPerSecond = 200000;
 void XRay::Engine::GameThread()
 {
 	CFrameTaskTimer frame_task_timer(FrameTaskGame);
@@ -319,23 +318,11 @@ void XRay::Engine::GameThread()
 			return;
 		}
 
-		const u64 game_work_ticks = CPU::QPC() - game_work_started_at;
-		u32 call_limit = static_cast<u32>(psLua_ParallelGC_CallAmount);
-		u64 budget_us = static_cast<u64>(psLua_ParallelGC_BudgetUs);
+		const u64 now = CPU::QPC();
+		const u64 game_work_ticks = now - game_work_started_at;
+		u64 budget_ticks = CPU::qpc_freq * static_cast<u64>(psLua_ParallelGC_BudgetUs) / 1000000ULL;
 		if (psLua_ParallelGC_Adaptive)
 		{
-			// Keep approximately constant collector throughput per second. At a
-			// 100-FPS frame this is about six steps/2 ms; at 40 FPS it is about
-			// fifteen steps/5 ms, matching the useful throughput measured in v66
-			// without charging its full allowance to every fast frame.
-			const float frame_seconds = clampr(Device.fTimeDelta, 1.f / 240.f, 1.f / 20.f);
-			call_limit = clampr(
-				static_cast<u32>(iCeil(psLua_ParallelGC_TargetCallsPerSecond * frame_seconds)),
-				1u, static_cast<u32>(psLua_ParallelGC_CallAmount));
-			budget_us = clampr(
-				static_cast<u64>(iCeil(psLua_ParallelGC_TargetBudgetUsPerSecond * frame_seconds)),
-				50ULL, static_cast<u64>(psLua_ParallelGC_BudgetUs));
-
 			const u64 frame_budget_ticks = CPU::qpc_freq *
 				static_cast<u64>(psLua_ParallelGC_FrameBudgetUs) / 1000000ULL;
 			if (game_work_ticks >= frame_budget_ticks ||
@@ -344,15 +331,8 @@ void XRay::Engine::GameThread()
 				frame_lua_gc_skipped_busy.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
-			const u64 remaining_ticks = frame_budget_ticks - game_work_ticks;
-			budget_us = std::min(budget_us, remaining_ticks * 1000000ULL / CPU::qpc_freq);
-			if (budget_us < 50)
-			{
-				frame_lua_gc_skipped_busy.fetch_add(1, std::memory_order_relaxed);
-				return;
-			}
+			budget_ticks = std::min(budget_ticks, frame_budget_ticks - game_work_ticks);
 		}
-		const u64 budget_ticks = CPU::qpc_freq * budget_us / 1000000ULL;
 
 		CFrameTaskTimer lua_gc_profile(FrameTaskLuaGC);
 		PROF_EVENT("seqLuaGC");
@@ -363,7 +343,7 @@ void XRay::Engine::GameThread()
 		// enter a non-preemptible atomic phase, so a do/while here produced the
 		// measured periodic 40-80 ms waits even in renderless menu frames.
 		while (Device.isRendering.load(std::memory_order_relaxed) &&
-			Device.LuaGCCount < call_limit &&
+			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
 			CPU::QPC() - started_at < budget_ticks)
 		{
 			++Device.LuaGCCount;

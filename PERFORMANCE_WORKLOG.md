@@ -2411,3 +2411,58 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260821_v78_pre_v77_regression_correction`.
 - No new game or shader-cache purge is required. The game was not launched.
+
+## 2026-08-21 - v79 v78 FPS-regression correction
+
+### Fresh v78 evidence
+
+- The active v78 log contains eleven first-session gameplay profile windows.
+  Average total time was 32.27 ms, with 21.47 ms in rendering and 8.11 ms in
+  frame work. Stable windows still charged Lua GC roughly 3-5 ms per frame.
+- v78 executed 23422 incremental GC calls in those windows, averaging 7.10
+  calls per frame. Its frame-rate normalizer deliberately granted more calls
+  and more budget after a frame slowed down. That positive feedback made a
+  transient slowdown pay a larger collector cost and was the FPS regression.
+- A second Jupiter-to-Zaton session confirmed the same pattern: after its
+  transition window, total/frame/render time was 34.38/9.78/19.25 ms and GC
+  still averaged 3.09 ms with 2950 calls per 300 frames.
+- All renderer-quality settings are unchanged from the high-FPS v76 profile,
+  except the pre-existing positional terrain offset. The source diff from v76
+  to v78 contains no renderer code. The 19-31 ms render cost in the fresh test
+  is therefore a separate scene/weather GPU ceiling, not a v78 visual change.
+
+### Correct combination of the accepted revisions
+
+- Restored the v76 high-FPS collector cap: incremental step 10, at most six
+  calls and 1200 microseconds of render-overlap work. The 12 ms busy-frame
+  guard and the requirement that rendering is still active remain in place.
+- Removed the v78 target-calls/target-budget rate normalizer and both of its
+  console commands. A slow frame can no longer grant GC additional work.
+- Kept the post-load delay at zero instead of restoring v76's eight-second
+  hiatus. The safe full collection at the load boundary remains enabled; small
+  incremental work can then continue immediately, avoiding delayed debt.
+- Kept v78 A-Life position persistence and its standalone repair addon exactly
+  as-is. No renderer, PiP, graphical setting or unrelated gameplay script was
+  modified.
+
+### Build, installation and rollback
+
+- The v79 Lua companion passes the Lua 5.1 parser. Both `DX11|x64` and
+  `DX11-AVX|x64` compile and link successfully.
+- Installed build hashes match exactly:
+  - regular DX11 EXE:
+    `E132A02BDCBD6CE48A14B1E9167E801358784205800589CD2A94F9E1F8248646`;
+  - regular DX11 PDB:
+    `5AF0191EC39137657425C2F0BB62CDB4087974B91F34B38AA3F26F339A11A3A9`;
+  - DX11-AVX EXE:
+    `F98AEE213E6F756A81DB3D9E8DF380ACD61879121D39D1F3ADD4DB9D47568F56`;
+  - DX11-AVX PDB:
+    `93E339AEA22C023D29976843A9E2DFB0232FF5EB3ADA078E21BEA783830F99CF`.
+- `Anthology Performance v79 - Continuous Small GC` is a separate working
+  addon under `D:/ANTHOLOGY_DEV/addons`, linked and enabled in the active HARD
+  profile. The v78 GC addon is disabled; v78 A-Life remains enabled.
+- Exact pre-v79 binaries, symbols, settings, active mod list, source snapshot,
+  addons and the fresh v78 log are backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260821_v79_pre_v78_fps_regression`.
+- No new game or shader-cache purge is required. MO2 was closed cleanly and
+  the game was not launched.

@@ -1487,9 +1487,9 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-// The v66 control capture used 76 here and kept the LuaJIT heap out of the
-// long atomic phases produced by the later small-step profile.
-int psLua_ParallelGCStep = 76;
+// v79 keeps the small v76 incremental step. Combined with the zero post-load
+// delay this avoids both the v78 per-frame tax and the v76 delayed GC debt.
+int psLua_ParallelGCStep = 10;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
 extern int psLua_ParallelGC_CallAmount;
