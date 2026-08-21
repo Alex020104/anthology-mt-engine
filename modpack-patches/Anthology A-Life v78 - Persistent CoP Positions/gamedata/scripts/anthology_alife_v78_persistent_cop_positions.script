@@ -1,0 +1,103 @@
+local original_setup_gulag = nil
+local wrapper_installed = false
+local collapsed_batches = {}
+
+local function assigned_job_vertex(se_obj, smart)
+	local npc_info = smart and smart.npc_info and smart.npc_info[se_obj.id]
+	local task = npc_info and npc_info.job and npc_info.job.alife_task
+	return task and task:level_vertex_id()
+end
+
+local function duplicate_offline_count(smart, level_vertex)
+	if not (smart and smart.npc_info and db and db.offline_objects) then
+		return 0
+	end
+
+	local count = 0
+	for npc_id in pairs(smart.npc_info) do
+		local offline = db.offline_objects[npc_id]
+		if offline and offline.level_vertex_id == level_vertex then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function consume_collapsed_vertex(smart_id, smart, level_vertex)
+	local smart_batches = collapsed_batches[smart_id]
+	if not smart_batches then
+		smart_batches = {}
+		collapsed_batches[smart_id] = smart_batches
+	end
+
+	local remaining = smart_batches[level_vertex]
+	if not remaining then
+		remaining = duplicate_offline_count(smart, level_vertex)
+		if remaining < 2 then
+			return false
+		end
+	end
+
+	remaining = remaining - 1
+	if remaining > 0 then
+		smart_batches[level_vertex] = remaining
+	else
+		smart_batches[level_vertex] = nil
+	end
+	return true
+end
+
+local function repair_collapsed_position(se_obj)
+	if not (se_obj and db) then
+		return
+	end
+
+	local smart_id = se_obj.m_smart_terrain_id
+	if not (smart_id and smart_id ~= 65535) then
+		return
+	end
+
+	local simulation = alife()
+	local smart = simulation and simulation:object(smart_id)
+	local job_vertex = assigned_job_vertex(se_obj, smart)
+	if not job_vertex then
+		return
+	end
+
+	local offline = db.offline_objects and db.offline_objects[se_obj.id]
+	if offline and offline.level_vertex_id then
+		if consume_collapsed_vertex(smart_id, smart, offline.level_vertex_id) then
+			-- This runs inside setup_gulag_and_logic_on_spawn, before the active
+			-- motivator binder gives db.offline_objects priority over the normal
+			-- spawned_vertex_by_id fallback.
+			offline.level_vertex_id = job_vertex
+		end
+	elseif db.spawned_vertex_by_id then
+		db.spawned_vertex_by_id[se_obj.id] = job_vertex
+	end
+end
+
+local function install_smart_spawn_wrapper()
+	if wrapper_installed then
+		return
+	end
+
+	local current = smart_terrain and smart_terrain.setup_gulag_and_logic_on_spawn
+	if not current then
+		return
+	end
+
+	original_setup_gulag = current
+	smart_terrain.setup_gulag_and_logic_on_spawn = function(obj, st, se_obj, stype, loaded)
+		local result = original_setup_gulag(obj, st, se_obj, stype, loaded)
+		repair_collapsed_position(se_obj)
+		return result
+	end
+	wrapper_installed = true
+	printf("* [anthology/alife-v78] duplicate CoP smart positions repair active")
+end
+
+function on_game_start()
+	collapsed_batches = {}
+	install_smart_spawn_wrapper()
+end

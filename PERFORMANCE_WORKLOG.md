@@ -2340,3 +2340,74 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   MO2 list are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260821_v77_pre_v66_pacing_npc_persistence`.
 - No new game or shader-cache purge is required. The game was not launched.
+
+## 2026-08-21 - v78 frame-rate-normalized GC and duplicate NPC repair
+
+### Fresh v77 regression evidence
+
+- The latest 126.45-second NVIDIA capture contains 42 presentation freezes of
+  at least 100 ms, 19 of at least 250 ms and a worst continuous freeze of
+  2.303 seconds. The reported loss of smoothness is therefore reproducible.
+- Across 34 gameplay profile windows, v77 performed 159127 incremental Lua GC
+  calls: about 15.6 calls per frame. GameThread averaged 10.85 ms, while total
+  frame time averaged 24.95 ms and the worst worker wait reached 132.95 ms.
+- The v77 `do/while` also forced a GC call after rendering had already ended.
+  Renderless menu windows recorded periodic 40-80 ms Lua GC waits from that
+  path. This was not a renderer-quality or GPU regression.
+- MO2 had both v69 and v77 300 m A-Life modules enabled. Both wrapped the same
+  smart-spawn function and both expanded the online population. They are now
+  disabled. The older v68 performance layers are retained because the active
+  lower v76 overrides win their shared VFS paths; they do not load a second
+  copy of the same script.
+
+### Frame pacing correction without the v76 FPS rollback
+
+- The v66 incremental step of 76 and zero post-load delay are retained so GC
+  debt does not sit untouched for eight seconds after loading.
+- Collector allowance is normalized by frame duration to approximately 600
+  steps and 200 ms of permitted render-overlap work per second. At 100 FPS the
+  limit is roughly six calls / 2 ms per frame; at 40 FPS it is roughly fifteen
+  calls / 5 ms. This preserves collector throughput while no longer charging
+  the v77 maximum allowance to every fast frame.
+- GameThread never begins a step once render overlap has ended. The existing
+  12-ms combined game-work guard remains, and LuaJIT stays serialized after
+  script callbacks rather than being accessed concurrently from another VM
+  owner.
+- All v76 renderer, LOD/HOM, detail, marker-allocation and runtime-spawn work
+  remains unchanged. No visual setting or gameplay update frequency changed.
+
+### Persistent CoP positions without a 300 m population cost
+
+- The active motivator binder gives `db.offline_objects[id].level_vertex_id`
+  priority over `db.spawned_vertex_by_id`. Existing collapsed saves therefore
+  ignored the v69/v77 smart-job fallback and still appeared at the centre.
+- The new single A-Life companion leaves the current switch distance untouched.
+  Unique offline vertices remain exact. Only when multiple members of one smart
+  share the same collapsed vertex is that batch redirected to its already
+  assigned CoP job vertices before the binder consumes the position.
+- The paired engine continues preserving stationary offline member positions,
+  so the repaired locations are retained after the next online/offline cycle.
+  Moving squads keep stock safe relocation. There is no recurring callback,
+  global NPC scan or new save field.
+
+### Build, installation and rollback
+
+- Both Lua scripts pass the Lua 5.1 parser. `DX11|x64` and `DX11-AVX|x64`
+  compile and link successfully.
+- Installed build hashes match exactly:
+  - regular DX11 EXE:
+    `879C33DE68C6656E1A9AD2E74832487E1309F564D6C9E2613F16655FD7EF695F`;
+  - regular DX11 PDB:
+    `ECA96C9DB7E5EDEDF4203184F103E83F5B95FEE8B3F964E27ACC6F2962F3FDDE`;
+  - DX11-AVX EXE:
+    `A9FE6F7216D616322C1C9D02ECA7D1D0E51E7E22CA81862CA30E3ACAADA8BAC3`;
+  - DX11-AVX PDB:
+    `78015CCF36A78CDD9CF848DA65FCB2EC87F1CECC86E1E8BFA13557E021D1F6AE`.
+- `Anthology Performance v78 - Rate Normalized GC` and
+  `Anthology A-Life v78 - Persistent CoP Positions` are separate working
+  addons under `D:/ANTHOLOGY_DEV/addons`, linked into MO2 and enabled. The
+  former v69/v77 A-Life companions and v77 frame-pacing addon are disabled.
+- Exact pre-v78 binaries, symbols, settings, list, source and the fresh v77 log
+  are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v78_pre_v77_regression_correction`.
+- No new game or shader-cache purge is required. The game was not launched.
