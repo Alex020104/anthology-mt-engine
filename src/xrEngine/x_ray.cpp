@@ -1638,7 +1638,6 @@ ENGINE_API BOOL g_load_defer_full_lua_gc = TRUE;
 static u32 g_load_session_deferred_full_lua_gc = 0;
 static u32 g_load_session_suppressed_luajit_flush = 0;
 static std::atomic<u64> g_load_session_completed_qpc{};
-static bool g_postload_full_gc_reported = false;
 static bool g_postload_jit_flush_reported = false;
 int ps_load_world_warmup_ms = 0;
 
@@ -1658,27 +1657,21 @@ ENGINE_API bool EnginePostLoadGCCooldownActive(u32 cooldown_ms)
 	return CPU::QPC() - completed_at < cooldown_ticks;
 }
 
-ENGINE_API bool EngineShouldSuppressExplicitLuaMaintenance()
+ENGINE_API bool EngineShouldSuppressExplicitLuaJITFlush()
 {
 	if (!g_load_defer_full_lua_gc)
 		return false;
 	if (pApp && pApp->LoadSessionActive())
 		return true;
-	// Some modpack callbacks run after the engine has already completed and
-	// compacted the load session. A second pair of full collections plus a JIT
-	// flush only stalls the first visible frames and discards warm traces.
+	// A post-load full collection is allowed to reclaim the UI/spawn garbage.
+	// Flushing all JIT traces here only forces the modpack to compile them again
+	// in visible gameplay, so keep that operation suppressed during cooldown.
 	return EnginePostLoadGCCooldownActive(12000u);
 }
 
 ENGINE_API void EngineRecordDeferredFullLuaGC()
 {
-	if (pApp && pApp->LoadSessionActive())
-		++g_load_session_deferred_full_lua_gc;
-	else if (!g_postload_full_gc_reported)
-	{
-		g_postload_full_gc_reported = true;
-		Msg("* [lua-maintenance] suppressed redundant post-load full collection");
-	}
+	++g_load_session_deferred_full_lua_gc;
 }
 
 ENGINE_API void EngineRecordSuppressedLuaJITFlush()
@@ -1720,7 +1713,6 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 	g_load_session_completed_qpc.store(0, std::memory_order_release);
 	g_load_session_deferred_full_lua_gc = 0;
 	g_load_session_suppressed_luajit_flush = 0;
-	g_postload_full_gc_reported = false;
 	g_postload_jit_flush_reported = false;
 	m_load_session.started_at = Device.TimerAsync();
 	m_load_session.client_event_hash = 14695981039346656037ULL;

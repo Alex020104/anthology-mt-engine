@@ -29,6 +29,7 @@ struct SFrameTaskProfile
 };
 
 extern ENGINE_API BOOL mt_FrameProfile;
+extern ENGINE_API BOOL mt_FrameProfileDetailed;
 
 namespace XRay::Engine
 {

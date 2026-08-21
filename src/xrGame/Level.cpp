@@ -1448,13 +1448,13 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-int psLua_ParallelGCStep = 1;
+int psLua_ParallelGCStep = 10;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
 extern int psLua_ParallelGC_CallAmount;
 extern int psLua_ParallelGC_BudgetUs;
-int psLua_ParallelGCPause = 125;
-int psLua_ParallelGCStepMul = 100;
+int psLua_ParallelGCPause = 200;
+int psLua_ParallelGCStepMul = 200;
 
 void CLevel::script_gc()
 {

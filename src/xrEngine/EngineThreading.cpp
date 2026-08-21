@@ -13,6 +13,7 @@
 
 BOOL mt_Scheduler = TRUE;
 BOOL mt_FrameProfile = FALSE;
+BOOL mt_FrameProfileDetailed = FALSE;
 
 namespace
 {
@@ -244,11 +245,11 @@ void XRay::Engine::CalculateBonesThread()
 }
 
 extern BOOL psLua_ParallelGC;
-int psLua_ParallelGC_CallAmount = 1;
-int psLua_ParallelGC_BudgetUs = 500;
+int psLua_ParallelGC_CallAmount = 6;
+int psLua_ParallelGC_BudgetUs = 1200;
 BOOL psLua_ParallelGC_Adaptive = TRUE;
-int psLua_ParallelGC_FrameBudgetUs = 9000;
-int psLua_ParallelGC_PostLoadDelayMs = 0;
+int psLua_ParallelGC_FrameBudgetUs = 12000;
+int psLua_ParallelGC_PostLoadDelayMs = 8000;
 void XRay::Engine::GameThread()
 {
 	CFrameTaskTimer frame_task_timer(FrameTaskGame);
@@ -286,7 +287,7 @@ void XRay::Engine::GameThread()
 		{
 			const LPCSTR task_name = pit < Device.seqParallelNames.size() ?
 				Device.seqParallelNames[pit] : "legacy";
-			const u64 task_started_at = mt_FrameProfile ? CPU::QPC() : 0;
+			const u64 task_started_at = mt_FrameProfile && mt_FrameProfileDetailed ? CPU::QPC() : 0;
 			Device.seqParallel[pit]();
 			if (task_started_at)
 				RecordParallelItem(task_name, CPU::QPC() - task_started_at);

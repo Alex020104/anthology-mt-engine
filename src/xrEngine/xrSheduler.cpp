@@ -336,7 +336,7 @@ void CSheduler::Pop()
 	PopImpl();
 }
 
-int SchedulerBatchSize = 128;
+int SchedulerBatchSize = 256;
 BOOL SchedulerLog = FALSE;
 void CSheduler::ProcessStep()
 {
@@ -396,11 +396,10 @@ void CSheduler::ProcessStep()
 			if (m_bTerminating)
 				break;
 
-			// Enforce the scheduler's existing time budget after every object. Large
-			// modpacks can put several expensive Lua-backed objects next to each
-			// other; checking only every eighth object turns a 10 ms budget into a
-			// visible 60-100 ms frame tail.
-			if (Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
+			// The time query itself is not free on a scheduler with hundreds of
+			// updates per frame. Check in small groups as in the proven v73 path;
+			// a single expensive object cannot be pre-empted by either variant.
+			if ((i % 8) == 0 && Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
 			{
 				psShedulerTarget += (psShedulerReaction * 3);
 				break;
@@ -421,7 +420,7 @@ void CSheduler::ProcessStep()
 			u32 dwUpdate = dwMin + iFloor(float(dwMax - dwMin) * scale);
 			clamp(dwUpdate, u32(_max(dwMin, u32(20))), dwMax);
 
-			const u64 update_started_at = mt_FrameProfile ? CPU::QPC() : 0;
+			const u64 update_started_at = mt_FrameProfile && mt_FrameProfileDetailed ? CPU::QPC() : 0;
 			T.Object->shedule_Update(clampr(Elapsed, u32(1), u32(_max(u32(T.Object->shedule.t_max), u32(1000)))));
 			if (update_started_at)
 			{
@@ -510,7 +509,7 @@ void CSheduler::ProcessStep()
 	
 	// always try to decrease target
 	psShedulerTarget -= psShedulerReaction;
-	if (mt_FrameProfile && Device.dwFrame - profile_last_frame >= 300)
+	if (mt_FrameProfile && mt_FrameProfileDetailed && Device.dwFrame - profile_last_frame >= 300)
 	{
 		const double slowest_ms = CPU::qpc_freq ?
 			double(profile_slowest_ticks) * 1000.0 / double(CPU::qpc_freq) : 0.0;

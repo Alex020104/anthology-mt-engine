@@ -180,6 +180,7 @@ extern BOOL interruptFireOnAimToggle;
 extern BOOL mt_UpdateWeaponSounds;
 extern BOOL mt_Scheduler;
 extern BOOL mt_FrameProfile;
+extern BOOL mt_FrameProfileDetailed;
 extern BOOL mt_calc_bones;
 extern BOOL mt_ph_commander;
 extern BOOL mt_TaskManager;
@@ -3101,6 +3102,7 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "spawn_antifreeze_debug", &spawn_antifreeze_debug, 0, 1);
 	CMD4(CCC_Integer, "mt_load_spawn_decode", &mt_load_spawn_decode, 0, 1);
 	CMD4(CCC_Integer, "mt_frame_profile", &mt_FrameProfile, 0, 1);
+	CMD4(CCC_Integer, "mt_frame_profile_detail", &mt_FrameProfileDetailed, 0, 1);
 
 	CMD4(CCC_Float, "ik_calc_dist", &IK_CALC_DIST, 50, 150);
 	CMD4(CCC_Float, "ik_calc_ssa", &IK_CALC_SSA, 0.001f, 0.02f);

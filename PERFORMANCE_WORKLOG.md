@@ -2141,3 +2141,65 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   SHA-256 is
   `1E0EE4BC06CD36416C6D07C4D4D4BF741A090E256AAB95F44CF2E472A0847285`.
 - No new game or shader-cache purge is required. The game was not launched.
+
+## 2026-08-21 - v75 v74 regression correction
+
+### Evidence from the v74 test
+
+- The v74 save load reached engine-ready in 65480 ms. Its payload differed from
+  the v73 control (different client hash, spawn and event counts), so the entire
+  difference cannot be attributed to the engine. The unseen transition was
+  45947 ms versus 46781 ms in the v73 control and therefore did not regress.
+- Lua GC still entered a non-preemptible LuaJIT atomic phase with step `1`: the
+  fresh log recorded a 274.10-ms GC maximum and a matching 277.79-ms GameThread
+  maximum. A smaller step cannot place a time limit on that atomic phase.
+- Suppressing the post-load full collection prevented temporary UI/spawn Lua
+  allocations from being reclaimed at the prompt. The following incremental
+  cycle then processed them during visible gameplay.
+- Detailed v74 profiling measured every scheduled object and every named
+  `seqParallel` item with QPC calls; `seqParallel` reached about 125 items per
+  frame and the scheduler processed a similar order of updates. Keeping that
+  instrumentation active permanently was itself a measurable hot-path cost.
+- The useful detailed capture identified `alife.update` as the recurring
+  `seqParallel` tail (up to 152.77 ms). This remains a separate optimization
+  target; it is not hidden by changing A-Life quality or simulation distance.
+
+### Correction
+
+- The verified v73 GC profile is restored: step 10, six-call cap, 1200-us
+  overlap budget, 12-ms busy-frame guard and 8-second post-load delay. Lua GC
+  pause and step multiplier return to LuaJIT's 200/200 baseline.
+- A post-load full `collectgarbage()` is allowed again so prompt/UI/spawn
+  garbage is reclaimed before ordinary play. The post-load `jit.flush()` alone
+  stays suppressed for 12 seconds, preserving already compiled LuaJIT traces.
+- The normal scheduler batch returns to 256 and its deadline query returns to
+  once per eight objects. This restores v73 queue throughput and avoids an
+  unnecessary timer query after every update.
+- Per-item profiling is now controlled by the new
+  `mt_frame_profile_detail` command and defaults to zero. The inexpensive broad
+  300-frame breakdown remains enabled, while ordinary gameplay no longer pays
+  for hundreds of detailed QPC/atomic measurements each frame.
+- All visual, LOD/HOM, DetailManager, loading, addon, NPC and A-Life gameplay
+  settings remain unchanged.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `3E0ACDE90B30411E8ABD53218042A862B9B30B7A2243B0C386ADA571DEE50969`;
+  - regular DX11 PDB:
+    `852BF86C528DEFDC8DB94FD54D7D2266CC666D708EB4A82D9E8136DD48FEB542`;
+  - DX11-AVX EXE:
+    `BEC5F8C50BB75459D5503C5EB2F0AF5E3F653AA48FB88BC3E140D3F15D15E2ED`;
+  - DX11-AVX PDB:
+    `0686AF17C295741028359F33D2F8899BD85432D8316B452906C248AE4E53425A`.
+- `Anthology Performance v75 - v74 Regression Fix` is installed under MO2 and
+  mirrored under `D:/ANTHOLOGY_DEV/addons`; its runtime values are applied to
+  `appdata/user.ltx`.
+- Complete pre-v75 v74 binaries, symbols, source, settings, MO2 list and test
+  log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v75_pre_v74_regression_rollback`. The source
+  archive SHA-256 is
+  `0708AE7228082AA7BF83207E9D23F112547E56DF682C9B2604F33FD8A219A464`.
+- No new game or shader-cache purge is required. The game was not launched.

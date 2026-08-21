@@ -835,10 +835,13 @@ void CRenderDevice::on_idle()
 				static_cast<unsigned long long>(profile.tasks.lua_gc_calls),
 				static_cast<unsigned long long>(profile.tasks.lua_gc_skipped_busy),
 				static_cast<unsigned long long>(profile.tasks.lua_gc_skipped_postload));
-			Msg("* [mt-frame/profile] seqParallel slowest=%s %.2f ms, items/frame=%.2f",
-				profile.tasks.max_game_parallel_item_name ? profile.tasks.max_game_parallel_item_name : "none",
-				profile.tasks.max_game_parallel_item * ticks_to_ms,
-				double(profile.tasks.game_parallel_items) / double(profile.frames));
+			if (mt_FrameProfileDetailed)
+			{
+				Msg("* [mt-frame/profile] seqParallel slowest=%s %.2f ms, items/frame=%.2f",
+					profile.tasks.max_game_parallel_item_name ? profile.tasks.max_game_parallel_item_name : "none",
+					profile.tasks.max_game_parallel_item * ticks_to_ms,
+					double(profile.tasks.game_parallel_items) / double(profile.frames));
+			}
 			profile = {};
 		}
 	}
