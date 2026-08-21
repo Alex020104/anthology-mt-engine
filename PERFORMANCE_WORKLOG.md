@@ -2643,3 +2643,69 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   the superseded v79 continuous-GC companion is disabled, and the accepted v81
   HUD modules plus v80 CoP placement module remain enabled.
 - A new game and shader-cache purge are not required. The game was not launched.
+
+## 2026-08-21 - v83 bounded pre-atomic Lua GC
+
+### Fresh v82 crash and FPS-regression evidence
+
+- The failed session is preserved in `xray_chenc.log` together with the two
+  dumps written at 07:36:21 and 07:36:22. Both crash stacks enter
+  `lj_err_mem -> lj_mem_newgco -> lj_func_newC -> lua_pushcclosure` from a
+  luabind callback path. This is a LuaJIT heap exhaustion, not a renderer,
+  PiP, A-Life or save parser failure.
+- The log proves that v82 was active. It completed save parsing in 6.204
+  seconds and then kept the collector cycle in propagation while the player
+  moved. GC calls rose from 419 to 1727 per profile window without a completed
+  sweep before the allocation failure.
+- Keeping a large live heap under propagation barriers explains the simultaneous
+  FPS loss: Lua writes continued paying marking/barrier work, while unreachable
+  allocations were not reclaimed. The 120-second motion deferral was therefore
+  removed completely rather than retuned.
+
+### Corrected v83 collector
+
+- Restored the stable v81 engine cadence: `LUA_GCSTEP` 10, at most six calls and
+  1200 microseconds of renderer-overlap work, with the existing 12-ms busy-frame
+  guard. Each cycle now reaches atomic, sweep and finalize normally. Automatic
+  collection is not stopped and there is no motion/camera admission state.
+- LuaJIT now takes one snapshot of `grayagain` before atomic and drains that
+  snapshot through normal incremental propagation. Objects modified after the
+  snapshot, plus Lua threads which are deliberately always gray, return to
+  `grayagain` and are still processed by the original atomic pass. This keeps
+  the stock final correctness pass while moving its accumulated table work
+  under the existing per-frame budget.
+- Finalized userdata is relinked to the regular GC root list. It remains subject
+  to normal tri-colour marking and sweeping, but `lj_gc_separateudata()` no
+  longer walks the same already-finalized entries during every later atomic
+  phase. This is the low-risk `good-gc` optimization adapted from
+  `https://github.com/ownlyme/openmw-lua-unleashed`; the more invasive
+  `better`/`extreme` finalizer changes were deliberately not imported.
+- `unused2` in the existing `GCState` layout tracks only whether the one
+  pre-atomic snapshot has been taken. It is reset at cycle start and whenever a
+  full collection abandons a partial mark. No Lua ABI or saved-game structure
+  changes.
+- Renderer, loading, PiP, A-Life/NPC placement, saves and all accepted v81
+  addon changes are unchanged.
+
+### Validation, installation and rollback
+
+- The tracked and standalone v83 companions pass the Lua 5.1 parser.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully. Candidate
+  and installed hashes match exactly:
+  - regular DX11 EXE:
+    `7269A6BF2D43A355DD1532281931F35F9945A3BC63537681721FDF0EB2E6EE97`;
+  - regular DX11 PDB:
+    `F834BB7FC78A6AA6072699DAB0189A3E903F30C5A0CE0C6C28DD9652F35B3EF7`;
+  - DX11-AVX EXE:
+    `0D451407A3BC2EBE8253BA70989889FCDF108D6656CFC7C4019FB14D1D6F25EE`;
+  - DX11-AVX PDB:
+    `0EC26BD88ADB270E6E157CF160F19204A10482A9B28D4E1BAE86356515F2A461`.
+- `Anthology Performance v83 - Incremental Atomic GC` is a separate addon under
+  `D:/ANTHOLOGY_DEV/addons`, linked into MO2 and enabled first. V82 and V79 are
+  disabled; the three v81 HUD modules and v80 CoP placement remain enabled.
+- Exact pre-v83 V82 binaries, symbols, mod list, addon, crash log and dumps are
+  recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v83_pre_v82_lua_oom_fix`.
+- The startup log must contain both `[anthology/v83] incremental pre-atomic
+  remark GC active` and `[Lua GC/v83] bounded pre-atomic remark active`.
+- A new game and shader-cache purge are not required. The game was not launched.

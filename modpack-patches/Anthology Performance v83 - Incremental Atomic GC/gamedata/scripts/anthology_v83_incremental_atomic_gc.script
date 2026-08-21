@@ -1,0 +1,18 @@
+local commands = {
+	"lua_parallel_gc 1",
+	"lua_parallel_gc_adaptive 1",
+	"lua_parallel_gc_budget_us 1200",
+	"lua_parallel_gc_call_amount 6",
+	"lua_parallel_gc_frame_budget_us 12000",
+	"lua_parallel_gc_postload_delay_ms 0",
+	"lua_parallel_gc_pause 200",
+	"lua_parallel_gc_stepmul 200",
+	"lua_parallel_gcstep 10",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/v83] incremental pre-atomic remark GC active")
+end

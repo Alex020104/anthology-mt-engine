@@ -1487,9 +1487,9 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-// Keep the small v76 propagation slice. v82 no longer drives complete GC cycles
-// continuously: a new cycle starts at the configured Lua pause threshold and
-// its atomic phase is admitted only after player/camera motion becomes idle.
+// Keep the small v76/v81 render-overlap slice. LuaJIT now drains a snapshot of
+// grayagain incrementally before atomic, while every collection still completes
+// normally; no collector state is held until player or camera movement stops.
 int psLua_ParallelGCStep = 10;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
@@ -1497,74 +1497,6 @@ extern int psLua_ParallelGC_CallAmount;
 extern int psLua_ParallelGC_BudgetUs;
 int psLua_ParallelGCPause = 200;
 int psLua_ParallelGCStepMul = 200;
-int psLua_ParallelGCIdleMs = 350;
-int psLua_ParallelGCMaxAtomicDeferMs = 120000;
-
-namespace
-{
-constexpr u64 lua_gc_min_growth_kb = 64ull * 1024ull;
-bool g_lua_gc_controller_initialized = false;
-bool g_lua_gc_cycle_active = false;
-bool g_lua_gc_atomic_pending = false;
-u64 g_lua_gc_next_cycle_kb = 0;
-u32 g_lua_gc_atomic_pending_at = 0;
-u32 g_lua_gc_last_motion_at = 0;
-Fvector g_lua_gc_last_camera_position;
-Fvector g_lua_gc_last_camera_direction;
-bool g_lua_gc_camera_initialized = false;
-
-u64 LuaGCNextCycleThreshold(u64 live_kb)
-{
-	const u64 pause_target = live_kb * static_cast<u64>(psLua_ParallelGCPause) / 100ull;
-	return std::max(pause_target, live_kb + lua_gc_min_growth_kb);
-}
-
-void ResetLuaGCController(lua_State* state, bool collector_is_at_pause)
-{
-	const u64 memory_kb = static_cast<u64>(lua_gc(state, LUA_GCCOUNT, 0));
-	g_lua_gc_controller_initialized = true;
-	g_lua_gc_cycle_active = !collector_is_at_pause;
-	g_lua_gc_atomic_pending = false;
-	g_lua_gc_next_cycle_kb = collector_is_at_pause ? LuaGCNextCycleThreshold(memory_kb) : 0;
-	g_lua_gc_atomic_pending_at = 0;
-	g_lua_gc_last_motion_at = Device.TimerAsync();
-	g_lua_gc_camera_initialized = false;
-}
-
-bool LuaGCPlayerOrCameraBusy(u32 now)
-{
-	bool moved = g_actor && g_actor->AnyMove() && !Device.Paused();
-	if (!g_lua_gc_camera_initialized)
-	{
-		g_lua_gc_last_camera_position = Device.vCameraPosition;
-		g_lua_gc_last_camera_direction = Device.vCameraDirection;
-		g_lua_gc_camera_initialized = true;
-		moved = true;
-	}
-	else
-	{
-		moved = moved ||
-			g_lua_gc_last_camera_position.distance_to_sqr(Device.vCameraPosition) > _sqr(0.02f) ||
-			g_lua_gc_last_camera_direction.distance_to_sqr(Device.vCameraDirection) > _sqr(0.001f);
-		g_lua_gc_last_camera_position = Device.vCameraPosition;
-		g_lua_gc_last_camera_direction = Device.vCameraDirection;
-	}
-
-	if (moved)
-		g_lua_gc_last_motion_at = now;
-
-	return now - g_lua_gc_last_motion_at < static_cast<u32>(psLua_ParallelGCIdleMs);
-}
-
-void FinishLuaGCCycle(lua_State* state)
-{
-	const u64 live_kb = static_cast<u64>(lua_gc(state, LUA_GCCOUNT, 0));
-	g_lua_gc_cycle_active = false;
-	g_lua_gc_atomic_pending = false;
-	g_lua_gc_next_cycle_kb = LuaGCNextCycleThreshold(live_kb);
-	g_lua_gc_atomic_pending_at = 0;
-}
-}
 
 void CLevel::script_gc()
 {
@@ -1597,10 +1529,7 @@ bool CLevel::Load(u32 dwNum)
 	const int old_step_mul = lua_gc(ai().script_engine().lua(), LUA_GCSETSTEPMUL, psLua_ParallelGCStepMul);
 	Msg("* [Lua GC] incremental profile pause=%d (was %d), stepmul=%d (was %d)",
 		psLua_ParallelGCPause, old_pause, psLua_ParallelGCStepMul, old_step_mul);
-	g_lua_gc_controller_initialized = false;
-	g_lua_gc_camera_initialized = false;
-	Msg("* [Lua GC/v82] thresholded cycles, motion-idle atomic admission=%d ms, max defer=%d ms",
-		psLua_ParallelGCIdleMs, psLua_ParallelGCMaxAtomicDeferMs);
+	Msg("* [Lua GC/v83] bounded pre-atomic remark active; collector cycles complete normally");
     Msg("Device.LuaGC bind");
     Device.LuaGC.bind(&CLevel::LuaGC);
     Device.LuaGCFull.bind(&CLevel::LuaGCFull);
@@ -1611,70 +1540,11 @@ bool CLevel::Load(u32 dwNum)
 // demonized: called from Device, via Device.LuaGC pointer
 int CLevel::LuaGC()
 {
-	lua_State* state = ai().script_engine().lua();
-	const u32 now = Device.TimerAsync();
-
-	if (!g_lua_gc_controller_initialized)
-	{
-		const int gc_state = lua_gc(state, LUA_GCSTATE, 0);
-		ResetLuaGCController(state, gc_state == 0);
-		// An allocation-triggered collection may already have entered atomic before
-		// the v82 controller acquired ownership. Complete that one phase now instead
-		// of leaving LuaJIT in its trace-exit state.
-		if (gc_state == 2)
-		{
-			const int result = lua_gc(state, LUA_GCSTEP, psLua_ParallelGCStep);
-			lua_gc(state, LUA_GCSTOP, 0);
-			if (result == 1)
-				FinishLuaGCCycle(state);
-			return result;
-		}
-		lua_gc(state, LUA_GCSTOP, 0);
-	}
-
-	if (!g_lua_gc_cycle_active)
-	{
-		const u64 memory_kb = static_cast<u64>(lua_gc(state, LUA_GCCOUNT, 0));
-		if (memory_kb < g_lua_gc_next_cycle_kb)
-			return 2;
-		g_lua_gc_cycle_active = true;
-	}
-
-	if (g_lua_gc_atomic_pending)
-	{
-		const bool max_defer_reached = psLua_ParallelGCMaxAtomicDeferMs > 0 &&
-			now - g_lua_gc_atomic_pending_at >= static_cast<u32>(psLua_ParallelGCMaxAtomicDeferMs);
-		if (!max_defer_reached && LuaGCPlayerOrCameraBusy(now))
-			return 2;
-
-		g_lua_gc_atomic_pending = false;
-		const int result = lua_gc(state, LUA_GCSTEP, psLua_ParallelGCStep);
-		lua_gc(state, LUA_GCSTOP, 0);
-		if (result == 1)
-			FinishLuaGCCycle(state);
-		return result;
-	}
-
-	const int result = lua_gc(state, LUA_GCSTEPDEFERATOMIC, psLua_ParallelGCStep);
-	lua_gc(state, LUA_GCSTOP, 0);
-	if (result == 2)
-	{
-		g_lua_gc_atomic_pending = true;
-		g_lua_gc_atomic_pending_at = now;
-		g_lua_gc_last_motion_at = now;
-		g_lua_gc_camera_initialized = false;
-	}
-	else if (result == 1)
-		FinishLuaGCCycle(state);
-	return result;
+	return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
 }
 void CLevel::LuaGCFull()
 {
-	lua_State* state = ai().script_engine().lua();
-	lua_gc(state, LUA_GCCOLLECT, 0);
-	ResetLuaGCController(state, true);
-	if (psLua_ParallelGC)
-		lua_gc(state, LUA_GCSTOP, 0);
+	lua_gc(ai().script_engine().lua(), LUA_GCCOLLECT, 0);
 }
 void CLevel::LuaGCDebug()
 {

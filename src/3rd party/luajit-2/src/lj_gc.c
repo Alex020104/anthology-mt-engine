@@ -89,6 +89,7 @@ static void gc_mark_start(global_State *g)
   setgcrefnull(g->gc.gray);
   setgcrefnull(g->gc.grayagain);
   setgcrefnull(g->gc.weak);
+  g->gc.unused2 = 0;  /* No incremental pre-atomic remark is active. */
   gc_markobj(g, mainthread(g));
   gc_markobj(g, tabref(mainthread(g)->env));
   gc_marktv(g, &g->registrytv);
@@ -509,9 +510,12 @@ static void gc_finalize(lua_State *L)
     return;
   }
 #endif
-  /* Add userdata back to the main userdata list and make it white. */
-  setgcrefr(o->gch.nextgc, mainthread(g)->nextgc);
-  setgcref(mainthread(g)->nextgc, o);
+  /* A finalized userdata no longer needs to stay on the dedicated userdata
+  ** suffix. Relink it to the regular GC root list so future atomic phases do
+  ** not rescan it in lj_gc_separateudata(). It remains fully sweepable and a
+  ** resurrected object is still kept alive by the normal tri-colour marking. */
+  setgcrefr(o->gch.nextgc, g->gc.root);
+  setgcref(g->gc.root, o);
   makewhite(g, o);
   /* Resolve the __gc metamethod. */
   mo = lj_meta_fastg(g, tabref(gco2ud(o)->metatable), MM_gc);
@@ -610,6 +614,20 @@ static size_t gc_onestep(lua_State *L)
   case GCSpropagate:
     if (gcref(g->gc.gray) != NULL)
       return propagatemark(g);  /* Propagate one gray object. */
+    if (!g->gc.unused2 && gcref(g->gc.grayagain) != NULL) {
+      /* The stock collector traverses the complete grayagain list inside the
+      ** indivisible atomic phase. X-Ray can accumulate a large list between
+      ** script-heavy frames, which produced the measured periodic 40-55 ms
+      ** worker waits. Drain one snapshot through the normal incremental budget
+      ** first. Objects changed afterwards (and threads, which are deliberately
+      ** always gray) return to grayagain and are still rechecked by atomic, so
+      ** the final stop-the-world pass and its correctness are preserved. */
+      setgcrefr(g->gc.gray, g->gc.grayagain);
+      setgcrefnull(g->gc.grayagain);
+      g->gc.unused2 = 1;
+      return 0;
+    }
+    g->gc.unused2 = 0;
     g->gc.state = GCSatomic;  /* End of mark phase. */
     return 0;
   case GCSatomic:
@@ -669,7 +687,7 @@ static size_t gc_onestep(lua_State *L)
 }
 
 /* Perform a limited amount of incremental GC steps. */
-static int gc_step_limited(lua_State *L, int defer_atomic)
+int LJ_FASTCALL lj_gc_step(lua_State *L)
 {
   global_State *g = G(L);
   MSize lim;
@@ -681,18 +699,6 @@ static int gc_step_limited(lua_State *L, int defer_atomic)
   if (g->gc.total > g->gc.threshold)
     g->gc.debt += g->gc.total - g->gc.threshold;
   do {
-    /* Stop before changing GCSpropagate to GCSatomic. Leaving the VM in
-    ** GCSatomic while the mutator runs forces LuaJIT traces to exit and was the
-    ** cause of the rejected v60 10-FPS regression. The propagation state keeps
-    ** normal barriers and JIT execution valid until the engine admits atomic
-    ** work during an idle player/camera interval. */
-    if (defer_atomic &&
-        (g->gc.state == GCSatomic ||
-         (g->gc.state == GCSpropagate && gcref(g->gc.gray) == NULL))) {
-      g->gc.threshold = LJ_MAX_MEM;
-      g->vmstate = ostate;
-      return 2;
-    }
     lim -= (MSize)gc_onestep(L);
     if (g->gc.state == GCSpause) {
       g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
@@ -710,16 +716,6 @@ static int gc_step_limited(lua_State *L, int defer_atomic)
     g->vmstate = ostate;
     return 0;
   }
-}
-
-int LJ_FASTCALL lj_gc_step(lua_State *L)
-{
-  return gc_step_limited(L, 0);
-}
-
-int LJ_FASTCALL lj_gc_step_defer_atomic(lua_State *L)
-{
-  return gc_step_limited(L, 1);
 }
 
 /* Ditto, but fix the stack top first. */
@@ -754,6 +750,7 @@ void lj_gc_fullgc(lua_State *L)
     setgcrefnull(g->gc.gray);  /* Reset lists from partial propagation. */
     setgcrefnull(g->gc.grayagain);
     setgcrefnull(g->gc.weak);
+    g->gc.unused2 = 0;
     g->gc.state = GCSsweepstring;  /* Fast forward to the sweep phase. */
     g->gc.sweepstr = 0;
   }
