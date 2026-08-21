@@ -245,11 +245,11 @@ void XRay::Engine::CalculateBonesThread()
 }
 
 extern BOOL psLua_ParallelGC;
-// v79: keep the small v76 render-overlap slice that produced the accepted FPS.
-// Collection starts immediately after loading instead of leaving an eight-second
-// debt window. Do not scale the allowance up when FPS falls: that positive
-// feedback was the v78 regression.
-int psLua_ParallelGC_CallAmount = 6;
+// V84 restores the actual high-FPS V81 feed rate. The V83 10x6 profile kept
+// LuaJIT in its mark/barrier state for too long and enlarged the indivisible
+// atomic tail; 76x10 advances roughly the same proven amount of work while the
+// renderer is available, still bounded by the existing time guards below.
+int psLua_ParallelGC_CallAmount = 10;
 int psLua_ParallelGC_BudgetUs = 1200;
 BOOL psLua_ParallelGC_Adaptive = TRUE;
 int psLua_ParallelGC_FrameBudgetUs = 12000;

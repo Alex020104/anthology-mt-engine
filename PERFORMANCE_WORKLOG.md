@@ -2709,3 +2709,79 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The startup log must contain both `[anthology/v83] incremental pre-atomic
   remark GC active` and `[Lua GC/v83] bounded pre-atomic remark active`.
 - A new game and shader-cache purge are not required. The game was not launched.
+
+## 2026-08-21 - v84 V81 FPS restore and A-Life tail fix
+
+### V83 regression evidence
+
+- The fresh v83 session loaded both v83 markers and shut down cleanly; there is
+  no new crash dump. In the first four comparable Jupiter profile windows it
+  averaged 28.03 ms total, 17.32 ms rendering and 7.94 ms GameThread work.
+  Lua GC still produced a 59-160 ms maximum in nearly every 300-frame window,
+  with GameThread peaks up to 226 ms.
+- The archived v81 Jupiter windows averaged 16.89 ms total, 6.74 ms rendering
+  and 6.24 ms GameThread work. Its exact runtime collector profile was step 76
+  and up to ten calls, not the step 10 / six-call profile used by v83.
+- The render averages are not a controlled cold/warm A/B, so the render delta
+  alone is not attributed to GC. The collector call volume and Lua/GameThread
+  maximums are the direct evidence used for this correction.
+- V81 requested roughly 250-322 KB of collector work per frame; v83 requested
+  only 56-57 KB. V83 therefore advanced the collector approximately 4.5-5.7
+  times more slowly while also traversing a pre-atomic snapshot twice. The
+  longer mark/barrier lifetime and larger final atomic tail form a confirmed
+  CPU regression within the reported 100-120 to 50-70 FPS drop.
+- There is no post-v83 video. The latest 63.88-second capture predates v83 and
+  is the accepted high-throughput v81 path: its overlay reaches 100-146 FPS but
+  contains duplicate-frame holds at approximately 4-6 second intervals. This
+  separates the v83 sustained regression from the already-existing periodic
+  CPU tail.
+
+### Minimal v84 corrections
+
+- Removed the v83 pre-remark state entirely and restored LuaJIT's stock/v81
+  collector state machine. The safe finalized-userdata relink remains so an
+  already-finalized userdata is not rescanned by every future atomic phase.
+- Restored the measured v81 runtime and C++ defaults: step 76, ten calls,
+  1200-us overlap budget, adaptive 12-ms frame guard, pause/stepmul 200 and no
+  post-load delay. Lua access remains serialized after `seqFrameMT`; the unsafe
+  nested access to the single LuaJIT VM was not restored.
+- Historical detailed profiles identify `alife.update` as the independent
+  `seqParallel` tail: 46-153 ms in v74 and the same 54-219 ms queue shape in
+  v83. The root cause was a unit-conversion precedence error in
+  `CALifeUpdateManager::set_process_time`: only the monster share was divided
+  by one million, so a configured 900-us budget became almost 900 seconds.
+- The formula now converts the complete switch share to seconds. With the
+  active 900-us budget and 0.1 monster factor, the existing iterator receives
+  0.81 ms. Object count, `objects_per_update`, update order, switch distance,
+  NPC placement and first-load semantics are unchanged.
+- Per-item `seqParallel` profiling is disabled for the test because the culprit
+  is now identified and timing roughly 125 entries per frame adds unnecessary
+  QPC and atomic operations. Coarse 300-frame profiling remains enabled.
+- Renderer, loading, LOD/HOM, PiP, saves and all accepted addon scripts are
+  unchanged.
+
+### Validation, installation and rollback
+
+- The v84 companion passes the Lua 5.1 parser. Both `DX11|x64` and
+  `DX11-AVX|x64` compile and link successfully. Candidate and installed hashes
+  match exactly:
+  - regular DX11 EXE:
+    `B7E8A000479558A723BB16D4E649648BDF79B8F37E9D9806616CAB98DCF4B0DE`;
+  - regular DX11 PDB:
+    `6094CA9F0ACF1BBD50A8A85B82BE74098C5344A939E44802128110D5C5297572`;
+  - DX11-AVX EXE:
+    `C729367F7CD150DF3E070F2F57BC98F2A8E3E66D4A0AD513D095FB75D35070B1`;
+  - DX11-AVX PDB:
+    `6DB879A802B7DBC327ABD162ED83DD5381535BBFB1867DD6D405A0FBE90CC342`.
+- `Anthology Performance v84 - V81 FPS GC Restore` is stored independently at
+  `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and enabled first. V83, v82
+  and v79 collector companions are disabled; the accepted v81 HUD and v80 CoP
+  placement modules remain enabled.
+- Exact pre-v84 v83 binaries, symbols, addon, profile, log and touched source
+  files are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v84_pre_v83_fps_gc_restore`.
+- Expected log markers are `[anthology/v84] V81 FPS cadence and corrected
+  A-Life pacing active`, `[Lua GC/v84] V81 cadence restored` and
+  `[A-Life/v84] switch budget 0.810 ms`.
+- MO2 was restarted and is responsive. A new game and shader-cache purge are
+  not required. The game was not launched.

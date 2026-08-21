@@ -145,7 +145,17 @@ void CALifeUpdateManager::shedule_Update(u32 dt)
 
 void CALifeUpdateManager::set_process_time(int microseconds)
 {
-	graph().set_process_time(float(microseconds) - float(microseconds) * update_monster_factor() / 1000000.f);
+	// process_time is configured in microseconds, while CSSafeMapIterator compares
+	// against a timer measured in seconds. The old expression divided only the
+	// monster share by 1,000,000, leaving almost the entire microsecond value as
+	// seconds (900 became ~899.9999 s). That effectively disabled the switch-work
+	// time slice and periodically let one A-Life task monopolise the game worker.
+	const float monster_factor = std::max(0.f, std::min(update_monster_factor(), 1.f));
+	const float switch_process_time =
+		float(std::max(microseconds, 0)) * (1.f - monster_factor) / 1000000.f;
+	graph().set_process_time(switch_process_time);
+	Msg("* [A-Life/v84] switch budget %.3f ms (process_time=%d us, monster-factor=%.3f)",
+		switch_process_time * 1000.f, microseconds, monster_factor);
 }
 
 void CALifeUpdateManager::objects_per_update(const u32& objects_per_update)

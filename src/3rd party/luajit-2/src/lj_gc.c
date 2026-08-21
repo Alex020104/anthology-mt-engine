@@ -89,7 +89,6 @@ static void gc_mark_start(global_State *g)
   setgcrefnull(g->gc.gray);
   setgcrefnull(g->gc.grayagain);
   setgcrefnull(g->gc.weak);
-  g->gc.unused2 = 0;  /* No incremental pre-atomic remark is active. */
   gc_markobj(g, mainthread(g));
   gc_markobj(g, tabref(mainthread(g)->env));
   gc_marktv(g, &g->registrytv);
@@ -614,20 +613,6 @@ static size_t gc_onestep(lua_State *L)
   case GCSpropagate:
     if (gcref(g->gc.gray) != NULL)
       return propagatemark(g);  /* Propagate one gray object. */
-    if (!g->gc.unused2 && gcref(g->gc.grayagain) != NULL) {
-      /* The stock collector traverses the complete grayagain list inside the
-      ** indivisible atomic phase. X-Ray can accumulate a large list between
-      ** script-heavy frames, which produced the measured periodic 40-55 ms
-      ** worker waits. Drain one snapshot through the normal incremental budget
-      ** first. Objects changed afterwards (and threads, which are deliberately
-      ** always gray) return to grayagain and are still rechecked by atomic, so
-      ** the final stop-the-world pass and its correctness are preserved. */
-      setgcrefr(g->gc.gray, g->gc.grayagain);
-      setgcrefnull(g->gc.grayagain);
-      g->gc.unused2 = 1;
-      return 0;
-    }
-    g->gc.unused2 = 0;
     g->gc.state = GCSatomic;  /* End of mark phase. */
     return 0;
   case GCSatomic:
@@ -750,7 +735,6 @@ void lj_gc_fullgc(lua_State *L)
     setgcrefnull(g->gc.gray);  /* Reset lists from partial propagation. */
     setgcrefnull(g->gc.grayagain);
     setgcrefnull(g->gc.weak);
-    g->gc.unused2 = 0;
     g->gc.state = GCSsweepstring;  /* Fast forward to the sweep phase. */
     g->gc.sweepstr = 0;
   }

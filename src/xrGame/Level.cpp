@@ -1487,14 +1487,17 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-// Keep the small v76/v81 render-overlap slice. LuaJIT now drains a snapshot of
-// grayagain incrementally before atomic, while every collection still completes
-// normally; no collector state is held until player or camera movement stops.
-int psLua_ParallelGCStep = 10;
+// Restore the measured V81 feed rate. Atomic itself remains stock and
+// indivisible; feeding propagation promptly keeps the write-barrier/grayagain
+// interval short without holding an unfinished collector state across motion.
+int psLua_ParallelGCStep = 76;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
 extern int psLua_ParallelGC_CallAmount;
 extern int psLua_ParallelGC_BudgetUs;
+extern BOOL psLua_ParallelGC_Adaptive;
+extern int psLua_ParallelGC_FrameBudgetUs;
+extern int psLua_ParallelGC_PostLoadDelayMs;
 int psLua_ParallelGCPause = 200;
 int psLua_ParallelGCStepMul = 200;
 
@@ -1529,7 +1532,10 @@ bool CLevel::Load(u32 dwNum)
 	const int old_step_mul = lua_gc(ai().script_engine().lua(), LUA_GCSETSTEPMUL, psLua_ParallelGCStepMul);
 	Msg("* [Lua GC] incremental profile pause=%d (was %d), stepmul=%d (was %d)",
 		psLua_ParallelGCPause, old_pause, psLua_ParallelGCStepMul, old_step_mul);
-	Msg("* [Lua GC/v83] bounded pre-atomic remark active; collector cycles complete normally");
+	Msg("* [Lua GC/v84] V81 cadence restored: step=%d calls=%d budget=%d us adaptive=%d frame-budget=%d us postload=%d ms",
+		psLua_ParallelGCStep, psLua_ParallelGC_CallAmount, psLua_ParallelGC_BudgetUs,
+		psLua_ParallelGC_Adaptive, psLua_ParallelGC_FrameBudgetUs,
+		psLua_ParallelGC_PostLoadDelayMs);
     Msg("Device.LuaGC bind");
     Device.LuaGC.bind(&CLevel::LuaGC);
     Device.LuaGCFull.bind(&CLevel::LuaGCFull);
