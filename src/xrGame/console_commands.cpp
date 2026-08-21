@@ -193,6 +193,7 @@ extern BOOL duplicate_story_id_crash;
 
 extern BOOL spawn_antifreeze;
 extern BOOL spawn_antifreeze_debug;
+extern int spawn_antifreeze_max_per_frame;
 extern BOOL mt_load_spawn_decode;
 
 extern float IK_CALC_DIST;
@@ -3100,6 +3101,7 @@ void CCC_RegisterCommands()
 
 	CMD4(CCC_Integer, "spawn_antifreeze", &spawn_antifreeze, 0, 1);
 	CMD4(CCC_Integer, "spawn_antifreeze_debug", &spawn_antifreeze_debug, 0, 1);
+	CMD4(CCC_Integer, "spawn_antifreeze_max_per_frame", &spawn_antifreeze_max_per_frame, 1, 128);
 	CMD4(CCC_Integer, "mt_load_spawn_decode", &mt_load_spawn_decode, 0, 1);
 	CMD4(CCC_Integer, "mt_frame_profile", &mt_FrameProfile, 0, 1);
 	CMD4(CCC_Integer, "mt_frame_profile_detail", &mt_FrameProfileDetailed, 0, 1);

@@ -84,6 +84,7 @@ u32 lvInterpSteps = 0;
 #ifdef SPAWN_ANTIFREEZE
 BOOL spawn_antifreeze = TRUE;
 BOOL spawn_antifreeze_debug = FALSE;
+int spawn_antifreeze_max_per_frame = 8;
 // The measured quickload decode stage is only ~55 ms and normal batches do not
 // reach the safe parallel threshold. Keep the experimental path available for
 // diagnostics, but do not pay its classification/allocation cost by default.
@@ -722,18 +723,56 @@ void CLevel::ProcessSpawnEvents()
 {
     PROF_EVENT("ProcessSpawnEvents");
 
-    xr_vector<NET_Event> events_to_process;
+	xr_vector<NET_Event> events_to_process;
     spawn_events_data_map spawn_events_data_copy;
 	{
 		xrSRWLockGuard g(prefetch_lock);
 		if (!spawn_events->queue.empty())
 		{
-			events_to_process.swap(spawn_events->queue);
+			// Loading must still drain the complete client-spawn queue before the
+			// player gets control. During normal gameplay the worker can publish a
+			// large prepared chunk at once, but committing that whole chunk here
+			// creates a main-thread hitch. Keep the rest queued for later frames.
+			const bool smooth_runtime_publication = g_bootComplete &&
+				(!pApp || !pApp->LoadSessionActive()) && spawn_antifreeze_max_per_frame > 0;
+			if (smooth_runtime_publication &&
+				spawn_events->queue.size() > static_cast<size_t>(spawn_antifreeze_max_per_frame))
+			{
+				const size_t batch_size = static_cast<size_t>(spawn_antifreeze_max_per_frame);
+				events_to_process.reserve(batch_size);
+				for (size_t index = 0; index < batch_size; ++index)
+					events_to_process.emplace_back(std::move(spawn_events->queue[index]));
+				spawn_events->queue.erase(spawn_events->queue.begin(),
+					spawn_events->queue.begin() + batch_size);
+			}
+			else
+				events_to_process.swap(spawn_events->queue);
 		}
-        if (!spawn_events_data->empty())
+
+		const bool queue_was_partially_drained = !spawn_events->queue.empty();
+        if (!spawn_events_data->empty() && !queue_was_partially_drained)
         {
             spawn_events_data_copy.swap(*spawn_events_data);
         }
+		else if (!spawn_events_data->empty())
+		{
+			// Keep blueprint/model data for deferred events. Move only the map
+			// entries belonging to the batch selected above.
+			auto packet_data = make_intrusive<ProcessNetPacket>();
+			for (const NET_Event& event : events_to_process)
+			{
+				NET_Packet& packet = packet_data->P;
+				event.implication(packet);
+				u16 parent_id = u16(-1);
+				shared_str section;
+				const u16 object_id = GetSpawnInfo(packet, parent_id, section);
+				auto data_it = spawn_events_data->find(object_id);
+				if (data_it == spawn_events_data->end())
+					continue;
+				spawn_events_data_copy.emplace(object_id, std::move(data_it->second));
+				spawn_events_data->erase(data_it);
+			}
+		}
 	}
 
 	struct decoded_spawn

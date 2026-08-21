@@ -2203,3 +2203,68 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   archive SHA-256 is
   `0708AE7228082AA7BF83207E9D23F112547E56DF682C9B2604F33FD8A219A464`.
 - No new game or shader-cache purge is required. The game was not launched.
+
+## 2026-08-21 - v76 marker allocation and runtime spawn smoothing
+
+### Evidence from the v75 test
+
+- Steady windows were primarily renderer-bound: `seqRender` averaged roughly
+  22-39 ms while `FrameMove` averaged roughly 6-11 ms. CPU-only changes cannot
+  honestly double the average FPS in those scenes without a renderer-side
+  optimization or a quality tradeoff.
+- The visible frame-time tails were nevertheless real CPU stalls. Lua GC
+  reached approximately 149-259 ms; transition-adjacent scheduler work reached
+  approximately 577-854 ms; `seqParallel` reached approximately 101 ms.
+- The active Catspaw HUD marker helper registered one `actor_on_update`
+  callback per marker and allocated callback tables, LOS tables, screen
+  vectors, copied color tables and formatted distance strings in the repeated
+  marker update path. Tactic Compass additionally allocated color tables,
+  vectors, a closure and a fresh seen-ID table on its periodic paths.
+- Spawn Antifreeze prepared resources on its worker correctly, but
+  `ProcessSpawnEvents` swapped and committed the entire published queue on one
+  owner-thread frame. A worker chunk could therefore finish as a main-thread
+  hitch even though preparation itself was parallel.
+
+### Corrections
+
+- The standalone Interaction Dot Marks override keeps the existing scan logic
+  and update cadence, but reuses callback argument tables and UI vectors,
+  caches the actor position across marker updates in the same millisecond,
+  calculates hot-path fades without temporary tables, and only rebuilds the
+  distance string when the displayed value changes.
+- The standalone Tactic Compass override keeps its 30 Hz visual cadence, but
+  reuses compass/marker/waveform objects, caches marker keys, reuses the config
+  table, replaces the per-scan closure/table reset with a generation map, and
+  calculates waveform tint/blend/fade without temporary color tables.
+- Runtime spawn publication is capped at eight prepared objects per frame via
+  `spawn_antifreeze_max_per_frame`. The remaining event and blueprint data stay
+  queued under the existing lock. Active save/transition loading continues to
+  drain the complete queue, so this pacing limit does not extend the loading
+  screen.
+- Lua GC remains owned by the game worker after Lua callbacks complete. It was
+  not moved onto a concurrent thread because the process has one LuaJIT VM and
+  the surrounding engine/addon APIs are not thread-safe.
+
+### Build, installation and rollback
+
+- All five overridden Lua scripts pass the Lua 5.1 parser.
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `A7AB9233E08890B317ACFED74FA0849ABAFA75B5009BEB5602D9C9F1B6E84F43`;
+  - regular DX11 PDB:
+    `8EDFD0656CC81FE39D04F92300B469D71943F4B39307FB61D843D192359642B7`;
+  - DX11-AVX EXE:
+    `343E73E0884C3CEE1F11D24E3A69FE271D285F8DBDFBBC2621D69955F89F6F6B`;
+  - DX11-AVX PDB:
+    `6F63946C6D89A3E2B22C2B5F0A751D4CDC4D1B454F41C4B2F1B573D278108B25`.
+- The complete v76 addon modules are mirrored under
+  `D:/ANTHOLOGY_DEV/addons`; their scripts are installed into the already
+  enabled, separate Dot Marks and Tactic Compass MO2 patch modules. The runtime
+  spawn value is applied directly to `appdata/user.ltx`.
+- Exact pre-v76 binaries, symbols, active addon modules, settings, MO2 list,
+  log and source are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v76_pre_marker_spawn_smoothing`. The source
+  archive SHA-256 is
+  `885E093F203C433E5FC06DED3EC6BAD3C2986406DEBC3CFD3ADDA20FA8FDA661`.
+- No new game or shader-cache purge is required. The game was not launched.
