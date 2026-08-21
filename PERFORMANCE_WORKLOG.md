@@ -2938,3 +2938,67 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   marked/unmarked/finalized counters. No new game or shader-cache purge is
   required. Runtime acceptance still requires a controlled same-save session;
   the game was not launched during installation.
+
+## 2026-08-22 - v87 DX11 detail instancing candidate
+
+### Baseline and evidence
+
+- The candidate is a direct child of the accepted v86 commit
+  `1d59740c7a5e0cbd4edf97bf26a8d7fb04b10bc9`. An exploratory v75 worktree was
+  stopped after the user corrected the baseline; none of its outputs were
+  installed or pushed.
+- Fresh coarse frame windows at the heavy base measured about 14-15 ms per
+  frame (roughly 67-71 FPS): approximately 5-6 ms in Frame/Game work, 7-8 ms in
+  renderer submission and up to 1.6 ms waiting. The accepted v86 GC cadence,
+  loading, NPC placement and addon set are therefore retained; the new work is
+  confined to the measured renderer side.
+- Monolith PRs #567/#577 and IX-Ray's current DX11 grass work were audited. The
+  portable part is true hardware instancing plus one upload per frame. Their
+  density falloff, far billboard LOD and experimental visual changes were not
+  imported.
+
+### Adaptation
+
+- DX11 now stores one copy of each detail mesh and supplies a 64-byte record per
+  visible instance through input slot 1. Each object/pass is submitted with
+  `DrawIndexedInstanced` instead of repeatedly baking 64 mesh copies and
+  rewriting large vertex constant arrays.
+- Visible transforms, terrain normals, alpha and sun/hemi data are packed once
+  per frame and reused by the main pass and grass-shadow passes. The instance
+  buffer grows before mapping when a dense modded level exceeds its capacity;
+  unlike the upstream test patch, it cannot silently drop excess grass.
+- The DX10/legacy renderer path is unchanged. DX11 input-slot classification is
+  changed only for stream indices above zero; no other engine declaration uses
+  a second stream.
+- The companion addon contains only three vertex shaders adapted to the active
+  ScreenSpaceShaders 23.5 files. Wind, interactive bending, terrain alignment,
+  motion vectors, TAA jitter, density, radius, fade, LOD thresholds and the
+  current pixel shader are preserved. The upstream attachment's debug pixel
+  shader was deliberately excluded.
+- Lua GC, load preparation, scheduler, A-Life, saves, PiP, UI scripts, SSS
+  quality and user graphics values are unchanged.
+
+### Build, installation and rollback
+
+- `git diff --check` passes. Both v86-based `DX11|x64` and
+  `DX11-AVX|x64` configurations compile and link successfully. Candidate and
+  installed hashes match:
+  - DX11 EXE: `22573DE7AF3ACCBD251F6086B3071356115D6064FE4CAC7E4FA24B9041938603`;
+  - DX11 PDB: `951C4FF8A9B8D6CEAC0D6EB1E599645FDB4AF09778961DFA57B8B97B05AEE540`;
+  - DX11-AVX EXE: `636AA5CA733928AB35C05C56197FDC5D9226E458354854DA4A5B99B67BB568B4`;
+  - DX11-AVX PDB: `CD16AB566133789BB4598AE64735268F81E350F2AFCAE69A6A84149F0756FB08`.
+- `Anthology Performance v87 - DX11 Detail Instancing` is mirrored under
+  `D:/ANTHOLOGY_DEV/addons`, copied into MO2 and enabled immediately above the
+  v86 addon. Repository, D-drive and MO2 shader hashes match.
+- The exact pre-v87 binaries/symbols, active mod list, `appdata/user.ltx` and
+  fresh log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v87_pre_v86_dx11_detail_instancing`.
+  The pre-v87 DX11/AVX EXE hashes are respectively
+  `3E0ACDE90B30411E8ABD53218042A862B9B30B7A2243B0C386ADA571DEE50969`
+  and `BEC5F8C50BB75459D5503C5EB2F0AF5E3F653AA48FB88BC3E140D3F15D15E2ED`.
+- LAN binaries and the unrelated untracked repository-root
+  `AnomalyDX11AVX.exe` were not touched. A new game is not required. Changed
+  shader sources receive new cache entries automatically; a full shader-cache
+  purge is not required. Runtime FPS and smoothness still require the same-save,
+  same-camera base test; 100-120 FPS remains a target rather than an unmeasured
+  claim.
