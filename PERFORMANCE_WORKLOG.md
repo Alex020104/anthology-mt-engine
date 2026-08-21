@@ -2504,3 +2504,69 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Exact pre-v80 active mod list, v78/v79 addon copies and runtime log are backed
   up at `E:/ANTHOLOGY_BACKUPS/20260821_v80_pre_cop_online_placement`.
 - A new game and shader-cache purge are not required. The game was not launched.
+
+## 2026-08-21 - v81 low-churn HUD and spatial scans
+
+### V66/V76/current evidence
+
+- V66's accepted heavy-scene windows used roughly 23-30 ms total, 8-9.5 ms
+  FrameMove and 14-20 ms render time. Its collector commonly consumed about
+  5 ms every frame while overlapping rendering.
+- V76 reduced average collector work, but its archived profile already contains
+  non-preemptible LuaJIT atomic peaks of 149-259 ms. Returning its eight-second
+  post-load pause would delay, not remove, the visible tick.
+- The latest v79 session retains the v76 renderer path. Its final steady
+  windows measured 31.01-49.12 ms total, 18.89-22.93 ms render and 7.01-9.42
+  ms GameThread averages, while Lua GC still peaked at 187-204 ms and scheduler
+  / parallel work peaked at 71 / 85 ms. The current scene is primarily
+  renderer-bound on average, but the reported stutter is a real CPU/Lua tail.
+- Current and archived v76 renderer settings are the same apart from the
+  pre-existing terrain offset. No V76 renderer, LOD or HOM optimization was
+  rolled back for v81. The v80 CoP NPC placement layer is unchanged.
+
+### Active addon audit
+
+- The v76 Interactive PDA layer rebuilt a missing old-save catalogue by probing
+  all 65,534 possible ALife IDs: 96 probes every 50 ms. The fresh log had no
+  catalogue-complete marker, so short reload tests repeatedly paid this work.
+  V81 walks only real `SIMBOARD.squads`, at most four squads / one millisecond
+  every 100 ms, while streamed NPCs remain covered by `npc_on_net_spawn`.
+- The paired GUI layer permanently disables the synthetic `pda_inter_bp`
+  workload. Its remaining no-op `manage_pda_x_on_update` registration is
+  removed.
+- Dot Marks replaced both pickup tables on every moving frame and still created
+  transient position, size and direction userdata in marker-hot paths. V81
+  clears the tables in place and reuses persistent vectors. Scan radii, direct
+  targeting, UI appearance and MCM cadence are unchanged.
+- Tactic Compass validation created a removal table for every checked ID. V81
+  removes stale current keys directly, which Lua 5.1 permits during `pairs`.
+
+### Engine spatial scan
+
+- Legacy `level.iterate_nearest` sorts the complete native result by distance
+  before invoking Lua. Dot Marks and Tactic Compass always consume the entire
+  result and never use that ordering.
+- Added `level.iterate_nearest_unsorted` for these full-consumption HUD scans.
+  The legacy binding is untouched for other addons and both v81 scripts fall
+  back to it automatically with an older executable.
+
+### Validation, installation and rollback
+
+- All eight v81 Lua files pass the Lua 5.1 parser. Both `DX11|x64` and
+  `DX11-AVX|x64` Release configurations compile and link successfully.
+- Candidate and installed binaries match exactly:
+  - regular DX11 EXE:
+    `A547F277CBDC5CC159D74E5B4D24032042467B676B1BAA6714C0FACAFF9301C9`;
+  - DX11-AVX EXE:
+    `7FB1E0C90197EF5FB4DECDC44D9C31B661FF038397BBEAE322243668FE47E0D7`.
+- Three isolated modules are stored under `D:/ANTHOLOGY_DEV/addons`, linked
+  into MO2 and enabled at the top of the active HARD profile:
+  `Anthology Performance v81 - Dot Marks Low Churn`,
+  `Anthology Performance v81 - Interactive PDA Compact Catalogue` and
+  `Anthology Performance v81 - Tactic Compass Scan Pacing`.
+- MO2 was closed cleanly and restarted so its live VFS loaded the new modules.
+  The startup log will contain `[anthology/v81] low-churn HUD scans active`.
+- Exact pre-v81 binaries, symbols, scripts, settings, mod list, log and touched
+  source files are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v81_pre_low_churn_scans`.
+- A new game and shader-cache purge are not required. The game was not launched.

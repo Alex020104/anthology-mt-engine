@@ -2130,6 +2130,26 @@ void iterate_nearest(const Fvector& pos, float radius, const ::luabind::functor<
 	}
 }
 
+// HUD scanners such as Dot Marks and Tactic Compass consume every object in
+// the radius and never use the distance order. Keep the legacy sorted binding
+// intact for scripts which may stop on the first result, but provide a cheaper
+// full-scan path that avoids sorting the same spatial set several times a
+// second.
+void iterate_nearest_unsorted(const Fvector& pos, float radius, const ::luabind::functor<bool>& functor)
+{
+	xr_vector<CObject*> nearest;
+	Level().ObjectSpace.GetNearest(nearest, pos, radius, NULL);
+
+	for (CObject* object : nearest)
+	{
+		CGameObject* game_object = smart_cast<CGameObject*>(object);
+		if (!game_object)
+			continue;
+		if (functor(game_object->lua_game_object()))
+			break;
+	}
+}
+
 LPCSTR PickMaterial(const Fvector& start_pos, const Fvector& dir, float trace_dist, CScriptGameObject* ignore_obj)
 {
 	collide::rq_result result;
@@ -2608,6 +2628,7 @@ void CLevel::script_register(lua_State* L)
 			def("actor_moving_state", &ActorMovingState),
 			def("get_env_rads", &get_env_rads),
 			def("iterate_nearest", &iterate_nearest),
+			def("iterate_nearest_unsorted", &iterate_nearest_unsorted),
 			def("pick_material", &PickMaterial),
 			def("add_bullet", ((void (*)(Fvector, Fvector, float, float, float, u16, ALife::EHitType, float, LPCSTR, float))& AddBullet)),
 			def("add_bullet", ((void (*)(::luabind::object))& AddBullet)),

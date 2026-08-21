@@ -1,0 +1,776 @@
+-- =======================================================================
+--[[    Enemy Detection Waveform - Independent Script v10.0 FINAL
+--      Stalker Anomaly | Requires: demonized_geometry_ray (modded EXE)
+--      ИСПОЛЬЗУЕТ: Функции из 5 Catspaw скриптов (встроены внутрь)
+-- ===================================================================--]]
+script_name     = "sys_visibility_compass"
+script_version  = "10.0"
+release_date    = 20250329
+
+-- =======================================================================
+--      КОНФИГУРАЦИЯ (из ui_hud_tcams_compass + utils_catspaw_hudmarks)
+-- =======================================================================
+local cfg = {
+    -- Сканирование
+    scanning_enabled      = true,
+    fast_scan_interval    = 500,      -- ms; staggered from other HUD scans
+    fast_scan_radius      = 15,       -- meters
+    med_scan_interval     = 1500,     -- ms
+    med_scan_radius       = 50,       -- meters
+
+    -- LOS проверка (ИЗ utils_catspaw_hudmarks.script.lua строка 180)
+    los_check_range       = 15,
+    los_check_tolerance   = 0.3,
+    los_check_flags       = 3,
+
+    -- Визуализация
+    show_waveform         = true,
+    waveform_pos_x        = 512,
+    waveform_pos_y        = 720,
+    waveform_width        = 320,
+    waveform_height       = 6,
+    compass_pos_y_top     = 31,
+    compass_pos_y_btm     = 712,
+    waveform_compass_y_top = 8,
+    waveform_compass_y_btm = 28,
+
+    -- Цвета (ARGB) - из ui_hud_tcams_compass
+    color_safe            = {a=200, r=100, g=200, b=255},   -- ГОЛУБОЙ
+    color_alert           = {a=255, r=255, g=220, b=0},     -- ЖЕЛТЫЙ
+    color_combat          = {a=255, r=255, g=50, b=0},      -- КРАСНЫЙ
+
+    -- Анимация (ИЗ ui_hud_tcams_compass строка 450)
+    aggro_wave_tex        = "catsy\\waveform",
+    pulse_speed           = 800,
+    combat_vis_decay      = 3000,     -- ms до начала затухания
+    combat_vis_timeout    = 8000,     -- ms до полного затухания
+
+    -- Сглаживание LOS (ИЗ utils_catspaw_hudmarks строка 200)
+    los_smoothing         = true,
+    lost_los_delay        = 500,
+    lost_los_dist         = 1.5,
+
+    -- Обновление состояния (НОВОЕ - раз в секунду после обнаружения)
+    state_update_interval = 1000,
+}
+
+-- =======================================================================
+--      ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+-- =======================================================================
+local HUD_WAVEFORM = nil
+local waveform_xml = nil
+local is_show_waveform = cfg.show_waveform and true or false
+local screen_center = (tc_variables and tc_variables.TC_SCREEN_CENTER) or cfg.waveform_pos_x or 512
+
+local actively_scanning = false
+local next_fast_scan = 0
+local next_med_scan = 0
+local next_state_update = 0
+local scanned_ids = {}
+local scanned_generation = 0
+local scan_worst_state = "safe"
+local scan_now = 0
+
+local enemy_state = "safe"
+local enemy_count = 0
+local combat_enemy_count = 0
+local alert_enemy_count = 0
+local last_visible_time = 0
+local last_detection_time = 0
+local pulse_coef = 0
+local current_luminosity = 0
+
+local los_state = {}
+local visual_state_from = "safe"
+local visual_state_to = "safe"
+local visual_state_started = 0
+
+local easing = {
+    InSine = function(x) return 1 - math.cos((x * math.pi) / 2) end,
+    OutSine = function(x) return math.sin((x * math.pi) / 2) end,
+    InQuint = function(x) if not x then return end return x * x * x * x * x end,
+    OutQuint = function(x) if not x then return end return 1 - math.pow(1 - x, 5) end,
+}
+
+local function get_state_color(state)
+    if state == "combat" then
+        return cfg.color_combat
+    elseif state == "alert" then
+        return cfg.color_alert
+    end
+
+    return cfg.color_safe
+end
+
+local function get_state_pulse(state, now)
+    if state == "combat" then
+        local cycle = (now % cfg.pulse_speed) * 0.001
+        if cycle > 0.5 then
+            cycle = 1 - cycle
+        end
+        return easing.OutSine(cycle)
+    elseif state == "alert" then
+        local cycle = (now % 2000) * 0.001
+        return easing.OutSine(cycle) * 0.5
+    end
+
+    local time_since_visible = now - last_visible_time
+    if time_since_visible > cfg.combat_vis_decay then
+        local delta = time_since_visible - cfg.combat_vis_decay
+        local decay = 1 - (delta / (cfg.combat_vis_timeout - cfg.combat_vis_decay))
+        decay = clamp(decay, 0, 1)
+        local fade = easing.OutSine(decay) * 0.3
+        if time_since_visible > cfg.combat_vis_timeout then
+            return 0
+        end
+        return fade
+    end
+
+    return 0.3
+end
+
+local function set_visual_state(state)
+    if not state or visual_state_to == state then
+        return
+    end
+
+    visual_state_from = visual_state_to or state
+    visual_state_to = state
+    visual_state_started = time_global()
+end
+
+local function get_visual_state_blend()
+    local duration = tonumber(cfg.state_transition_ms) or 280
+    if duration < 1 then
+        duration = 1
+    end
+
+    local t = clamp((time_global() - visual_state_started) / duration, 0, 1)
+    return visual_state_from, visual_state_to, t
+end
+
+local function get_waveform_visual()
+    local now = time_global()
+    local from_state, to_state, blend = get_visual_state_blend()
+    local from_color = get_state_color(from_state)
+    local to_color = get_state_color(to_state)
+    local from_r, from_g = from_color.r, from_color.g
+    local to_r, to_g = to_color.r, to_color.g
+    if current_luminosity > 0.5 then
+        local tint = current_luminosity * 50
+        from_r = clamp(from_r + tint, 0, 255)
+        from_g = clamp(from_g - tint, 0, 255)
+        to_r = clamp(to_r + tint, 0, 255)
+        to_g = clamp(to_g - tint, 0, 255)
+    end
+    local pulse = lerp(get_state_pulse(from_state, now), get_state_pulse(to_state, now), blend)
+    return clamp(lerp(from_color.a, to_color.a, blend), 0, 255),
+        clamp(lerp(from_r, to_r, blend), 0, 255),
+        clamp(lerp(from_g, to_g, blend), 0, 255),
+        clamp(lerp(from_color.b, to_color.b, blend), 0, 255), pulse
+end
+
+local function get_compass_pos()
+    local pos_state = compass_mcm and compass_mcm.get_config and compass_mcm.get_config("tc_main/compass_sc_pos")
+    local pos_x = compass_mcm and compass_mcm.get_config and compass_mcm.get_config("tc_main/compass_pos_x")
+    local pos_y = compass_mcm and compass_mcm.get_config and compass_mcm.get_config("tc_main/compass_pos_y")
+
+    pos_x = tonumber(pos_x) or 0
+    pos_y = tonumber(pos_y) or 0
+
+    local base_y = (pos_state == 1) and cfg.compass_pos_y_btm or cfg.compass_pos_y_top
+
+    return pos_state, screen_center + pos_x, base_y + pos_y
+end
+
+local function get_waveform_y_offset(pos_state)
+    return (pos_state == 1) and cfg.waveform_compass_y_btm or cfg.waveform_compass_y_top
+end
+
+-- =======================================================================
+--      ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ИЗ utils_catspaw_common.script.lua)
+-- =======================================================================
+
+function valid_id(id)
+    return id and (id > 0) and (id < 65535)
+end
+
+function safeid(obj)
+    if not obj then return nil end
+    return (type(obj.id) == "function") and obj:id() or obj.id
+end
+
+function is_living_thing(obj)
+    return IsStalker(obj) or IsMonster(obj)
+end
+
+function get_object_by_id(id)
+    return id and (
+        (id == AC_ID) and db.actor or
+        (db.storage[id] and db.storage[id].object or level.object_by_id(id))
+    )
+end
+
+function get_object_center(id, obj)
+    obj = obj or (id and get_object_by_id(id))
+    return obj and obj:center()
+end
+
+-- ИЗ utils_catspaw_common строка 430
+function get_next_tg_interval(interval, variance, stamp)
+    interval = tonumber(interval) or 1000
+    variance = tonumber(variance) or (interval * 0.05)
+    stamp = tonumber(stamp) or time_global()
+    return stamp + interval + math.random(variance) - (variance * 0.5)
+end
+
+function clamp(val, min, max)
+    if val < min then return min end
+    if val > max then return max end
+    return val
+end
+
+function lerp(a, b, f)
+    if a and b and f then
+        return a + f * (b - a)
+    else
+        return a or b or 0
+    end
+end
+
+-- ИЗ utils_catspaw_common строка 380 - EASING ФУНКЦИИ ДЛЯ ПЛАВНОСТИ!
+local easing = {
+    InSine  = (function(x) return 1 - math.cos((x * math.pi) / 2) end),
+    OutSine = (function(x) return math.sin((x * math.pi) / 2) end),
+    InQuint = (function(x) if not x then return end return x * x * x * x * x end),
+    OutQuint = (function(x) if not x then return end return 1 - math.pow(1 - x, 5) end),
+}
+
+-- =======================================================================
+--      ПРОВЕРКА БОЯ (ИЗ ui_hud_tcams_compass строка 280)
+-- =======================================================================
+
+function is_fighting(id)
+    if xr_combat_ignore and xr_combat_ignore.fighting_with_actor_npcs then
+        if id then
+            return xr_combat_ignore.fighting_with_actor_npcs[id]
+        else
+            return not table.empty(xr_combat_ignore.fighting_with_actor_npcs)
+        end
+    end
+    return false
+end
+
+function is_actor_enemy(comm)
+    return comm and db.actor and game_relations.is_factions_enemies(
+        get_actor_true_community(), comm
+    )
+end
+
+function get_object_community(obj)
+    if not obj then return nil end
+    local id = safeid(obj)
+    local se_obj = id and alife_object(id)
+    return se_obj and se_obj.character_community or obj:character_community()
+end
+
+-- =======================================================================
+--      ПОЛУЧЕНИЕ ПОЗИЦИИ КОСТИ (ИЗ utils_catspaw_hudmarks строка 170)
+-- =======================================================================
+
+function get_safe_bone_pos(obj, bone)
+    if not obj then return nil end
+    if not bone then return obj:center() end
+
+    -- Пытаемся получить позицию кости через utils_obj если доступен
+    if utils_obj and utils_obj.safe_bone_pos then
+        local pos = utils_obj.safe_bone_pos(obj, bone)
+        if pos then return pos end
+    end
+
+    -- Fallback: пробуем bone_pos напрямую
+    if obj.bone_pos and type(obj.bone_pos) == "function" then
+        local pos = obj:bone_pos(bone)
+        if pos then return pos end
+    end
+
+    -- Fallback: используем центр объекта
+    return obj:center()
+end
+
+-- =======================================================================
+--      ПРОВЕРКА LOS (ИЗ utils_catspaw_hudmarks строка 180)
+-- =======================================================================
+
+function check_los_to_obj(id, range, bone, flags, tolerance, pos_adjust)
+    -- ИЗ utils_catspaw_hudmarks: проверка наличия demonized_geometry_ray
+    if not demonized_geometry_ray then
+        return false
+    end
+    if not db.actor then return false end
+
+    local obj = id and get_object_by_id(id)
+    if not obj then return false end
+
+    local pos = get_object_center(id, obj)
+
+    -- Определяем кость (ИЗ utils_catspaw_hudmarks строка 185)
+    if IsStalker(obj) then
+        bone = bone or (obj:alive() and "bip01_head" or "bip01_spine1")
+    end
+
+    -- БЕЗОПАСНОЕ получение позиции кости
+    if bone then
+        local bone_pos = get_safe_bone_pos(obj, bone)
+        if bone_pos then pos = bone_pos end
+    end
+
+    if pos and pos_adjust then
+        pos = vector():set(pos):add(pos_adjust)
+    end
+
+    if not pos then return false end
+
+    local dist = db.actor:position():distance_to(pos)
+    if not dist then return false end
+
+    range = range or cfg.los_check_range
+    flags = flags or cfg.los_check_flags
+
+    local ray = demonized_geometry_ray.geometry_ray({
+        ray_range = range,
+        ignore_object = obj,
+        flags = flags,
+    })
+
+    if not ray then return false end
+
+    local res = ray:get(pos, device().cam_pos:sub(pos):normalize())
+    local ray_diff = dist - math.floor(res and res.distance or range)
+    local has_los = ray_diff < (tolerance or cfg.los_check_tolerance)
+
+    return has_los
+end
+
+-- =======================================================================
+--      СГЛАЖИВАНИЕ LOS (ИЗ utils_catspaw_hudmarks строка 200)
+-- =======================================================================
+
+function smooth_los_check(id, has_los_now)
+    if not cfg.los_smoothing then
+        return has_los_now
+    end
+
+    local now = time_global()
+
+    if not los_state[id] then
+        los_state[id] = {
+            time = now,
+            pos = db.actor:position(),
+            has_los = has_los_now
+        }
+        return has_los_now
+    end
+
+    local state = los_state[id]
+
+    -- Anti-jitter: если LOS пропал, проверяем таймаут
+    if (not has_los_now) and state.has_los then
+        local los_loss_timeout = state.time + cfg.lost_los_delay
+        if los_loss_timeout > now then
+            return true
+        end
+
+        local actor_movement = db.actor:position():distance_to(state.pos)
+        if actor_movement < cfg.lost_los_dist then
+            return true
+        end
+    end
+
+    if has_los_now then
+        state.time = now
+        state.pos = db.actor:position()
+        state.has_los = true
+    else
+        state.has_los = false
+    end
+
+    return has_los_now
+end
+
+function cleanup_los_state()
+    local now = time_global()
+    for id, state in pairs(los_state) do
+        if now - state.time > 10000 then
+            los_state[id] = nil
+        end
+    end
+end
+
+-- =======================================================================
+--      ПРОВЕРКА ОБНАРУЖЕНИЯ ЧЕРЕЗ ДВИЖОК (ИЗ ui_hud_tcams_compass строка 420)
+--      ЭТО КЛЮЧЕВАЯ ФУНКЦИЯ - использует встроенную систему обнаружения!
+-- =======================================================================
+
+function get_actor_luminosity()
+    -- ИЗ ui_hud_tcams_compass: db.actor.get_actor_ui_luminosity
+    return db.actor and db.actor.get_actor_ui_luminosity and db.actor:get_actor_ui_luminosity()
+end
+
+function update_detection_state()
+    local now = time_global()
+
+    -- Получаем уровень обнаружения от движка (0.0 - 1.0)
+    local lum = get_actor_luminosity() or 0
+    current_luminosity = clamp(lum, 0.0, 1.0)
+
+    -- Если luminosity > 0, значит нас обнаружили
+    if current_luminosity > 0.01 then
+        last_detection_time = now
+    end
+
+    return current_luminosity
+end
+
+-- =======================================================================
+--      ОПРЕДЕЛЕНИЕ СОСТОЯНИЯ ВРАГА (ОБНОВЛЕНО)
+-- =======================================================================
+
+function get_enemy_state(obj)
+    if not obj then return "safe" end
+    if not obj:alive() then return "safe" end
+
+    local id = safeid(obj)
+    if not valid_id(id) then return "safe" end
+
+    local is_hostile = false
+    if IsMonster(obj) then
+        is_hostile = true
+    elseif IsStalker(obj) then
+        local comm = get_object_community(obj)
+        if comm and is_actor_enemy(comm) then
+            is_hostile = true
+        end
+    end
+
+    if not is_hostile then return "safe" end
+
+    -- Combat with the actor is always red, even when LOS is blocked.
+    if is_fighting(id) then
+        return "combat"
+    end
+
+    -- Hostile nearby but not fighting yet is yellow.
+    local actor_pos = db.actor and db.actor:position()
+    local obj_pos = obj:position()
+    if actor_pos and obj_pos and actor_pos:distance_to(obj_pos) < 10 then
+        return "alert"
+    end
+
+    return "safe"
+end
+
+-- =======================================================================
+--      ENEMY SCANNING
+-- =======================================================================
+local function scan_nearby_entity(obj)
+    local id = safeid(obj)
+    if not valid_id(id) then return end
+    if scanned_ids[id] == scanned_generation then return end
+
+    scanned_ids[id] = scanned_generation
+
+    if not is_living_thing(obj) then return end
+    if not obj:alive() then return end
+
+    local state = get_enemy_state(obj)
+
+    if state == "combat" then
+        combat_enemy_count = combat_enemy_count + 1
+        if scan_worst_state ~= "combat" then
+            scan_worst_state = "combat"
+            last_visible_time = scan_now
+        end
+    elseif state == "alert" then
+        alert_enemy_count = alert_enemy_count + 1
+        if scan_worst_state == "safe" then
+            scan_worst_state = "alert"
+        end
+    end
+
+    enemy_count = enemy_count + 1
+end
+
+function scan_nearby_entities(scan_radius)
+    if not db.actor then return end
+
+    local pos = db.actor:position()
+    if not pos then return end
+
+    scanned_generation = scanned_generation + 1
+    if scanned_generation > 2147483000 then
+        scanned_ids = {}
+        scanned_generation = 1
+    end
+    enemy_count = 0
+    combat_enemy_count = 0
+    alert_enemy_count = 0
+
+    scan_worst_state = "safe"
+    scan_now = time_global()
+
+    local iterate = level.iterate_nearest_unsorted or level.iterate_nearest
+    iterate(pos, scan_radius, scan_nearby_entity)
+
+    -- Сохраняем худшее состояние
+    enemy_state = scan_worst_state
+
+    set_visual_state(enemy_state)
+
+    cleanup_los_state()
+end
+
+-- =======================================================================
+--      ОБНОВЛЕНИЕ СОСТОЯНИЯ (РАЗ В СЕКУНДУ ПОСЛЕ ОБНАРУЖЕНИЯ)
+-- =======================================================================
+
+function update_enemy_state()
+    local now = time_global()
+
+    update_detection_state()
+
+    if now >= next_state_update then
+        next_state_update = now + cfg.state_update_interval
+        scan_nearby_entities(cfg.med_scan_radius)
+
+        if combat_enemy_count > 0 then
+            enemy_state = "combat"
+            last_visible_time = now
+        elseif alert_enemy_count > 0 then
+            enemy_state = "alert"
+        else
+            enemy_state = "safe"
+        end
+    end
+
+    set_visual_state(enemy_state)
+end
+
+-- =======================================================================
+--      ANIMATION AND COLOR
+-- =======================================================================
+function fade_by_dist_element(dist, flr, min, mid, max, alpha, r, g, b)
+    alpha = alpha or 255
+    r = r or 255
+    g = g or 255
+    b = b or 255
+
+    if (dist < flr) then
+        alpha = 0
+    elseif (dist < min) then
+        alpha = alpha * (dist / (min - flr))
+    elseif (mid > 0) then
+        if (dist > (mid + max)) then
+            alpha = 0
+        elseif (dist > mid) then
+            alpha = alpha * (1 - ((dist - mid) / max))
+        end
+    end
+
+    return {a=alpha, r=r, g=g, b=b}
+end
+
+local function anthology_faded_alpha(dist, flr, min, mid, max, alpha)
+    alpha = alpha or 255
+    if dist < flr then
+        return 0
+    elseif dist < min then
+        return alpha * (dist / (min - flr))
+    elseif mid > 0 then
+        if dist > (mid + max) then
+            return 0
+        elseif dist > mid then
+            return alpha * (1 - ((dist - mid) / max))
+        end
+    end
+    return alpha
+end
+
+function get_waveform_color()
+    local a, r, g, b, coef = get_waveform_visual()
+    local alpha = anthology_faded_alpha(enemy_count, 0, 0, 0, 5, a * (0.5 + (coef * 0.5)))
+
+    return GetARGB(
+        math.floor(alpha),
+        math.floor(r),
+        math.floor(g),
+        math.floor(b)
+    )
+end
+
+-- =======================================================================
+--      HUD ЭЛЕМЕНТ
+-- =======================================================================
+
+class "HUDWaveform" (CUIScriptWnd)
+
+function HUDWaveform:__init()
+    super()
+    self.next_refresh = 0
+    self.container_pos = vector2()
+    self.container_size = vector2()
+    self.bar_size = vector2()
+    self:InitControls()
+end
+
+function HUDWaveform:InitControls()
+    self:SetAutoDelete(true)
+
+    if not waveform_xml then
+        waveform_xml = CScriptXmlInit()
+        waveform_xml:ParseFile("ui_compass_waveform.xml")
+    end
+
+    self.waveform_container = waveform_xml:InitStatic("waveform_container", self)
+    self.waveform_bar = waveform_xml:InitStatic("waveform_container:waveform_bar", self.waveform_container)
+
+    local compass_pos_state, compass_pos_x, compass_pos_y = get_compass_pos()
+    self.waveform_container:SetWndPos(
+        self.container_pos:set(
+            compass_pos_x - cfg.waveform_width / 2,
+            compass_pos_y + get_waveform_y_offset(compass_pos_state)
+        )
+    )
+    self.waveform_container:SetWndSize(
+        self.container_size:set(cfg.waveform_width, cfg.waveform_height)
+    )
+
+    self.waveform_bar:InitTexture(cfg.aggro_wave_tex)
+    self.waveform_bar:SetWndSize(
+        self.bar_size:set(cfg.waveform_width, cfg.waveform_height)
+    )
+
+    self.waveform_bar:SetTextureColor(get_waveform_color())
+end
+
+function HUDWaveform:Update()
+    CUIScriptWnd.Update(self)
+    local now = time_global()
+    if self.next_refresh <= now then
+        self.next_refresh = now + 33
+        self:Refresh()
+    end
+end
+
+function HUDWaveform:Refresh()
+    if not is_show_waveform or not main_hud_shown() or (tactic_compass_is_visible and not tactic_compass_is_visible()) then
+        self.waveform_container:Show(false)
+        return
+    end
+
+    local compass_pos_state, compass_x, compass_y = get_compass_pos()
+    compass_x = compass_x - cfg.waveform_width / 2
+    compass_y = compass_y + get_waveform_y_offset(compass_pos_state)
+
+    self.waveform_container:SetWndPos(self.container_pos:set(compass_x, compass_y))
+
+    self.waveform_container:Show(true)
+
+    -- Обновляем цвет с плавной пульсацией
+    local a, r, g, b, pulse = get_waveform_visual()
+    local alpha = anthology_faded_alpha(enemy_count, 0, 0, 0, 5, a * (0.5 + (pulse * 0.5)))
+    self.waveform_bar:SetTextureColor(GetARGB(
+        math.floor(alpha),
+        math.floor(r),
+        math.floor(g),
+        math.floor(b)
+    ))
+
+    local height_mod = cfg.waveform_height * (1 + (pulse * 0.2))
+    self.waveform_bar:SetWndSize(
+        self.bar_size:set(cfg.waveform_width, height_mod)
+    )
+end
+
+function HUDWaveform:__finalize()
+end
+
+-- =======================================================================
+--      ОСНОВНОЙ ЦИКЛ
+-- =======================================================================
+
+function actor_on_first_update()
+    if not demonized_geometry_ray then
+        printf("! [Waveform] FATAL: demonized_geometry_ray NOT available!\n")
+        printf("! [Waveform] This script REQUIRES modded EXE files!\n")
+        return
+    end
+
+    if HUD_WAVEFORM == nil then
+        HUD_WAVEFORM = HUDWaveform()
+        get_hud():AddDialogToRender(HUD_WAVEFORM)
+    end
+
+    actively_scanning = true
+    next_fast_scan = time_global() + cfg.fast_scan_interval
+    next_med_scan = time_global() + cfg.med_scan_interval + 173
+    next_state_update = time_global() + cfg.state_update_interval
+
+    printf("[Waveform] Enemy detection ACTIVE!\n")
+    printf("[Waveform] States: SAFE=blue, ALERT=yellow, COMBAT=red\n")
+    printf("[Waveform] Using engine luminosity detection + LOS checks\n")
+end
+
+function actor_on_update()
+    if not actively_scanning or not cfg.scanning_enabled then
+        return
+    end
+
+    if not db.actor then return end
+
+    local now = time_global()
+
+    -- Быстрое сканирование для ближних врагов
+    local fast_scan_ran = false
+    if now >= next_fast_scan then
+        next_fast_scan = now + cfg.fast_scan_interval
+        scan_nearby_entities(cfg.fast_scan_radius)
+        fast_scan_ran = true
+    end
+
+    if now >= next_med_scan then
+        if fast_scan_ran then
+            next_med_scan = now + 1
+        else
+            next_med_scan = now + cfg.med_scan_interval
+            update_enemy_state()
+        end
+    end
+end
+
+function actor_on_net_destroy()
+    actively_scanning = false
+    los_state = {}
+    if HUD_WAVEFORM ~= nil then
+        get_hud():RemoveDialogToRender(HUD_WAVEFORM)
+        HUD_WAVEFORM = nil
+    end
+end
+
+function actor_on_before_death()
+    if HUD_WAVEFORM ~= nil then
+        get_hud():RemoveDialogToRender(HUD_WAVEFORM)
+        HUD_WAVEFORM = nil
+    end
+end
+
+-- =======================================================================
+--      РЕГИСТРАЦИЯ КОЛБЕКОВ (ПРАВИЛЬНО - из 5 скриптов)
+-- =======================================================================
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+    RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
+end
