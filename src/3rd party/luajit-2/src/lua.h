@@ -71,6 +71,7 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 ** The clock callback must not allocate or call back into Lua.
 */
 typedef unsigned long long (*lua_XRayGCTickFunction) (void);
+typedef void (*lua_XRayLeafUserdataFinalizer) (void *storage);
 
 typedef struct lua_XRayGCAtomicProfile {
   unsigned long long sequence;
@@ -80,6 +81,9 @@ typedef struct lua_XRayGCAtomicProfile {
   unsigned long long separateudata_ticks;
   unsigned long long mmudata_ticks;
   unsigned long long weak_sweep_ticks;
+  unsigned long long leaf_udata_marked;
+  unsigned long long leaf_udata_unmarked;
+  unsigned long long leaf_udata_finalized;
 } lua_XRayGCAtomicProfile;
 
 
@@ -250,6 +254,9 @@ LUA_API void (lua_xray_gc_atomic_profile_configure)
   (lua_State *L, lua_XRayGCTickFunction clock);
 LUA_API int (lua_xray_gc_atomic_profile_snapshot)
   (lua_State *L, lua_XRayGCAtomicProfile *profile);
+LUA_API int (lua_xray_userdata_mark_leaf)
+  (lua_State *L, int idx, lua_XRayLeafUserdataFinalizer finalizer);
+LUA_API int (lua_xray_userdata_unmark_leaf) (lua_State *L, int idx);
 
 
 /*

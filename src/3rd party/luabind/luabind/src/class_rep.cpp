@@ -344,6 +344,7 @@ bool luabind::detail::class_rep::settable(lua_State* L)
 	{
 		// this is the first time we are trying to add
 		// a member to this instance, create the table.
+		object_rep::disable_leaf_gc(L, 1);
 		lua_newtable(L);
 		lua_pushvalue(L, -1);
 		tbl.set(L);

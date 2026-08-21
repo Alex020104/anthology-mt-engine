@@ -83,6 +83,10 @@ typedef struct GG_State {
   lua_XRayGCTickFunction xray_gc_atomic_clock;
   lua_XRayGCAtomicProfile xray_gc_atomic_profile;
   unsigned long long xray_gc_atomic_consumed_sequence;
+  lua_XRayLeafUserdataFinalizer xray_leaf_udata_finalizer;
+  unsigned long long xray_leaf_udata_marked;
+  unsigned long long xray_leaf_udata_unmarked;
+  unsigned long long xray_leaf_udata_finalized;
 } GG_State;
 
 #define GG_OFS(field)	((int)offsetof(GG_State, field))

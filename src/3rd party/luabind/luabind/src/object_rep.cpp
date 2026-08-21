@@ -134,5 +134,34 @@ namespace luabind { namespace detail
 		return 0;
 	}
 
+	void object_rep::leaf_garbage_collector(void* storage)
+	{
+		object_rep* obj = static_cast<object_rep*>(storage);
+		assert(obj);
+		assert(obj->m_classrep);
+		assert(!(obj->m_flags & (owner | lua_class)));
+		assert(!obj->m_destructor);
+		assert(!obj->m_lua_table_ref.is_valid());
+		assert(!obj->m_dependency_ref.is_valid());
+		obj->~object_rep();
+	}
+
+	bool object_rep::enable_leaf_gc(lua_State* L, int index)
+	{
+		object_rep* obj = static_cast<object_rep*>(lua_touserdata(L, index));
+		if (!obj || !obj->m_classrep || obj->m_classrep->get_class_type() != class_rep::cpp_class)
+			return false;
+		if (obj->m_flags & (owner | lua_class))
+			return false;
+		if (obj->m_destructor || obj->m_lua_table_ref.is_valid() || obj->m_dependency_ref.is_valid())
+			return false;
+		return lua_xray_userdata_mark_leaf(L, index, &object_rep::leaf_garbage_collector) != 0;
+	}
+
+	void object_rep::disable_leaf_gc(lua_State* L, int index)
+	{
+		lua_xray_userdata_unmark_leaf(L, index);
+	}
+
 }}
 

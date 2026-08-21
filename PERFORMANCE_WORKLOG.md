@@ -2874,3 +2874,67 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   (518.69-646.88 ms in the two loads), but its diagnostic `printf` retained a
   literal `%d` in this build. V86 must either defer the warm-up more safely or
   disable this optional module while the GC correction is tested.
+
+## 2026-08-21 - v86 incremental leaf luabind userdata cleanup
+
+### Root cause and scope
+
+- V85 measured 268 atomic GC events. `lj_gc_separateudata()` and subsequent
+  mmudata marking/propagation consumed 94.55% of the stop-the-world phase;
+  45-60 ms events recurred about every 4-5 seconds and matched the visible
+  gameplay tick. This is the first V8x change aimed at that measured source
+  rather than changing collector cadence again.
+- LuaJIT keeps all userdata with finalizers in one process-wide suffix and
+  rescans it during every atomic phase. Hot C++-to-Lua pointer/reference
+  conversions create large numbers of temporary non-owning `object_rep`
+  wrappers even though their stock `__gc` does no Lua or native-object work.
+- V86 moves only a freshly created wrapper proven to be a non-owning C++ class,
+  with no destructor, Lua table, or dependency, from that suffix to the normal
+  incremental root list. Its empty native wrapper destructor runs when normal
+  incremental sweep reclaims it.
+
+### Safety boundaries
+
+- Pointer, const-pointer, reference and const-reference borrowed conversion
+  paths are covered. Owning values, copied objects, holders, constructors and
+  Lua-class instances remain on the stock `__gc` path.
+- Before a leaf wrapper gains a dynamic Lua field, dependency, ownership, or a
+  replacement metatable, it is physically returned to the stock userdata
+  suffix. This preserves custom finalizers and Lua reference lifetime.
+- Marking is accepted only while the new userdata is still the suffix head, so
+  list removal is O(1). The rare restoration path repairs an active incremental
+  sweep cursor when necessary. Normal `lua_close` finalizes restored userdata;
+  remaining proven leaves receive only their native wrapper cleanup in the
+  final full sweep.
+- The V84/V81 GC cadence, V84 A-Life budget, loading path, NPC placement,
+  renderer, LOD/HOM, PiP, saves and existing addon patches are unchanged.
+  Moving the single live Lua VM or Lua GC to a competing OS thread is rejected
+  because the VM, registry and luabind object graph are not thread-safe.
+
+### Build, installation and rollback
+
+- Independent read-only audits enumerated all ten `object_rep` construction
+  paths and verified the mutation, sweep and shutdown invariants. `git diff
+  --check` passes. Both `DX11|x64` and `DX11-AVX|x64` compile and link:
+  - DX11 EXE:
+    `7497AE1B1226E452D3E7157FE822FA05DAAE4CC856995ACFCCA3FB229DE6DCAB`;
+  - DX11 PDB:
+    `E50B45F77695A4B0C3B7F66C22CD35FE64F9210DB2E282D6E07B3C625A987170`;
+  - DX11-AVX EXE:
+    `03BBE996D322FB4EA13874547B21CD21C8C78A75F123698530FBAC9A1A40D861`;
+  - DX11-AVX PDB:
+    `96D3CC70D1130953A498C72817809408F3E230C6B3BF378B25A50C3CF96C846F`.
+- Candidate and installed hashes match. The unrelated untracked repository-root
+  `AnomalyDX11AVX.exe` and LAN binary were not touched.
+- `Anthology Performance v86 - Leaf Luabind GC` exists as a standalone addon
+  under `D:/ANTHOLOGY_DEV/addons`, is installed in MO2 and is enabled first.
+  Both V85 modules are disabled; removing the optional V85 PDA warm-up also
+  avoids its measured 0.52-0.65 second first-update cost. V81 addon fixes and
+  the V80 CoP placement module remain enabled.
+- Exact V85 binaries, symbols, profile, log and active V85 addons are backed up
+  under `E:/ANTHOLOGY_BACKUPS/20260821_v86_pre_v85_leaf_luabind_gc`.
+- Expected markers are `[anthology/v86]`, `[Lua GC/v86]` and, only for remaining
+  atomic events of at least 10 ms, `[Lua GC/xray-atomic]` with cumulative leaf
+  marked/unmarked/finalized counters. No new game or shader-cache purge is
+  required. Runtime acceptance still requires a controlled same-save session;
+  the game was not launched during installation.

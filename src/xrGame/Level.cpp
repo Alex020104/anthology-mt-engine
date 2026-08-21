@@ -87,13 +87,17 @@ void XRayReportLuaGCAtomicProfile(lua_State* lua)
 		return;
 
 	Msg("* [Lua GC/xray-atomic] sequence=%llu total=%.2f ms "
-		"phases(remark-roots/grayagain/separateudata/mmudata/weak-sweep)=%.2f/%.2f/%.2f/%.2f/%.2f ms",
+		"phases(remark-roots/grayagain/separateudata/mmudata/weak-sweep)=%.2f/%.2f/%.2f/%.2f/%.2f ms "
+		"leaf(marked/unmarked/finalized)=%llu/%llu/%llu",
 		static_cast<unsigned long long>(profile.sequence), total_ms,
 		profile.roots_ticks * ticks_to_ms,
 		profile.grayagain_ticks * ticks_to_ms,
 		profile.separateudata_ticks * ticks_to_ms,
 		profile.mmudata_ticks * ticks_to_ms,
-		profile.weak_sweep_ticks * ticks_to_ms);
+		profile.weak_sweep_ticks * ticks_to_ms,
+		static_cast<unsigned long long>(profile.leaf_udata_marked),
+		static_cast<unsigned long long>(profile.leaf_udata_unmarked),
+		static_cast<unsigned long long>(profile.leaf_udata_finalized));
 }
 }
 
@@ -1567,7 +1571,7 @@ bool CLevel::Load(u32 dwNum)
 	const int old_step_mul = lua_gc(lua, LUA_GCSETSTEPMUL, psLua_ParallelGCStepMul);
 	Msg("* [Lua GC] incremental profile pause=%d (was %d), stepmul=%d (was %d)",
 		psLua_ParallelGCPause, old_pause, psLua_ParallelGCStepMul, old_step_mul);
-	Msg("* [Lua GC/v85] V84 cadence retained with atomic phase telemetry: step=%d calls=%d budget=%d us adaptive=%d frame-budget=%d us postload=%d ms",
+	Msg("* [Lua GC/v86] V84 cadence retained; borrowed luabind userdata uses incremental leaf cleanup: step=%d calls=%d budget=%d us adaptive=%d frame-budget=%d us postload=%d ms",
 		psLua_ParallelGCStep, psLua_ParallelGC_CallAmount, psLua_ParallelGC_BudgetUs,
 		psLua_ParallelGC_Adaptive, psLua_ParallelGC_FrameBudgetUs,
 		psLua_ParallelGC_PostLoadDelayMs);

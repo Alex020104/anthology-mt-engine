@@ -88,6 +88,7 @@ namespace luabind { namespace detail
 			if (back_reference<T>::move(L, ptr))
 			{
 				object_rep* obj = static_cast<object_rep*>(lua_touserdata(L, -1));
+				object_rep::disable_leaf_gc(L, -1);
 				obj->set_flags(obj->flags() | object_rep::owner);
 				return;
 			}

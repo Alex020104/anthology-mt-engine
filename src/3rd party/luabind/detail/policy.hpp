@@ -674,6 +674,7 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			object_rep::enable_leaf_gc(L, -1);
 
 //			make_instance(L, ptr, (pointer_holder<T, T*>*)0);
 		}
@@ -916,6 +917,7 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			object_rep::enable_leaf_gc(L, -1);
 		}
 	};
 
@@ -984,6 +986,7 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			object_rep::enable_leaf_gc(L, -1);
 		}
 	};
 
@@ -1037,6 +1040,7 @@ namespace luabind { namespace detail
 			// set the meta table
 			detail::getref(L, crep->metatable_ref());
 			lua_setmetatable(L, -2);
+			object_rep::enable_leaf_gc(L, -1);
 		}
 	};
 

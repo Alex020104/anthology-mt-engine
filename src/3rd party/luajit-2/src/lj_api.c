@@ -19,6 +19,7 @@
 #include "lj_udata.h"
 #include "lj_meta.h"
 #include "lj_state.h"
+#include "lj_dispatch.h"
 #include "lj_bc.h"
 #include "lj_frame.h"
 #include "lj_trace.h"
@@ -701,6 +702,72 @@ LUA_API void *lua_newuserdata(lua_State *L, size_t size)
   return uddata(ud);
 }
 
+/* Move a freshly created, provably leaf userdata out of LuaJIT's dedicated
+** finalizer suffix. Its native-only cleanup is invoked by incremental sweep,
+** avoiding the non-preemptible separateudata/mmudata atomic walk. */
+LUA_API int lua_xray_userdata_mark_leaf(lua_State *L, int idx,
+						lua_XRayLeafUserdataFinalizer finalizer)
+{
+  TValue *tv = index2adr(L, idx);
+  global_State *g = G(L);
+  GG_State *GG = G2GG(g);
+  GCudata *ud;
+  GCobj *o;
+
+  if (!tvisudata(tv) || finalizer == NULL)
+    return 0;
+  ud = udataV(tv);
+  o = obj2gco(ud);
+  if (ud->udtype != UDTYPE_USERDATA || ud->unused2 != 0 ||
+      gcref(mainthread(g)->nextgc) != o)
+    return 0;
+  if (GG->xray_leaf_udata_finalizer != NULL &&
+      GG->xray_leaf_udata_finalizer != finalizer)
+    return 0;
+
+  GG->xray_leaf_udata_finalizer = finalizer;
+  setgcrefr(mainthread(g)->nextgc, o->gch.nextgc);
+  setgcrefr(o->gch.nextgc, g->gc.root);
+  setgcref(g->gc.root, o);
+  ud->unused2 = LJ_XRAY_LEAF_UDATA;
+  GG->xray_leaf_udata_marked++;
+  return 1;
+}
+
+/* Restore the stock finalizer path before a leaf wrapper acquires a Lua-side
+** dependency. This is rare, so a linear root lookup is preferable to adding
+** pointers/flags to every GC object. */
+LUA_API int lua_xray_userdata_unmark_leaf(lua_State *L, int idx)
+{
+  TValue *tv = index2adr(L, idx);
+  global_State *g = G(L);
+  GCudata *ud;
+  GCobj *o;
+  GCRef *p;
+
+  if (!tvisudata(tv))
+    return 0;
+  ud = udataV(tv);
+  if (ud->unused2 != LJ_XRAY_LEAF_UDATA)
+    return 0;
+  o = obj2gco(ud);
+  p = &g->gc.root;
+  while (gcref(*p) != NULL && gcref(*p) != o)
+    p = &gcref(*p)->gch.nextgc;
+  if (gcref(*p) == NULL)
+    return 0;
+
+  if (g->gc.state == GCSsweep &&
+      mref(g->gc.sweep, GCRef) == &o->gch.nextgc)
+    setmref(g->gc.sweep, p);
+  setgcrefr(*p, o->gch.nextgc);
+  setgcrefr(o->gch.nextgc, mainthread(g)->nextgc);
+  setgcref(mainthread(g)->nextgc, o);
+  ud->unused2 = 0;
+  G2GG(g)->xray_leaf_udata_unmarked++;
+  return 1;
+}
+
 LUA_API void lua_concat(lua_State *L, int n)
 {
   api_checknelems(L, n);
@@ -967,6 +1034,9 @@ LUA_API int lua_setmetatable(lua_State *L, int idx)
     if (mt)
       lj_gc_objbarriert(L, tabV(o), mt);
   } else if (tvisudata(o)) {
+    /* A userdata with a changed metatable is no longer a provable native-only
+    ** leaf. Restore the stock finalizer path before publishing the new one. */
+    lua_xray_userdata_unmark_leaf(L, idx);
     setgcref(udataV(o)->metatable, obj2gco(mt));
     if (mt)
       lj_gc_objbarrier(L, udataV(o), mt);

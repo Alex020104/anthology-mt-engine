@@ -67,8 +67,11 @@ namespace luabind { namespace detail
 		void add_dependency(lua_State* L, int index);
 
 		static int garbage_collector(lua_State* L);
+		static bool enable_leaf_gc(lua_State* L, int index);
+		static void disable_leaf_gc(lua_State* L, int index);
 
 	private:
+		static void leaf_garbage_collector(void* storage);
 
 		void* m_object; // pointer to the c++ object or holder / if lua class, this is a pointer the the instance of the
 									// c++ base or 0.

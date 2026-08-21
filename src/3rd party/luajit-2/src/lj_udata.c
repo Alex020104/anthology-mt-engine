@@ -17,6 +17,7 @@ GCudata *lj_udata_new(lua_State *L, MSize sz, GCtab *env)
   newwhite(g, ud);  /* Not finalized. */
   ud->gct = ~LJ_TUDATA;
   ud->udtype = UDTYPE_USERDATA;
+  ud->unused2 = 0;
   ud->len = sz;
   /* NOBARRIER: The GCudata is new (marked white). */
   setgcrefnull(ud->metatable);

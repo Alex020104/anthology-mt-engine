@@ -403,6 +403,14 @@ static GCRef *gc_sweep(global_State *g, GCRef *p, uint32_t lim)
       setgcrefr(*p, o->gch.nextgc);
       if (o == gcref(g->gc.root))
 	setgcrefr(g->gc.root, o->gch.nextgc);  /* Adjust list anchor. */
+      if (o->gch.gct == ~LJ_TUDATA &&
+	  gco2ud(o)->unused2 == LJ_XRAY_LEAF_UDATA) {
+	GG_State *GG = G2GG(g);
+	lua_assert(GG->xray_leaf_udata_finalizer != NULL);
+	GG->xray_leaf_udata_finalizer(uddata(gco2ud(o)));
+	gco2ud(o)->unused2 = 0;
+	GG->xray_leaf_udata_finalized++;
+      }
       gc_freefunc[o->gch.gct - ~LJ_TSTR](g, o);
     }
   }
@@ -666,6 +674,9 @@ static void atomic(global_State *g, lua_State *L)
     now = clock();
     profile.weak_sweep_ticks = now - phase_started_at;
     profile.total_ticks = now - atomic_started_at;
+    profile.leaf_udata_marked = GG->xray_leaf_udata_marked;
+    profile.leaf_udata_unmarked = GG->xray_leaf_udata_unmarked;
+    profile.leaf_udata_finalized = GG->xray_leaf_udata_finalized;
     profile.sequence = GG->xray_gc_atomic_profile.sequence + 1;
     GG->xray_gc_atomic_profile = profile;
   }
