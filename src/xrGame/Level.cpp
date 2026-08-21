@@ -1487,7 +1487,9 @@ void CLevel::OnFrame()
 }
 
 int psLUA_GCSTEP = 300;
-int psLua_ParallelGCStep = 10;
+// The v66 control capture used 76 here and kept the LuaJIT heap out of the
+// long atomic phases produced by the later small-step profile.
+int psLua_ParallelGCStep = 76;
 extern BOOL psLua_ParallelGC;
 extern BOOL psLua_ParallelGC_debug;
 extern int psLua_ParallelGC_CallAmount;

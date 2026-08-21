@@ -64,7 +64,19 @@ void CSE_ALifeOnlineOfflineGroup::update()
 	if (!bfActive())
 		return;
 
+	const Fvector previous_group_position = o_Position;
 	brain().update();
+	const bool group_moved = !previous_group_position.similar(o_Position, 0.1f);
+
+	// Stock Anomaly overwrites every offline member with the squad centre on
+	// every scheduled update.  That destroys the positions already serialized
+	// by the server and makes a stationary base visibly respawn in one point.
+	// Preserve exact member positions while the squad itself is stationary.
+	// When the offline brain really moves the squad, retain the safe stock
+	// relocation; the CoP smart-job redirect provides authored online positions
+	// at the destination without translating points outside its AI mesh.
+	if (!group_moved)
+		return;
 
 	MEMBERS::iterator I = m_members.begin();
 	MEMBERS::iterator E = m_members.end();

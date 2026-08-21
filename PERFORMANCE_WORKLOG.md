@@ -2268,3 +2268,75 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   archive SHA-256 is
   `885E093F203C433E5FC06DED3EC6BAD3C2986406DEBC3CFD3ADDA20FA8FDA661`.
 - No new game or shader-cache purge is required. The game was not launched.
+
+## 2026-08-21 - v77 v66 frame pacing with persistent CoP positions
+
+### Fresh v76 video and profile evidence
+
+- The latest 50.15-second, 60-FPS NVIDIA capture was decoded frame by frame.
+  During continuous movement it contains repeated presentation freezes of
+  approximately 50-216 ms, including adjacent stalls. This confirms severe
+  frame-pacing loss despite the visibly higher v76 average FPS.
+- Representative 300-frame log windows show worker waits up to 335.62 ms,
+  GameThread up to 346.56 ms, `seqParallel` up to 339.65 ms and Lua GC up to
+  200.32 ms. Stable render averages remain roughly 7-11 ms in the same run.
+  The high-FPS renderer path is therefore retained; the recurring tick is a
+  CPU/Lua/A-Life tail, not evidence that the v76 FPS work should be reverted.
+- The final 6966-ms aggregate occurred while returning to the menu and dumping
+  renderer resources after recording; it is excluded from gameplay diagnosis.
+- The accepted v66 backup contains the exact runtime collector controls used
+  by its smooth capture: step 76, 25 calls and a 5000-us overlap budget. The
+  v76 profile instead used step 10, six calls, a 1200-us budget, an adaptive
+  busy-frame skip and an eight-second post-load delay.
+
+### v66 pacing restoration without the v76 FPS rollback
+
+- GameThread still completes all Lua/script MT callbacks before touching the
+  single LuaJIT VM. Incremental collection remains serialized on that owner
+  worker while the main thread renders; no unsafe concurrent Lua state access
+  is introduced.
+- Restored the v66 collector cadence and its guaranteed first incremental step
+  in the render-overlap window. The later adaptive and post-load skips are off,
+  preventing mark debt from accumulating into the measured long atomic phase.
+- Engine defaults, both active `user.ltx` files and the standalone
+  `Anthology Performance v77 - v66 Frame Pacing` addon agree on step 76, 25
+  calls, 5000 us, pause/stepmul 200/200 and no post-load delay.
+- All v76 renderer, LOD/HOM, detail, marker-allocation and runtime spawn pacing
+  code remains unchanged. `spawn_antifreeze_max_per_frame` remains eight.
+
+### Persistent NPC positions and CoP smart-job fallback
+
+- Neither A-Life companion was active in the tested MO2 profile: the old v67
+  module was explicitly disabled and the v69 CoP module was absent from
+  `modlist.txt`. Its placement code therefore could not affect the game.
+- Stock `CSE_ALifeOnlineOfflineGroup::update()` overwrote every offline member
+  with the squad centre on every scheduled update. v77 preserves each member's
+  already serialized position while the squad itself is stationary.
+- When the offline brain genuinely moves a squad, stock safe relocation is
+  retained instead of translating a formation into an incompatible AI mesh.
+  On the next online switch, exact `db.offline_objects` placement remains first
+  priority and the authored CoP smart-job vertex is the fallback.
+- The standalone `Anthology A-Life v77 - Persistent CoP Jobs 300m` addon keeps
+  approximately 297 m online / 363 m offline hysteresis. It has no permanent
+  update callback, no object scan and adds no fields to saves.
+
+### Build, installation and rollback
+
+- Both new Lua scripts pass the Lua 5.1 parser.
+- Both `DX11|x64` and `DX11-AVX|x64` Release configurations compile and link
+  successfully. Installed files match their build SHA-256 hashes:
+  - regular DX11 EXE:
+    `D064B783D582927821303E8AF699CDC4B0EF408903BB9208FB4510C0F3BE44A5`;
+  - regular DX11 PDB:
+    `5213293E3591D3274A3194C3B9B245BD167D6D50CE2D50EE6BFB38E1006BACDF`;
+  - DX11-AVX EXE:
+    `035D9D4171B2CC981DF0E67B5955BCE13F466EA662F124D58B6532539FA2793F`;
+  - DX11-AVX PDB:
+    `6884CF57F320544263895AA929436DFDC393FFB5192283F3C6C4408D4A7524E4`.
+- Both v77 addons are separate working copies under
+  `D:/ANTHOLOGY_DEV/addons`, consumed by MO2 through directory junctions and
+  enabled at the top of the active HARD profile.
+- Exact pre-v77 v76 binaries, symbols, modified sources, both user files and
+  MO2 list are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v77_pre_v66_pacing_npc_persistence`.
+- No new game or shader-cache purge is required. The game was not launched.

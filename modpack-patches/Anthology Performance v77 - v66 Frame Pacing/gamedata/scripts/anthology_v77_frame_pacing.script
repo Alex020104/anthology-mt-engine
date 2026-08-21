@@ -1,0 +1,17 @@
+local commands = {
+	"lua_parallel_gc 1",
+	"lua_parallel_gc_adaptive 0",
+	"lua_parallel_gc_budget_us 5000",
+	"lua_parallel_gc_call_amount 25",
+	"lua_parallel_gc_postload_delay_ms 0",
+	"lua_parallel_gc_pause 200",
+	"lua_parallel_gc_stepmul 200",
+	"lua_parallel_gcstep 76",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/v77] v66 frame-pacing profile active")
+end

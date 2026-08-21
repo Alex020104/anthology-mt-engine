@@ -245,11 +245,15 @@ void XRay::Engine::CalculateBonesThread()
 }
 
 extern BOOL psLua_ParallelGC;
-int psLua_ParallelGC_CallAmount = 6;
-int psLua_ParallelGC_BudgetUs = 1200;
-BOOL psLua_ParallelGC_Adaptive = TRUE;
+// v77: keep the high-FPS v76 frame layout, but restore the exact collector
+// cadence from the user-accepted v66 control run.  A larger amount of work in
+// the render-overlap window prevents LuaJIT mark debt from growing into the
+// 100-300 ms atomic phases seen with the v73-v76 slicing profile.
+int psLua_ParallelGC_CallAmount = 25;
+int psLua_ParallelGC_BudgetUs = 5000;
+BOOL psLua_ParallelGC_Adaptive = FALSE;
 int psLua_ParallelGC_FrameBudgetUs = 12000;
-int psLua_ParallelGC_PostLoadDelayMs = 8000;
+int psLua_ParallelGC_PostLoadDelayMs = 0;
 void XRay::Engine::GameThread()
 {
 	CFrameTaskTimer frame_task_timer(FrameTaskGame);
@@ -335,9 +339,10 @@ void XRay::Engine::GameThread()
 		const u64 started_at = CPU::QPC();
 		Device.LuaGCCount = 0;
 		Device.LuaGCDone = false;
-		while (Device.isRendering.load(std::memory_order_relaxed) &&
-			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
-			CPU::QPC() - started_at < budget_ticks)
+		// v66 deliberately performed the first incremental step even when a very
+		// fast render had just completed.  Omitting it for many consecutive frames
+		// was the source of collector debt in the later adaptive profile.
+		do
 		{
 			++Device.LuaGCCount;
 			frame_lua_gc_calls.fetch_add(1, std::memory_order_relaxed);
@@ -346,6 +351,8 @@ void XRay::Engine::GameThread()
 				Device.LuaGCDone = true;
 				break;
 			}
-		}
+		} while (Device.isRendering.load(std::memory_order_relaxed) &&
+			Device.LuaGCCount < psLua_ParallelGC_CallAmount &&
+			CPU::QPC() - started_at < budget_ticks);
 	}
 }
