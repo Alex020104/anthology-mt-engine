@@ -228,6 +228,19 @@ public:
 	u32 hw_BatchSize;
 	ID3DVertexBuffer* hw_VB;
 	ID3DIndexBuffer* hw_IB;
+#ifdef USE_DX11
+	// DX11 details use one immutable mesh copy plus a per-instance vertex stream.
+	// The buffer grows before mapping, so dense locations never lose blades to a
+	// fixed instance limit.
+	enum { hw_InstanceStride = 64, hw_InitialInstanceCapacity = 1 << 18 };
+	ID3DVertexBuffer* hw_instanceVB;
+	u32 hw_instance_capacity;
+	u32 hw_frame_filled;
+	u32 hw_inst_base[3][dm_max_objects];
+	u32 hw_inst_count[3][dm_max_objects];
+	void hw_EnsureInstanceCapacity(u32 required);
+	void hw_Fill_Instances();
+#endif
 	ref_constant hwc_consts;
 	ref_constant hwc_wave;
 	ref_constant hwc_wind;

@@ -51,6 +51,42 @@ float GoToValue(float& current, float go_to)
 	return current < go_to ? r_value : -r_value;
 }
 
+#ifdef USE_DX11
+ICF u16 detail_f32_to_f16(float value)
+{
+	union
+	{
+		float f;
+		u32 u;
+	} bits;
+	bits.f = value;
+
+	const u32 sign = (bits.u >> 16) & 0x8000u;
+	s32 exponent = s32((bits.u >> 23) & 0xffu) - 127 + 15;
+	const u32 mantissa = bits.u & 0x7fffffu;
+	if (exponent <= 0)
+		return u16(sign);
+	if (exponent >= 31)
+		return u16(sign | 0x7bffu);
+	u32 result = sign | (u32(exponent) << 10) | (mantissa >> 13);
+	result += (mantissa >> 12) & 1u;
+	return u16(result);
+}
+
+#pragma pack(push, 1)
+struct DetailInstanceHW
+{
+	Fvector4 m0;
+	Fvector4 m1;
+	Fvector4 m2;
+	u16 normal_alpha[4];
+	u16 sun_hemi[4];
+};
+#pragma pack(pop)
+static_assert(sizeof(DetailInstanceHW) == CDetailManager::hw_InstanceStride,
+	"DetailInstanceHW must match the input layout");
+#endif
+
 void CDetailManager::hw_Load_Shaders()
 {
 	// Create shader to access constant storage
@@ -94,6 +130,16 @@ void CDetailManager::hw_Render(light* L)
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_xform_world(Fidentity);
 	RCache.set_Geometry(hw_Geom);
+#ifdef USE_DX11
+	if (hw_frame_filled != Device.dwFrame)
+	{
+		Device.Statistic->RenderDUMP_DT_Count = 0;
+		hw_Fill_Instances();
+	}
+	UINT instance_stride = hw_InstanceStride;
+	UINT instance_offset = 0;
+	HW.pContext->IASetVertexBuffers(1, 1, &hw_instanceVB, &instance_stride, &instance_offset);
+#endif
 	float scale = 1.f / float(quant);
 	Fvector4 wave, prev_wave;
 	Fvector4 consts;
@@ -140,11 +186,192 @@ void CDetailManager::hw_Render(light* L)
 	RCache.set_CullMode(CULL_CCW);
 }
 
+#ifdef USE_DX11
+void CDetailManager::hw_Fill_Instances()
+{
+	// Count first so dense modded levels grow the buffer before Map. This avoids
+	// the original PR's fixed-capacity blade loss.
+	u32 required = 0;
+	for (u32 variant = 0; variant < 3; ++variant)
+	{
+		vis_list& list = m_visibles[variant];
+		for (u32 object = 0; object < objects.size(); ++object)
+			for (SlotItemVec* items : list[object])
+				required += static_cast<u32>(items->size());
+	}
+	hw_EnsureInstanceCapacity(_max(required, 1u));
+
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	CHK_DX(HW.pContext->Map(hw_instanceVB, 0, D3D_MAP_WRITE_DISCARD, 0, &mapped));
+	DetailInstanceHW* destination = static_cast<DetailInstanceHW*>(mapped.pData);
+
+	u32 total = 0;
+	for (u32 variant = 0; variant < 3; ++variant)
+	{
+		vis_list& list = m_visibles[variant];
+		for (u32 object = 0; object < objects.size(); ++object)
+		{
+			hw_inst_base[variant][object] = total;
+			xr_vector<SlotItemVec*>& visible = list[object];
+			for (SlotItemVec* items : visible)
+			{
+				for (SlotItem* item_ptr : *items)
+				{
+					SlotItem& instance = *item_ptr;
+					instance.alpha += GoToValue(instance.alpha, instance.alpha_target);
+					if (instance.alpha <= 0.f)
+						break;
+
+					DetailInstanceHW& output = destination[total++];
+					const Fmatrix& matrix = instance.mRotY_calculated;
+					output.m0.set(matrix._11, matrix._21, matrix._31, matrix._41);
+					output.m1.set(matrix._12, matrix._22, matrix._32, matrix._42);
+					output.m2.set(matrix._13, matrix._23, matrix._33, matrix._43);
+					output.normal_alpha[0] = detail_f32_to_f16(instance.normal.x);
+					output.normal_alpha[1] = detail_f32_to_f16(instance.normal.y);
+					output.normal_alpha[2] = detail_f32_to_f16(instance.normal.z);
+					output.normal_alpha[3] = detail_f32_to_f16(instance.alpha);
+					output.sun_hemi[0] = detail_f32_to_f16(instance.c_sun);
+					output.sun_hemi[1] = detail_f32_to_f16(instance.c_hemi);
+					output.sun_hemi[2] = 0;
+					output.sun_hemi[3] = 0;
+				}
+			}
+			hw_inst_count[variant][object] = total - hw_inst_base[variant][object];
+			visible.clear_not_free();
+		}
+	}
+
+	HW.pContext->Unmap(hw_instanceVB, 0);
+	hw_frame_filled = Device.dwFrame;
+}
+#endif
+
 void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave, const Fvector4& wind, 
 									const Fvector4& prev_wave, const Fvector4& prev_wind, u32 var_id, u32 lod_id, light* L)
 {
 	if (RImplementation.phase == CRender::PHASE_SMAP && var_id == 0)
 		return;
+
+#ifdef USE_DX11
+	if (!RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector))
+		return;
+	if (RImplementation.phase == CRender::PHASE_SMAP && L &&
+		!L->GMLight.is_sector_visible(RImplementation.pOutdoorSector))
+		return;
+
+	u32 total_instances = 0;
+	for (u32 object = 0; object < objects.size(); ++object)
+		total_instances += hw_inst_count[var_id][object];
+	if (total_instances == 0)
+		return;
+
+	static shared_str strConsts("consts");
+	static shared_str strWave("wave");
+	static shared_str strDir2D("dir2D");
+	static shared_str strXForm("xform");
+	static shared_str strWavePrev("wave_prev");
+	static shared_str strDir2DPrev("dir2D_prev");
+	static shared_str strPrevPos("benders_prevpos");
+	static shared_str strPos("benders_pos");
+	static shared_str strGrassSetup("benders_setup");
+	static shared_str strGrassAlign("grass_align");
+	static shared_str strFadeParams("dt_fade_params");
+
+	IGame_Persistent::grass_data& grass_data = g_pGamePersistent->grass_shader_data;
+	Fvector4 player_pos = {0, 0, 0, 0};
+	const int benders_count = _min(16, ps_ssfx_grass_interactive.y + 1);
+	if (ps_ssfx_grass_interactive.x > 0)
+		player_pos.set(Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, -1);
+
+	Fvector4 fade_params;
+	if (fade_distance <= -1.f)
+		fade_params.set(2.f, 0.f, light_position.x, light_position.z);
+	else
+		fade_params.set(1.f, fade_distance, 0.f, 0.f);
+
+	u32 max_passes = 1;
+	for (u32 object = 0; object < objects.size(); ++object)
+	{
+		if (!hw_inst_count[var_id][object])
+			continue;
+		ShaderElement* element = objects[object]->shader->E[lod_id]._get();
+		if (element)
+			max_passes = _max(max_passes, static_cast<u32>(element->passes.size()));
+	}
+
+	for (u32 pass = 0; pass < max_passes; ++pass)
+	{
+		ShaderElement* current_element = nullptr;
+		u32 vertex_offset = 0;
+		u32 index_offset = 0;
+		for (u32 object = 0; object < objects.size(); ++object)
+		{
+			CDetail& detail = *objects[object];
+			const u32 count = hw_inst_count[var_id][object];
+			ShaderElement* element = detail.shader->E[lod_id]._get();
+			if (count && element && pass < element->passes.size())
+			{
+				if (element != current_element)
+				{
+					current_element = element;
+					RCache.set_Element(element, pass);
+					RImplementation.apply_lmaterial();
+					RCache.set_c(strConsts, consts);
+					RCache.set_c(strWave, wave);
+					RCache.set_c(strDir2D, wind);
+					RCache.set_c(strXForm, Device.mFullTransform);
+					RCache.set_c(strGrassAlign, ps_ssfx_terrain_grass_align);
+					RCache.set_c(strWavePrev, prev_wave);
+					RCache.set_c(strDir2DPrev, prev_wind);
+					RCache.set_c(strFadeParams, fade_params);
+
+					if (ps_ssfx_grass_interactive.y > 0)
+					{
+						RCache.set_c(strGrassSetup, ps_ssfx_int_grass_params_1);
+						void* current_data = nullptr;
+						RCache.get_ConstantDirect(strPos, benders_count * sizeof(Fvector4) * 2,
+							&current_data, nullptr, nullptr);
+						Fvector4* current_benders = static_cast<Fvector4*>(current_data);
+						if (current_benders)
+						{
+							current_benders[0].set(player_pos);
+							current_benders[16].set(0.f, -99.f, 0.f, 1.f);
+							for (int bend = 1; bend < benders_count; ++bend)
+							{
+								current_benders[bend].set(grass_data.pos[bend].x, grass_data.pos[bend].y,
+									grass_data.pos[bend].z, grass_data.radius_curr[bend]);
+								current_benders[bend + 16].set(grass_data.dir[bend].x, grass_data.dir[bend].y,
+									grass_data.dir[bend].z, grass_data.str[bend]);
+							}
+						}
+
+						void* previous_data = nullptr;
+						RCache.get_ConstantDirect(strPrevPos, benders_count * sizeof(Fvector4) * 2,
+							&previous_data, nullptr, nullptr);
+						Fvector4* previous_benders = static_cast<Fvector4*>(previous_data);
+						if (previous_benders)
+						{
+							for (int bend = 0; bend < benders_count; ++bend)
+							{
+								previous_benders[bend].set(grass_data.prev_pos[bend]);
+								previous_benders[bend + 16].set(grass_data.prev_dir[bend]);
+							}
+						}
+					}
+				}
+
+				RCache.RenderInstanced(D3DPT_TRIANGLELIST, count, vertex_offset, 0,
+					detail.number_vertices, index_offset, detail.number_indices / 3,
+					hw_inst_base[var_id][object]);
+				Device.Statistic->RenderDUMP_DT_Count += count;
+				RCache.stat.r.s_details.add(count * detail.number_vertices);
+			}
+			vertex_offset += detail.number_vertices;
+			index_offset += detail.number_indices;
+		}
+	}
+#else
 
 	static shared_str strConsts("consts");
 	static shared_str strWave("wave");
@@ -389,4 +616,5 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 		vOffset += hw_BatchSize * Object.number_vertices;
 		iOffset += hw_BatchSize * Object.number_indices;
 	}
+#endif
 }

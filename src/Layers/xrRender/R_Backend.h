@@ -417,6 +417,11 @@ public:
 	ICF void Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC);
 
 #ifdef USE_DX11
+	ICF void RenderInstanced(D3DPRIMITIVETYPE T, u32 instanceCount, u32 baseV, u32 startV, u32 countV,
+						   u32 startI, u32 PC, u32 startInstance = 0);
+#endif
+
+#ifdef USE_DX11
 	ICF void Compute(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ);
 #endif
 

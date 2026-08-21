@@ -17,12 +17,26 @@ const int quant = 16384;
 const int c_hdr = 10;
 const int c_size = 4;
 
+#ifdef USE_DX11
+static D3DVERTEXELEMENT9 dwDecl[] =
+{
+	{0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+	{0, 12, D3DDECLTYPE_SHORT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+	{1, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
+	{1, 16, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 2},
+	{1, 32, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 3},
+	{1, 48, D3DDECLTYPE_FLOAT16_4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 4},
+	{1, 56, D3DDECLTYPE_FLOAT16_4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 5},
+	D3DDECL_END()
+};
+#else
 static D3DVERTEXELEMENT9 dwDecl[] =
 {
 	{0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0}, // pos
 	{0, 12, D3DDECLTYPE_SHORT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0}, // uv
 	D3DDECL_END()
 };
+#endif
 
 #pragma pack(push,1)
 struct vertHW
@@ -53,14 +67,22 @@ void CDetailManager::hw_Load_Geom()
 	clamp(hw_BatchSize, (u32)0, (u32)64);
 	Msg("* [DETAILS] VertexConsts(%d), Batch(%d)", u32(HW.Caps.geometry.dwRegisters), hw_BatchSize);
 
+	// DX11 stores one mesh copy and supplies transforms through a per-instance
+	// stream. Other renderers retain the legacy constant-batched copies.
+#ifdef USE_DX11
+	const u32 dwCopies = 1;
+#else
+	const u32 dwCopies = hw_BatchSize;
+#endif
+
 	// Pre-process objects
 	u32 dwVerts = 0;
 	u32 dwIndices = 0;
 	for (u32 o = 0; o < objects.size(); o++)
 	{
 		const CDetail& D = *objects[o];
-		dwVerts += D.number_vertices * hw_BatchSize;
-		dwIndices += D.number_indices * hw_BatchSize;
+		dwVerts += D.number_vertices * dwCopies;
+		dwIndices += D.number_indices * dwCopies;
 	}
 	u32 vSize = sizeof(vertHW);
 	Msg("* [DETAILS] %d v(%d), %d p", dwVerts, vSize, dwIndices / 3);
@@ -91,7 +113,7 @@ void CDetailManager::hw_Load_Geom()
 		for (u32 o = 0; o < objects.size(); o++)
 		{
 			const CDetail& D = *objects[o];
-			for (u32 batch = 0; batch < hw_BatchSize; batch++)
+			for (u32 batch = 0; batch < dwCopies; batch++)
 			{
 				u32 mid = batch * c_size;
 				for (u32 v = 0; v < D.number_vertices; v++)
@@ -131,7 +153,7 @@ void CDetailManager::hw_Load_Geom()
 		{
 			const CDetail& D = *objects[o];
 			u16 offset = 0;
-			for (u32 batch = 0; batch < hw_BatchSize; batch++)
+			for (u32 batch = 0; batch < dwCopies; batch++)
 			{
 				for (u32 i = 0; i < u32(D.number_indices); i++)
 					*pI++ = u16(u16(D.indices[i]) + u16(offset));
@@ -149,7 +171,43 @@ void CDetailManager::hw_Load_Geom()
 
 	// Declare geometry
 	hw_Geom.create(dwDecl, hw_VB, hw_IB);
+
+#ifdef USE_DX11
+	hw_EnsureInstanceCapacity(hw_InitialInstanceCapacity);
+	hw_frame_filled = u32(-1);
+#endif
 }
+
+#ifdef USE_DX11
+void CDetailManager::hw_EnsureInstanceCapacity(u32 required)
+{
+	if (required <= hw_instance_capacity)
+		return;
+
+	u32 new_capacity = hw_instance_capacity ? hw_instance_capacity : hw_InitialInstanceCapacity;
+	while (new_capacity < required && new_capacity <= (u32(-1) >> 1))
+		new_capacity <<= 1;
+	R_ASSERT2(new_capacity >= required, "DX11 detail instance capacity overflow");
+
+	if (hw_instanceVB)
+	{
+		HW.stats_manager.decrement_stats_vb(hw_instanceVB);
+		_RELEASE(hw_instanceVB);
+	}
+
+	D3D_BUFFER_DESC desc;
+	ZeroMemory(&desc, sizeof(desc));
+	desc.ByteWidth = new_capacity * hw_InstanceStride;
+	desc.Usage = D3D_USAGE_DYNAMIC;
+	desc.BindFlags = D3D_BIND_VERTEX_BUFFER;
+	desc.CPUAccessFlags = D3D_CPU_ACCESS_WRITE;
+	R_CHK(HW.pDevice->CreateBuffer(&desc, nullptr, &hw_instanceVB));
+	HW.stats_manager.increment_stats_vb(hw_instanceVB);
+	hw_instance_capacity = new_capacity;
+	Msg("* [DETAILS] DX11 InstanceVB(%uK), cap(%u)",
+		(hw_instance_capacity * hw_InstanceStride) / 1024, hw_instance_capacity);
+}
+#endif
 
 void CDetailManager::hw_Unload()
 {
@@ -159,6 +217,12 @@ void CDetailManager::hw_Unload()
 	HW.stats_manager.decrement_stats_ib(hw_IB);
 	_RELEASE(hw_IB);
 	_RELEASE(hw_VB);
+#ifdef USE_DX11
+	if (hw_instanceVB)
+		HW.stats_manager.decrement_stats_vb(hw_instanceVB);
+	_RELEASE(hw_instanceVB);
+	hw_instance_capacity = 0;
+#endif
 }
 
 #if !defined(USE_DX10) && !defined(USE_DX11)

@@ -87,6 +87,13 @@ CDetailManager::CDetailManager()
 	hw_BatchSize = 0;
 	hw_VB = 0;
 	hw_IB = 0;
+#ifdef USE_DX11
+	hw_instanceVB = 0;
+	hw_instance_capacity = 0;
+	hw_frame_filled = u32(-1);
+	ZeroMemory(hw_inst_base, sizeof(hw_inst_base));
+	ZeroMemory(hw_inst_count, sizeof(hw_inst_count));
+#endif
 	m_time_rot_1 = 0;
 	m_time_rot_2 = 0;
 	m_time_pos = 0;
