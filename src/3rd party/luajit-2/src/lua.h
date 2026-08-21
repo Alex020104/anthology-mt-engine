@@ -226,6 +226,11 @@ LUA_API int  (lua_status) (lua_State *L);
 #define LUA_GCSTEP		5
 #define LUA_GCSETPAUSE		6
 #define LUA_GCSETSTEPMUL	7
+/* X-Ray extension: advance incremental GC, but leave the VM in the regular
+** propagation state when the next operation would enter the atomic phase. */
+#define LUA_GCSTEPDEFERATOMIC	8
+/* X-Ray extension: read the internal incremental collector state. */
+#define LUA_GCSTATE		9
 
 LUA_API int (lua_gc) (lua_State *L, int what, int data);
 

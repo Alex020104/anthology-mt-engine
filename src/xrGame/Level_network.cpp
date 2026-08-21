@@ -22,6 +22,7 @@
 
 #include "../xrphysics/physicscommon.h"
 extern ENGINE_API bool g_dedicated_server;
+extern BOOL psLua_ParallelGC;
 
 const int max_objects_size = 2 * 1024;
 const int max_objects_size_in_save = 8 * 1024;
@@ -190,6 +191,8 @@ void CLevel::net_Stop()
 	}
 
     Msg("Device.LuaGC clear");
+	if (Device.LuaGC && psLua_ParallelGC)
+		lua_gc(ai().script_engine().lua(), LUA_GCRESTART, -1);
     Device.LuaGC.clear();
     Device.LuaGCFull.clear();
     Device.LuaGCDebug.clear();

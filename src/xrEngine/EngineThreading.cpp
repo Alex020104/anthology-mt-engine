@@ -348,9 +348,13 @@ void XRay::Engine::GameThread()
 		{
 			++Device.LuaGCCount;
 			frame_lua_gc_calls.fetch_add(1, std::memory_order_relaxed);
-			if (Device.LuaGC() == 1)
+			const int gc_result = Device.LuaGC();
+			// 1 is a completed cycle; 2 means v82 deliberately stopped before
+			// atomic or the next threshold has not been reached. In both cases no
+			// second call in this frame can make useful progress.
+			if (gc_result != 0)
 			{
-				Device.LuaGCDone = true;
+				Device.LuaGCDone = gc_result == 1;
 				break;
 			}
 		}

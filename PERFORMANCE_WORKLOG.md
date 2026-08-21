@@ -2570,3 +2570,67 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   source files are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260821_v81_pre_low_churn_scans`.
 - A new game and shader-cache purge are not required. The game was not launched.
+
+## 2026-08-21 - v82 Lua GC frame pacing candidate
+
+### Synchronized video and log evidence
+
+- The latest capture is `AnomalyDX11AVX.exe 2026.08.21 - 06.48.23.04.mp4`,
+  63.88 seconds at 1920x1080. Exact duplicate-frame clusters occur at
+  13.38-14.27 and 18.88-18.98 seconds, including 33-67 ms visible holds.
+- High-resolution frames at both events show GPU utilization falling to zero
+  while one CPU core becomes busy. This excludes a saturated GPU, late LOD/HOM
+  geometry or a general all-core limit as the direct cause of these ticks.
+- The synchronized v81 engine profile repeatedly records 48-57 ms complete
+  frames, 46-54 ms worker waits and 46-55 ms Lua GC peaks. Scheduler,
+  `seqParallel` and the remaining frame-MT work stay below one millisecond in
+  the same windows. The main thread is waiting for the serialized GameThread
+  collector phase.
+- The v79 companion was forcing `LUA_GCSTEP` on every available frame, even
+  below the collector pause threshold. That produced roughly 1000-1400 calls
+  per 300 frames and repeatedly drove a complete cycle. LuaJIT's atomic phase
+  is indivisible, so the small propagation step and worker placement could not
+  cap its 46-55 ms tail.
+
+### Corrected collector admission
+
+- LuaJIT now exposes a step operation which stops before the transition from
+  propagation into atomic. It deliberately leaves the VM in `GCSpropagate`,
+  preserving normal write barriers and JIT traces. This differs from the
+  rejected v60 experiment, which exposed `GCSatomic` to the mutator and caused
+  its approximately 10-FPS regression.
+- A cycle starts only when the Lua heap reaches `max(live * pause / 100,
+  live + 64 MB)`. Automatic allocation-triggered collection is stopped while
+  the level controller owns GC, preventing an unexpected atomic phase inside
+  FrameMove.
+- Incremental propagation still runs in the existing serialized render-overlap
+  worker with the accepted v76/v81 caps: step 10, at most six calls and 1200
+  microseconds. When atomic becomes pending, it is admitted after 350 ms without
+  player/camera motion. A 120-second ceiling prevents unbounded postponement.
+- Full collections at safe load boundaries are retained and reset the next
+  cycle threshold. Automatic GC is restored before level teardown. Renderer,
+  loading, A-Life/NPC placement, PiP, saves and the three accepted v81 addon
+  patches are unchanged.
+- IX-Ray's `LUA_GCTIMEOUT` was inspected as a reference. Its time check occurs
+  between `lj_gc_step()` calls and therefore cannot interrupt LuaJIT atomic;
+  v82 adapts the pacing idea but gates entry into atomic itself.
+
+### Validation and candidate artifacts
+
+- The standalone v82 companion passes the Lua 5.1 parser from both the tracked
+  source copy and `D:/ANTHOLOGY_DEV/addons`. It is linked into MO2 and enabled
+  above the three v81 modules; the superseded v79 continuous-GC companion is
+  disabled.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully. Candidate
+  hashes are:
+  - regular DX11 EXE:
+    `F68BD1CCA4A88E8550415B61725209A3711765E6791F4EBBFB5629B724EE9249`;
+  - regular DX11 PDB:
+    `B6F3C09887E76AF17D36F69F49DE23AAA6A1F0D527E5CB526328441BD9FD90FF`;
+  - DX11-AVX EXE:
+    `111B009709932CE0F6299C1F511C95CBBBED1CDEE4F26AE483914A28361BE848`;
+  - DX11-AVX PDB:
+    `113CA9578E5C3A59FF3BD31EDB3C4C5798F8D3B47BE61FFF9D2612A6C3CAD628`.
+- The startup marker is `[anthology/v82] thresholded motion-safe Lua GC active`.
+  A new game and shader-cache purge are not required. Installation remains
+  pending while the currently running v81 game process owns the AVX binary.

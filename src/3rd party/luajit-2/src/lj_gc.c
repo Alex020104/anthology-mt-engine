@@ -669,7 +669,7 @@ static size_t gc_onestep(lua_State *L)
 }
 
 /* Perform a limited amount of incremental GC steps. */
-int LJ_FASTCALL lj_gc_step(lua_State *L)
+static int gc_step_limited(lua_State *L, int defer_atomic)
 {
   global_State *g = G(L);
   MSize lim;
@@ -681,6 +681,18 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
   if (g->gc.total > g->gc.threshold)
     g->gc.debt += g->gc.total - g->gc.threshold;
   do {
+    /* Stop before changing GCSpropagate to GCSatomic. Leaving the VM in
+    ** GCSatomic while the mutator runs forces LuaJIT traces to exit and was the
+    ** cause of the rejected v60 10-FPS regression. The propagation state keeps
+    ** normal barriers and JIT execution valid until the engine admits atomic
+    ** work during an idle player/camera interval. */
+    if (defer_atomic &&
+        (g->gc.state == GCSatomic ||
+         (g->gc.state == GCSpropagate && gcref(g->gc.gray) == NULL))) {
+      g->gc.threshold = LJ_MAX_MEM;
+      g->vmstate = ostate;
+      return 2;
+    }
     lim -= (MSize)gc_onestep(L);
     if (g->gc.state == GCSpause) {
       g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
@@ -698,6 +710,16 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
     g->vmstate = ostate;
     return 0;
   }
+}
+
+int LJ_FASTCALL lj_gc_step(lua_State *L)
+{
+  return gc_step_limited(L, 0);
+}
+
+int LJ_FASTCALL lj_gc_step_defer_atomic(lua_State *L)
+{
+  return gc_step_limited(L, 1);
 }
 
 /* Ditto, but fix the stack top first. */
