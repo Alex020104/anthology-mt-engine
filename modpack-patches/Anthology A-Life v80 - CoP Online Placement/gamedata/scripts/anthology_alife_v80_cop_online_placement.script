@@ -1,0 +1,149 @@
+local original_net_spawn = nil
+local wrapper_installed = false
+local collapsed_batches = {}
+
+local function smart_for(se_obj)
+	if not se_obj then
+		return nil, nil
+	end
+
+	local smart_id = se_obj.m_smart_terrain_id
+	if not (smart_id and smart_id ~= 65535) then
+		return nil, nil
+	end
+
+	local simulation = alife()
+	return simulation and simulation:object(smart_id), smart_id
+end
+
+local function assigned_job_vertex(se_obj, smart)
+	if not (se_obj and smart and smart.npc_info) then
+		return nil
+	end
+
+	-- CoP does not teleport a squad which is still arriving at the smart.
+	if smart.arriving_npc and smart.arriving_npc[se_obj.id] then
+		return nil
+	end
+
+	local npc_info = smart.npc_info[se_obj.id]
+	local task = npc_info and npc_info.job and npc_info.job.alife_task
+	return task and task:level_vertex_id()
+end
+
+local function duplicate_offline_count(smart, level_vertex)
+	if not (smart and smart.npc_info and db and db.offline_objects) then
+		return 0
+	end
+
+	local count = 0
+	for npc_id in pairs(smart.npc_info) do
+		local offline = db.offline_objects[npc_id]
+		if offline and offline.level_vertex_id == level_vertex then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function is_collapsed_vertex(smart_id, smart, level_vertex)
+	if not (smart_id and smart and level_vertex) then
+		return false
+	end
+
+	local smart_batches = collapsed_batches[smart_id]
+	if not smart_batches then
+		smart_batches = {}
+		collapsed_batches[smart_id] = smart_batches
+	end
+
+	local remaining = smart_batches[level_vertex]
+	if not remaining then
+		remaining = duplicate_offline_count(smart, level_vertex)
+		if remaining < 2 then
+			return false
+		end
+	end
+
+	remaining = remaining - 1
+	if remaining > 0 then
+		smart_batches[level_vertex] = remaining
+	else
+		smart_batches[level_vertex] = nil
+	end
+	return true
+end
+
+local function safe_set_vertex(npc, level_vertex)
+	if not (npc and level_vertex) then
+		return false
+	end
+
+	local position_ok, position = pcall(level.vertex_position, level_vertex)
+	if not (position_ok and position) then
+		return false
+	end
+
+	local set_ok = pcall(npc.set_npc_position, npc, position)
+	return set_ok
+end
+
+local function install_online_placement_wrapper()
+	if wrapper_installed then
+		return
+	end
+
+	local binder = xr_motivator and xr_motivator.motivator_binder
+	local current = binder and binder.net_spawn
+	if not current then
+		return
+	end
+
+	original_net_spawn = current
+	binder.net_spawn = function(self, se_abstract)
+		local npc = self and self.object
+		local id = npc and npc:id()
+		local simulation = alife()
+		local se_obj = (simulation and id) and simulation:object(id) or se_abstract
+		local smart, smart_id = smart_for(se_obj)
+
+		-- Capture the position before the active smart-terrain extension clears
+		-- db.offline_objects. Exact unique positions have priority. A duplicate
+		-- squad-centre batch is repaired to the already assigned CoP job instead.
+		local offline = id and db and db.offline_objects and db.offline_objects[id]
+		local offline_vertex = offline and offline.level_vertex_id
+		local restore_vertex = offline_vertex
+		if offline_vertex and is_collapsed_vertex(smart_id, smart, offline_vertex) then
+			restore_vertex = nil
+		end
+
+		if not restore_vertex then
+			local spawned = id and db and db.spawned_vertex_by_id
+			restore_vertex = spawned and spawned[id]
+		end
+
+		local result = original_net_spawn(self, se_abstract)
+		if result == false then
+			return result
+		end
+
+		-- The job may be assigned by setup_gulag during original_net_spawn.
+		-- Resolve it afterwards only when no exact/offered vertex survived.
+		if not restore_vertex then
+			se_obj = (simulation and id) and simulation:object(id) or se_obj
+			smart = smart_for(se_obj)
+			restore_vertex = assigned_job_vertex(se_obj, smart)
+		end
+
+		safe_set_vertex(npc, restore_vertex)
+		return result
+	end
+
+	wrapper_installed = true
+	printf("* [anthology/alife-v80] CoP online placement wrapper active")
+end
+
+function on_game_start()
+	collapsed_batches = {}
+	install_online_placement_wrapper()
+end

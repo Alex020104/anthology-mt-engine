@@ -2466,3 +2466,41 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260821_v79_pre_v78_fps_regression`.
 - No new game or shader-cache purge is required. MO2 was closed cleanly and
   the game was not launched.
+
+## 2026-08-21 - v80 original CoP online NPC placement
+
+### Why v78 still allowed centre spawns
+
+- The active `z_npc_footsteps.script` calls
+  `smart_terrain.setup_gulag_and_logic_on_spawn` before it consumes the saved
+  offline vertex. The active `smart_terrain_ex.script` may clear that table
+  while changing/starting an assigned job.
+- Original Call of Pripyat resolves a spawned vertex, saved offline vertex or
+  assigned smart-job position before setting up the new online logic. The
+  modpack inversion meant that v78 sometimes had no vertex left to repair; its
+  startup marker proved wrapper installation, not successful placement.
+
+### Isolated compatibility correction
+
+- A late wrapper around the already active motivator `net_spawn` captures the
+  offline vertex before the original binder and restores it before the first
+  rendered gameplay frame. It does not replace Exo/footstep binder logic.
+- A unique saved position has priority. A duplicate squad-centre batch is
+  redirected to the already assigned smart job. NPCs whose squad is still in
+  `arriving_npc` are not teleported to a destination job.
+- The correction has no recurring update, global NPC scan, wider online range,
+  renderer change or save field. v78's Lua wrapper is disabled, while its paired
+  engine-side stationary-member preservation remains in the v79 binaries.
+
+### Installation and rollback
+
+- `Anthology A-Life v80 - CoP Online Placement` passes the Lua 5.1 parser, is
+  mirrored under `D:/ANTHOLOGY_DEV/addons`, linked into MO2 and enabled. The
+  v78 A-Life Lua addon is disabled to prevent two wrappers of the same path.
+- Mocked binder-path checks pass for a unique offline vertex, a collapsed
+  duplicate batch and an arriving squad which must not be job-teleported.
+- The DX11 and DX11-AVX v79 binaries are unchanged. No rebuild is required for
+  this isolated Lua compatibility layer.
+- Exact pre-v80 active mod list, v78/v79 addon copies and runtime log are backed
+  up at `E:/ANTHOLOGY_BACKUPS/20260821_v80_pre_cop_online_placement`.
+- A new game and shader-cache purge are not required. The game was not launched.
