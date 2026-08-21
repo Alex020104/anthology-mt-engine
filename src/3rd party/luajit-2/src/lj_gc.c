@@ -18,6 +18,7 @@
 #include "lj_udata.h"
 #include "lj_meta.h"
 #include "lj_state.h"
+#include "lj_dispatch.h"
 #include "lj_frame.h"
 #if LJ_HASFFI
 #include "lj_ctype.h"
@@ -566,12 +567,47 @@ void lj_gc_freeall(global_State *g)
     gc_fullsweep(g, &g->strhash[i]);
 }
 
+LUA_API void lua_xray_gc_atomic_profile_configure(lua_State *L,
+							   lua_XRayGCTickFunction clock)
+{
+  GG_State *GG = G2GG(G(L));
+  GG->xray_gc_atomic_clock = clock;
+  /* Do not report an atomic phase completed before this configuration. */
+  GG->xray_gc_atomic_consumed_sequence =
+    GG->xray_gc_atomic_profile.sequence;
+}
+
+LUA_API int lua_xray_gc_atomic_profile_snapshot(lua_State *L,
+						 lua_XRayGCAtomicProfile *profile)
+{
+  GG_State *GG;
+  unsigned long long sequence;
+  if (profile == NULL)
+    return 0;
+  GG = G2GG(G(L));
+  sequence = GG->xray_gc_atomic_profile.sequence;
+  if (sequence == 0 || sequence == GG->xray_gc_atomic_consumed_sequence)
+    return 0;
+  *profile = GG->xray_gc_atomic_profile;
+  GG->xray_gc_atomic_consumed_sequence = sequence;
+  return 1;
+}
+
 /* -- Collector ----------------------------------------------------------- */
 
 /* Atomic part of the GC cycle, transitioning from mark to sweep phase. */
 static void atomic(global_State *g, lua_State *L)
 {
+  GG_State *GG = G2GG(g);
+  lua_XRayGCTickFunction clock = GG->xray_gc_atomic_clock;
+  lua_XRayGCAtomicProfile profile;
+  unsigned long long atomic_started_at = 0;
+  unsigned long long phase_started_at = 0;
+  unsigned long long now;
   size_t udsize;
+
+  if (clock != NULL)
+    atomic_started_at = phase_started_at = clock();
 
   gc_mark_uv(g);  /* Need to remark open upvalues (the thread may be dead). */
   gc_propagate_gray(g);  /* Propagate any left-overs. */
@@ -584,13 +620,38 @@ static void atomic(global_State *g, lua_State *L)
   gc_mark_gcroot(g);  /* Mark GC roots (again). */
   gc_propagate_gray(g);  /* Propagate all of the above. */
 
+  if (clock != NULL) {
+    now = clock();
+    profile.roots_ticks = now - phase_started_at;
+    phase_started_at = now;
+  }
+
   setgcrefr(g->gc.gray, g->gc.grayagain);  /* Empty the 2nd chance list. */
   setgcrefnull(g->gc.grayagain);
   gc_propagate_gray(g);  /* Propagate it. */
 
+  if (clock != NULL) {
+    now = clock();
+    profile.grayagain_ticks = now - phase_started_at;
+    phase_started_at = now;
+  }
+
   udsize = lj_gc_separateudata(g, 0);  /* Separate userdata to be finalized. */
+
+  if (clock != NULL) {
+    now = clock();
+    profile.separateudata_ticks = now - phase_started_at;
+    phase_started_at = now;
+  }
+
   gc_mark_mmudata(g);  /* Mark them. */
   udsize += gc_propagate_gray(g);  /* And propagate the marks. */
+
+  if (clock != NULL) {
+    now = clock();
+    profile.mmudata_ticks = now - phase_started_at;
+    phase_started_at = now;
+  }
 
   /* All marking done, clear weak tables. */
   gc_clearweak(gcref(g->gc.weak));
@@ -600,6 +661,14 @@ static void atomic(global_State *g, lua_State *L)
   g->strempty.marked = g->gc.currentwhite;
   setmref(g->gc.sweep, &g->gc.root);
   g->gc.estimate = g->gc.total - (MSize)udsize;  /* Initial estimate. */
+
+  if (clock != NULL) {
+    now = clock();
+    profile.weak_sweep_ticks = now - phase_started_at;
+    profile.total_ticks = now - atomic_started_at;
+    profile.sequence = GG->xray_gc_atomic_profile.sequence + 1;
+    GG->xray_gc_atomic_profile = profile;
+  }
 }
 
 /* GC state machine. Returns a cost estimate for each step performed. */

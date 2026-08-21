@@ -2785,3 +2785,92 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `[A-Life/v84] switch budget 0.810 ms`.
 - MO2 was restarted and is responsive. A new game and shader-cache purge are
   not required. The game was not launched.
+
+## 2026-08-21 - v85 LuaJIT atomic telemetry and Interactive PDA warm-up
+
+### Remaining V84 tick evidence
+
+- The accepted V84 FPS path is retained. In 75 clean gameplay profile windows,
+  the Lua GC maximum had a 38.68 ms median, 42.31 ms p90 and 50.53 ms peak;
+  69 of 75 windows exceeded 30 ms. Main-thread secondary-worker wait had a
+  29.55 ms median. The 300-frame windows lasted roughly four to seven seconds,
+  matching the recurring reported tick.
+- LuaJIT enters `atomic()` from one `lua_gc()` call. The existing 1200-us
+  allowance is checked before that call and cannot interrupt the in-flight
+  35-50 ms phase. Reducing the feed rate, deferring collection or moving the
+  single VM to a competing thread are therefore not repeated after the V82/V83
+  heap, crash and FPS regressions.
+- Frame-by-frame video analysis found a separate first-open Interactive PDA
+  stall: 250 ms followed by 366.7 ms before the device-opening animation. GPU
+  usage was 45% and total CPU usage 25%, excluding sustained GPU/CPU saturation.
+  Source inspection identified synchronous construction of all seven
+  `CustomPDAX` submenus, including the complete games and Sudoku control tree.
+
+### Minimal V85 instrumentation and PDA correction
+
+- LuaJIT now records the duration of five existing atomic sections without
+  changing their order or collector state: remark/roots, `grayagain`, userdata
+  separation, mmudata propagation and weak-table/sweep setup. There are no
+  allocations or log writes inside `atomic()`; a QPC snapshot is consumed by
+  the owner thread only after `lua_gc()` returns, and only spikes of at least
+  10 ms are logged.
+- XRay-only state is appended after `GG_State::bcff`, preserving every existing
+  VM/JIT offset. The V84 collector cadence remains exactly 76 KB x ten calls,
+  pause/stepmul 200, 1200-us overlap and the 12-ms adaptive frame guard. The V84
+  A-Life 0.81-ms switch budget is unchanged.
+- Coarse frame telemetry now also records maximum `FrameMove` and `seqRender`
+  time. This distinguishes Lua/actor/UI stalls from renderer and worker waits
+  without enabling expensive per-item profiling.
+- `Anthology Performance v85 - Interactive PDA` is an additive one-script
+  module. It calls the existing `pda_inter_gui.get_pda_ui()` once during
+  `actor_on_first_update`, moving the same one-time control construction into
+  the loading/first-update phase. It does not override the original or V68/V81
+  scripts and does not alter UI layout, tasks, callbacks or save data. The first
+  level load may be about 0.6 seconds longer; the first PDA key press no longer
+  performs that construction.
+
+### Validation, installation and rollback
+
+- Both standalone scripts pass the Lua 5.1 parser. `git diff --check` passes.
+  Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully:
+  - regular DX11 EXE:
+    `E7DDB162111D5914F74096A42E4072833B330F347EB3D0B86F5C2C25934034F5`;
+  - regular DX11 PDB:
+    `D09BE2E5C322D5925B2EE6A7337E222571A3439830E70B9651686149631B732A`;
+  - DX11-AVX EXE:
+    `950F34FDAA2360F9D985888495121D390DEB3C514688721B6A187E87A2F38218`;
+  - DX11-AVX PDB:
+    `FB303DE297BE1BD1E297179C30717977593B2D23D4D3492B34F5EE81E07C6A04`.
+- Candidate and installed hashes match exactly. LAN binaries and the unrelated
+  untracked repository-root `AnomalyDX11AVX.exe` were not touched.
+- `Anthology Performance v85 - Atomic GC Telemetry` and `Anthology Performance
+  v85 - Interactive PDA` are stored independently under
+  `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and enabled first. V84 remains
+  installed but disabled; V83 and V82 remain disabled. Accepted V81 HUD/PDA
+  patches and the V80 CoP placement module are unchanged.
+- Exact pre-v85 binaries, profile, user settings, V84 log/addon, source archive
+  and the pre-install patch are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260821_v85_pre_v84_atomic_gc_pda`.
+- Expected markers are `[anthology/v85]`, `[Lua GC/v85]`,
+  `[Lua GC/xray-atomic]` and `[anthology/v85/pda]`. A new game and shader-cache
+  purge are not required. The game was not launched.
+
+### Runtime result (not an accepted smoothness build)
+
+- The controlled 10:43-10:53 session exited cleanly and produced 268 complete
+  atomic snapshots. Atomic time averaged 27.65 ms, reached 50.81 ms at p95 and
+  peaked at 60.06 ms. `lj_gc_separateudata()` consumed 65.73% and mmudata
+  marking/propagation another 28.82%; together they account for 94.55% of the
+  stop-the-world phase. Atomic events of at least 45 ms occurred about once per
+  5.4 seconds, matching the reported recurring tick.
+- V85 therefore did not claim or deliver a tick reduction: it isolated the
+  exact bottleneck while retaining the accepted V84 FPS/load/NPC path. The
+  next correction must remove ordinary luabind wrapper userdata from the
+  monolithic finalizer walk instead of changing GC cadence again.
+- After the quickload, a separate residual tail was recorded in `seqParallel`:
+  GameThread 166.41 ms, `seqParallel` 157.94 ms and secondary wait 158.93 ms.
+  This is not the regular atomic tick and remains a separate follow-up target.
+- Interactive PDA construction was successfully moved to first update
+  (518.69-646.88 ms in the two loads), but its diagnostic `printf` retained a
+  literal `%d` in this build. V86 must either defer the warm-up more safely or
+  disable this optional module while the GC correction is tested.

@@ -1,0 +1,44 @@
+-- Anthology v85: move Interactive PDA's one-time UI construction into the
+-- first-update/loading phase. The original addon builds every submenu, game,
+-- task widget and callback synchronously the first time get_pda_ui() is called.
+
+local warmup_complete = false
+local warmup_attempted = false
+
+local function clock_ms()
+	if time_continual then
+		return time_continual()
+	end
+	return time_global()
+end
+
+local function warmup_interactive_pda()
+	if warmup_complete or warmup_attempted then return end
+	if not (db and db.actor) then return end
+
+	local pda_ui = rawget(_G, "pda_inter_gui")
+	if not (pda_ui and pda_ui.get_pda_ui) then
+		printf("! [anthology/v85/pda] warm-up skipped: pda_inter_gui is unavailable")
+		return
+	end
+
+	warmup_attempted = true
+	local started = clock_ms()
+	local ok, result = pcall(pda_ui.get_pda_ui)
+	local elapsed = clock_ms() - started
+
+	if ok and result then
+		warmup_complete = true
+		printf("* [anthology/v85/pda] Interactive PDA UI cached during first update in %d ms", elapsed)
+	else
+		printf("! [anthology/v85/pda] warm-up failed after %d ms: %s", elapsed, tostring(result))
+	end
+end
+
+function actor_on_first_update()
+	warmup_interactive_pda()
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end

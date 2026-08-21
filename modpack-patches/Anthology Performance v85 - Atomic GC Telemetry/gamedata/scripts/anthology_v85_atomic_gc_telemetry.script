@@ -1,0 +1,21 @@
+local commands = {
+	"lua_parallel_gc 1",
+	"lua_parallel_gc_adaptive 1",
+	"lua_parallel_gc_budget_us 1200",
+	"lua_parallel_gc_call_amount 10",
+	"lua_parallel_gc_frame_budget_us 12000",
+	"lua_parallel_gc_postload_delay_ms 0",
+	"lua_parallel_gc_pause 200",
+	"lua_parallel_gc_stepmul 200",
+	"lua_parallel_gcstep 76",
+	"lua_parallel_gc_debug 0",
+	"mt_frame_profile 1",
+	"mt_frame_profile_detail 0",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/v85] V84 FPS path with atomic phase telemetry active")
+end

@@ -67,6 +67,23 @@ typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);
 
 
 /*
+** XRay owner-thread telemetry for the non-preemptible GC atomic phase.
+** The clock callback must not allocate or call back into Lua.
+*/
+typedef unsigned long long (*lua_XRayGCTickFunction) (void);
+
+typedef struct lua_XRayGCAtomicProfile {
+  unsigned long long sequence;
+  unsigned long long total_ticks;
+  unsigned long long roots_ticks;
+  unsigned long long grayagain_ticks;
+  unsigned long long separateudata_ticks;
+  unsigned long long mmudata_ticks;
+  unsigned long long weak_sweep_ticks;
+} lua_XRayGCAtomicProfile;
+
+
+/*
 ** basic types
 */
 #define LUA_TNONE		(-1)
@@ -228,6 +245,11 @@ LUA_API int  (lua_status) (lua_State *L);
 #define LUA_GCSETSTEPMUL	7
 
 LUA_API int (lua_gc) (lua_State *L, int what, int data);
+
+LUA_API void (lua_xray_gc_atomic_profile_configure)
+  (lua_State *L, lua_XRayGCTickFunction clock);
+LUA_API int (lua_xray_gc_atomic_profile_snapshot)
+  (lua_State *L, lua_XRayGCAtomicProfile *profile);
 
 
 /*

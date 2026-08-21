@@ -66,6 +66,37 @@
 #include "alife_simulator.h"
 #include "alife_object_registry.h"
 
+namespace
+{
+unsigned long long XRayLuaGCAtomicProfileClock()
+{
+	return static_cast<unsigned long long>(CPU::QPC());
+}
+
+void XRayReportLuaGCAtomicProfile(lua_State* lua)
+{
+	lua_XRayGCAtomicProfile profile{};
+	if (!lua_xray_gc_atomic_profile_snapshot(lua, &profile))
+		return;
+	if (!mt_FrameProfile || !CPU::qpc_freq)
+		return;
+
+	const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+	const double total_ms = profile.total_ticks * ticks_to_ms;
+	if (total_ms < 10.0)
+		return;
+
+	Msg("* [Lua GC/xray-atomic] sequence=%llu total=%.2f ms "
+		"phases(remark-roots/grayagain/separateudata/mmudata/weak-sweep)=%.2f/%.2f/%.2f/%.2f/%.2f ms",
+		static_cast<unsigned long long>(profile.sequence), total_ms,
+		profile.roots_ticks * ticks_to_ms,
+		profile.grayagain_ticks * ticks_to_ms,
+		profile.separateudata_ticks * ticks_to_ms,
+		profile.mmudata_ticks * ticks_to_ms,
+		profile.weak_sweep_ticks * ticks_to_ms);
+}
+}
+
 #ifdef DEBUG
 #include "level_debug.h"
 #include "ai/stalker/ai_stalker.h"
@@ -1518,7 +1549,9 @@ void CLevel::script_gc()
 	{
 		PROF_EVENT("CLevel::script_gc");
 		const u64 profile_started_at = XRay::Engine::BeginLuaGCTaskProfile();
-		lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLUA_GCSTEP);
+		lua_State* const lua = ai().script_engine().lua();
+		lua_gc(lua, LUA_GCSTEP, psLUA_GCSTEP);
+		XRayReportLuaGCAtomicProfile(lua);
 		XRay::Engine::EndLuaGCTaskProfile(profile_started_at);
 	}
 	
@@ -1528,11 +1561,13 @@ void CLevel::script_gc()
 bool CLevel::Load(u32 dwNum)
 {
     inherited::Load(dwNum);
-	const int old_pause = lua_gc(ai().script_engine().lua(), LUA_GCSETPAUSE, psLua_ParallelGCPause);
-	const int old_step_mul = lua_gc(ai().script_engine().lua(), LUA_GCSETSTEPMUL, psLua_ParallelGCStepMul);
+	lua_State* const lua = ai().script_engine().lua();
+	lua_xray_gc_atomic_profile_configure(lua, &XRayLuaGCAtomicProfileClock);
+	const int old_pause = lua_gc(lua, LUA_GCSETPAUSE, psLua_ParallelGCPause);
+	const int old_step_mul = lua_gc(lua, LUA_GCSETSTEPMUL, psLua_ParallelGCStepMul);
 	Msg("* [Lua GC] incremental profile pause=%d (was %d), stepmul=%d (was %d)",
 		psLua_ParallelGCPause, old_pause, psLua_ParallelGCStepMul, old_step_mul);
-	Msg("* [Lua GC/v84] V81 cadence restored: step=%d calls=%d budget=%d us adaptive=%d frame-budget=%d us postload=%d ms",
+	Msg("* [Lua GC/v85] V84 cadence retained with atomic phase telemetry: step=%d calls=%d budget=%d us adaptive=%d frame-budget=%d us postload=%d ms",
 		psLua_ParallelGCStep, psLua_ParallelGC_CallAmount, psLua_ParallelGC_BudgetUs,
 		psLua_ParallelGC_Adaptive, psLua_ParallelGC_FrameBudgetUs,
 		psLua_ParallelGC_PostLoadDelayMs);
@@ -1546,11 +1581,16 @@ bool CLevel::Load(u32 dwNum)
 // demonized: called from Device, via Device.LuaGC pointer
 int CLevel::LuaGC()
 {
-	return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
+	lua_State* const lua = ai().script_engine().lua();
+	const int result = lua_gc(lua, LUA_GCSTEP, psLua_ParallelGCStep);
+	XRayReportLuaGCAtomicProfile(lua);
+	return result;
 }
 void CLevel::LuaGCFull()
 {
-	lua_gc(ai().script_engine().lua(), LUA_GCCOLLECT, 0);
+	lua_State* const lua = ai().script_engine().lua();
+	lua_gc(lua, LUA_GCCOLLECT, 0);
+	XRayReportLuaGCAtomicProfile(lua);
 }
 void CLevel::LuaGCDebug()
 {

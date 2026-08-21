@@ -759,6 +759,8 @@ void CRenderDevice::on_idle()
 			u64 seq_render = 0;
 			u64 secondary_wait = 0;
 			u64 max_total = 0;
+			u64 max_frame_move = 0;
+			u64 max_seq_render = 0;
 			u64 max_secondary_wait = 0;
 			SFrameTaskProfile tasks;
 		};
@@ -771,6 +773,8 @@ void CRenderDevice::on_idle()
 		profile.seq_render += mt_seq_render_ticks;
 		profile.secondary_wait += wait_ticks;
 		profile.max_total = std::max(profile.max_total, total_ticks);
+		profile.max_frame_move = std::max(profile.max_frame_move, mt_frame_move_ticks);
+		profile.max_seq_render = std::max(profile.max_seq_render, mt_seq_render_ticks);
 		profile.max_secondary_wait = std::max(profile.max_secondary_wait, wait_ticks);
 		profile.tasks.pre_render += task_profile.pre_render;
 		profile.tasks.post_transforms += task_profile.post_transforms;
@@ -806,7 +810,8 @@ void CRenderDevice::on_idle()
 				(double(CPU::qpc_freq) * double(profile.frames));
 			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
 			Msg("* [mt-frame/profile] frames=%u avg(total/frame/render/wait)=%.2f/%.2f/%.2f/%.2f ms "
-				"workers(pre/post/bones/game/lua-gc/vision)=%.2f/%.2f/%.2f/%.2f/%.2f/%.2f ms max(total/wait)=%.2f/%.2f ms",
+				"workers(pre/post/bones/game/lua-gc/vision)=%.2f/%.2f/%.2f/%.2f/%.2f/%.2f ms "
+				"max(total/frame/render/wait)=%.2f/%.2f/%.2f/%.2f ms",
 				profile.frames, profile.total * ticks_to_average_ms,
 				profile.frame_move * ticks_to_average_ms, profile.seq_render * ticks_to_average_ms,
 				profile.secondary_wait * ticks_to_average_ms,
@@ -816,7 +821,10 @@ void CRenderDevice::on_idle()
 				profile.tasks.game * ticks_to_average_ms,
 				profile.tasks.lua_gc * ticks_to_average_ms,
 				profile.tasks.vision * ticks_to_average_ms,
-				profile.max_total * ticks_to_ms, profile.max_secondary_wait * ticks_to_ms);
+				profile.max_total * ticks_to_ms,
+				profile.max_frame_move * ticks_to_ms,
+				profile.max_seq_render * ticks_to_ms,
+				profile.max_secondary_wait * ticks_to_ms);
 			Msg("* [mt-frame/profile] max-workers(pre/post/bones/game/lua-gc/vision)=%.2f/%.2f/%.2f/%.2f/%.2f/%.2f ms",
 				profile.tasks.max_pre_render * ticks_to_ms,
 				profile.tasks.max_post_transforms * ticks_to_ms,

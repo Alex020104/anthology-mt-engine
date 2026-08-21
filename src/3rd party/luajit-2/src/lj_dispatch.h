@@ -79,6 +79,10 @@ typedef struct GG_State {
 #endif
   ASMFunction dispatch[GG_LEN_DISP];	/* Instruction dispatch tables. */
   BCIns bcff[GG_NUM_ASMFF];		/* Bytecode for ASM fast functions. */
+  /* Keep XRay-only state last: existing VM/JIT offsets stay unchanged. */
+  lua_XRayGCTickFunction xray_gc_atomic_clock;
+  lua_XRayGCAtomicProfile xray_gc_atomic_profile;
+  unsigned long long xray_gc_atomic_consumed_sequence;
 } GG_State;
 
 #define GG_OFS(field)	((int)offsetof(GG_State, field))
