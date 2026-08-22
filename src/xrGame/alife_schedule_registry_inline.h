@@ -11,6 +11,13 @@
 IC CALifeScheduleRegistry::CALifeScheduleRegistry()
 {
 	m_objects_per_update = 1;
+	m_profile_first_frame = 0;
+	m_profile_update_count = 0;
+	m_profile_total_ticks = 0;
+	m_profile_slowest_ticks = 0;
+	m_profile_slowest_id = ALife::_OBJECT_ID(-1);
+	m_profile_slowest_section = "none";
+	m_profile_slowest_name = "none";
 }
 
 IC const u32& CALifeScheduleRegistry::objects_per_update() const
@@ -21,17 +28,6 @@ IC const u32& CALifeScheduleRegistry::objects_per_update() const
 IC void CALifeScheduleRegistry::objects_per_update(const u32& objects_per_update)
 {
 	m_objects_per_update = objects_per_update;
-}
-
-IC void CALifeScheduleRegistry::update()
-{
-	//	u32							count = 
-	objects().empty() ? 0 : inherited::update(CUpdatePredicate(m_objects_per_update), false);
-#ifdef DEBUG
-	if (psAI_Flags.test(aiALife)) {
-//		Msg						("[LSS][SU][%d : %d]",count, objects().size());
-	}
-#endif
 }
 
 IC CSE_ALifeSchedulable* CALifeScheduleRegistry::object(const ALife::_OBJECT_ID& id, bool no_assert) const

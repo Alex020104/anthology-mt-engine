@@ -3002,3 +3002,58 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   purge is not required. Runtime FPS and smoothness still require the same-save,
   same-camera base test; 100-120 FPS remains a target rather than an unmeasured
   claim.
+
+## 2026-08-22 - v88 150 m A-Life and budgeted offline simulation candidate
+
+### Measured reason and corrected prefetch model
+
+- The accepted v87 run reaches roughly 120 FPS outside populated bases, while
+  detailed frame profiling attributes every sampled `seqParallel` tail to
+  `alife.update`. The active packed configuration nevertheless keeps a 750 m
+  online radius and schedules up to 20 offline objects per call without a time
+  limit.
+- The original `xr_patch.script` 2000 m pass is not an ID-only prefetch: it
+  switches the whole level online for five seconds and starts full NPC AI,
+  binders and smart-terrain work. It therefore reproduces the post-load/sleep
+  stall this branch previously removed.
+- The current engine already provides the resource-only replacement during the
+  covered load. The latest log enumerated 2886 server objects, prepared 867
+  unique models and 1918 texture references in 139.37 ms before player control.
+  Runtime `spawn_antifreeze` handles models of later newly spawned objects.
+
+### Adaptation and safety boundaries
+
+- A separate DLTX companion restores the intended steady A-Life radius to
+  150 m and keeps the script-driven 2000 m online pass disabled. Server IDs,
+  model/texture prefetch and later spawn prefetch remain active; only distant
+  objects stop running full online AI and rendering.
+- Scheduled offline simulation now uses the configured monster share of the
+  existing 900 us A-Life budget (0.09 ms with the active 0.1 factor). Cheap
+  updates can still fill the configured 20-object cap, but the batch stops
+  after an expensive object instead of pulling the remaining objects into the
+  same frame. Round-robin order is preserved and no object state is moved to a
+  concurrent thread.
+- With `mt_frame_profile 1` and `mt_frame_profile_detail 1`, the registry reports
+  average and slowest scheduled-object time, ID, section and name every 300
+  frames. Normal play performs no per-object timer or diagnostic allocation.
+- NPC placement, smart jobs, save fields, loading path, v86 Lua GC, v87 detail
+  instancing/shaders, PiP, UI and addon scripts are unchanged. Existing saves
+  are supported and a new game is not required.
+
+### Build, installation and rollback
+
+- `git diff --check` passes. Both `DX11|x64` and `DX11-AVX|x64` compile and link
+  successfully. Installed hashes are:
+  - DX11 EXE: `A782FA072AD38D07DBD55067CAD40BC211D91D66768CCB22C46F37524F59D6F6`;
+  - DX11 PDB: `0409971250886DCB7CC437AEF25FF572229892C6945DA94DEFFC2EB8D307F51D`;
+  - DX11-AVX EXE: `706DF82650A44324FF7B9360AC62FFC38A4CD61A313B5C7D5C906430B553DCF1`;
+  - DX11-AVX PDB: `1BD1ABAF4F6064DC41C7A1FF8574005C01860E497AB41CA0FC4CCE411CD8D1EF`.
+- `Anthology A-Life v88 - 150m Budgeted Simulation` is stored independently
+  under `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and enabled first above
+  the v87 shader companion.
+- The exact pre-v88 binaries, symbols, active profile, user settings, log and
+  touched source files are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v88_pre_v87_alife_150m_budget`.
+- Expected startup marker: `[A-Life/v88] budgets switch/scheduled 0.810/0.090
+  ms`. Runtime FPS and frame-time acceptance still require the same-save base
+  test; no 100-120 FPS result is claimed before that measurement.

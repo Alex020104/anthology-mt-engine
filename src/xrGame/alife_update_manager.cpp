@@ -153,9 +153,14 @@ void CALifeUpdateManager::set_process_time(int microseconds)
 	const float monster_factor = std::max(0.f, std::min(update_monster_factor(), 1.f));
 	const float switch_process_time =
 		float(std::max(microseconds, 0)) * (1.f - monster_factor) / 1000000.f;
+	const float scheduled_process_time =
+		float(std::max(microseconds, 0)) * monster_factor / 1000000.f;
 	graph().set_process_time(switch_process_time);
-	Msg("* [A-Life/v84] switch budget %.3f ms (process_time=%d us, monster-factor=%.3f)",
-		switch_process_time * 1000.f, microseconds, monster_factor);
+	scheduled().set_process_time(scheduled_process_time);
+	Msg("* [A-Life/v88] budgets switch/scheduled %.3f/%.3f ms "
+		"(process_time=%d us, monster-factor=%.3f)",
+		switch_process_time * 1000.f, scheduled_process_time * 1000.f,
+		microseconds, monster_factor);
 }
 
 void CALifeUpdateManager::objects_per_update(const u32& objects_per_update)
