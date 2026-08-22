@@ -3233,3 +3233,51 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `[anthology/v92] A-Life precache first sweep active; v91 detail profile
   disabled`. The unrelated repository-root `AnomalyDX11AVX.exe` remains
   untracked and untouched.
+
+## 2026-08-22 - v93 explicit A-Life load sweep
+
+### Why v92 produced no change
+
+- The fresh v92 runtime log contains the companion marker, but it contains no
+  `[A-Life/v92] precache first sweep processed ...` line. The A-Life scheduler
+  did not run while `Device.dwPrecacheFrame` was non-zero, so the experimental
+  engine path never executed. The user's unchanged result was therefore real;
+  it was not treated as measurement noise.
+- The same run reached engine-ready at 52.622 s. Its measured server/Lua,
+  native-level, resource-wait, client-spawn and final-precache phases were
+  11.198, 3.755, 0.710, 21.736 and 33.113 s respectively. These numbers do not
+  establish a v92 improvement over the previous control.
+
+### Guaranteed load hook
+
+- The unreliable precache-frame test and its two state flags were removed from
+  the normal schedule update. `CALifeUpdateManager::load()` now calls one
+  explicit ordered scheduler pass after `graph().finish_level_load()` and
+  before client spawn. At this point the save/Lua lifecycle and level graph are
+  ready, while visible gameplay has not begun.
+- The pass still uses the existing safe-map iterator and `CUpdatePredicate`.
+  It does not submit mutable A-Life objects in parallel. The evaluation storage
+  is initialized on the owner thread, and the normal v88 scheduled budget is
+  restored immediately after the call.
+- The new marker records both proof of execution and cost:
+  `[A-Life/v93] load first sweep processed N/N objects in X.XX ms; runtime
+  budget restored to 0.090 ms`. No runtime gain is claimed until that marker
+  and the same-save route are measured.
+
+### Build, installation and rollback
+
+- `git diff --check` passes. Both `DX11|x64` and `DX11-AVX|x64` compile and link
+  successfully. Built and installed hashes match:
+  - DX11 EXE: `EB4FD696C0B1AB852CCE6AF1CB3AEFC8EEC3B1155B27459C881A352F27786912`;
+  - DX11 PDB: `FCDD75312CA3962DF6E6C5772E478C8F78294E2CF63E6F43C9419EEDCB3E50FF`;
+  - DX11-AVX EXE: `3C998195026004EDBFCA9B517BD09C154577A2B0647218CC94F90C969A3471B2`;
+  - DX11-AVX PDB: `D5E824AE234F1D997B3BFE74E4F3D3AC73059C979E34C855F482F119AF271FD6`.
+- `Anthology Performance v93 - Explicit A-Life Load Sweep` is stored under
+  `D:/ANTHOLOGY_DEV/addons`, mirrored in the repository, junctioned into MO2
+  and enabled above v88. The v92 companion remains installed but is disabled.
+- Pre-v93 binaries, symbols, source, configs, active profile, companion and the
+  evidence log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v93_pre_v92_explicit_alife_load_sweep`.
+  No save, renderer, PiP, SSS, NPC placement or unrelated gameplay script was
+  changed, and the repository-root untracked `AnomalyDX11AVX.exe` was not
+  touched.

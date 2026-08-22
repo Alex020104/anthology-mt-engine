@@ -1,0 +1,15 @@
+local commands = {
+	"load_world_warmup_ms 0",
+	"mt_task_manager 0",
+	"mt_ui 1",
+	"lua_use_functor_cache 1",
+	"mt_frame_profile 0",
+	"mt_frame_profile_detail 0",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/v93] explicit A-Life load sweep active; v92 trigger retired")
+end

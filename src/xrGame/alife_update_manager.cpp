@@ -340,6 +340,12 @@ void CALifeUpdateManager::load(LPCSTR game_name, bool no_assert, bool new_only)
 		::Render->level_AbortAsyncLoad();
 		throw;
 	}
+	// Run the first ordered pass at a guaranteed load point.  The level graph is
+	// ready, the Lua/save lifecycle has finished, and client objects have not yet
+	// begun spawning.  This moves unavoidable first-use A-Life work off gameplay
+	// without running mutable simulation objects concurrently.
+	init_ef_storage();
+	scheduled().preload_first_sweep();
 	pApp->LoadSessionPhaseEnd(LoadSessionNativeLevel);
 }
 
