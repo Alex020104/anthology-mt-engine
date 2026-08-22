@@ -3104,3 +3104,72 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   lane active`. The same save and the same Skadovsk-to-empty-world route
   are required for acceptance; the candidate is immediately reversible by
   disabling the companion and restoring `mt_task_manager 0`.
+
+## 2026-08-22 - v90 rollback and v91 online-object profile
+
+### v89 rollback
+
+- The experimental task-manager lane was removed from the active test profile:
+  `mt_task_manager` is back to `0`. `mt_ui 1` and
+  `lua_use_functor_cache 1` remain enabled because they are independent,
+  previously tested paths.
+- This distinction matters: `mt_task_manager` only moves the actor's active
+  `CGameTaskManager::UpdateTasks()` call. It does not distribute NPC combat AI,
+  smart-terrain schemes or every quest script attached to online NPCs, so it
+  cannot explain or solve the populated-base gap by itself.
+- The isolated fallback companion is stored as `Anthology Performance v90 -
+  Protected MT UI`. It is retained for recovery but is disabled while the v91
+  diagnostic companion is active, avoiding competing startup commands.
+
+### Measured bottleneck and safe engine change
+
+- The accepted v88/v89 frame log shows populated-base windows around 14-16 ms:
+  roughly 5-6 ms in main/game work and 7-9 ms in rendering. Leaving the base
+  reduces the same route toward 8-10 ms, while the secondary-worker wait is
+  normally only 0.2-0.4 ms. This is mixed online-object and renderer cost, not
+  evidence that the whole multithread path has switched off.
+- The current Monolith worker already overlaps the scheduler/A-Life,
+  `seqParallel`, protected UI and Lua-GC lanes with rendering. Blindly running
+  every `CObject::UpdateCL()` concurrently is not adopted: these updates mutate
+  shared level, physics, renderer and Lua state and would recreate the crashes
+  and nondeterministic saves avoided by the stable branch.
+- `CObjectList::Update()` previously constructed and destroyed a local vector
+  for its online-object workload every frame. v91 keeps that storage in
+  `CObjectList`, clears it without freeing and grows it only when the actual
+  workload requires more capacity. Ordering, crow selection, `UpdateCL()` calls
+  and destroy-queue timing are unchanged.
+
+### One-run diagnostics and next lanes
+
+- Detailed frame profiling now measures every actual online-object
+  `UpdateCL()` only while both `mt_frame_profile` and
+  `mt_frame_profile_detail` are enabled. Every 300 frames it reports average
+  object-list and `UpdateCL` time, calls/workload per frame and the slowest
+  section/name under the marker `[mt-frame/profile] objects`.
+- The temporary `Anthology Diagnostics v91 - Online Object Profile` companion
+  enables this detailed mode, retains `mt_task_manager 0`, `mt_ui 1` and the
+  Lua functor cache. Per-object QPC calls add a small diagnostic cost, so this
+  addon is for one controlled Skadovsk route and must not be used as the final
+  FPS measurement.
+- The resulting object name is the decision point for the next isolated patch:
+  expensive stalker/monster updates go to AI/scheduler pacing; expensive lamps
+  or physics objects go to distance/visibility work; low object time with high
+  render time sends the next candidate to DX11 visibility, lights and shadow
+  submission. This avoids another unmeasured global switch.
+
+### Build, installation and rollback
+
+- `DX11|x64` and `DX11-AVX|x64` both compile and link successfully. Built and
+  installed hashes match:
+  - DX11 EXE: `AF897C9A3FCFC1AAD0F814761AB023C1F1696D5C4DFEE9603FF96F771DBB967B`;
+  - DX11 PDB: `7DB6D3DDDC6C6EFC24D8E9954F59FBBB59CDE9F905D761A056A99A5122299BD0`;
+  - DX11-AVX EXE: `5B2ECC241D52501B37FF3CAB1C9210B52DE57CD76068AD73B225B85DDD39422C`;
+  - DX11-AVX PDB: `1E41A21824E960F24D568C94EB2058C2FC0D05210E78699C8F6E12E097C970E3`.
+- v91 is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and
+  enabled above v88. The pre-change binaries, symbols, source files, profile,
+  settings and log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v91_pre_v90_object_update_reuse`.
+- Expected startup marker: `[anthology/v91] online object detail profile active;
+  task manager MT disabled`. No new game or cache purge is required. LAN
+  binaries and the unrelated repository-root `AnomalyDX11AVX.exe` were not
+  touched.

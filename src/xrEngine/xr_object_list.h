@@ -23,6 +23,9 @@ private:
 	Objects objects_relcase_active;
 	Objects objects_relcase_sleeping;
 	Objects m_crows[2];
+	// Reused by Update(). A local vector used to allocate and free storage every
+	// frame, which becomes visible allocator churn on populated levels.
+	Objects m_update_workload;
 	u32 m_owner_thread_id;
 
 public:
