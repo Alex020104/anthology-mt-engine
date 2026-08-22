@@ -2938,3 +2938,64 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   marked/unmarked/finalized counters. No new game or shader-cache purge is
   required. Runtime acceptance still requires a controlled same-save session;
   the game was not launched during installation.
+
+## 2026-08-22 - v98 v86-based populated-base and NPC interaction candidate
+
+### Scope and measured target
+
+- The candidate was rebuilt from accepted V86 plus only V87 DX11 detail/grass
+  instancing. V88-V97 experimental engine changes were not carried forward.
+  V80 CoP online placement and the 150 m A-Life configuration remain active.
+- Existing frame diagnostics showed a mixed populated-base cost: approximately
+  2-3 ms more scheduler/NPC work and 3-4 ms more render work than outside the
+  base. The ordinary online-object list itself was only about 0.4-0.5 ms, so
+  unsafe parallel `UpdateCL()` and lower AI rates were rejected.
+
+### Engine base/NPC work
+
+- `CObjectList` now reuses its per-frame update snapshot buffer. Active-object
+  ordering, crow selection and main-thread ownership are unchanged.
+- Scheduler items retain their existing object and diagnostic shared string
+  after an update instead of rebuilding both for hundreds of base objects.
+  The heap reinsertion decision uses the actual heap depth, preventing the
+  common 256-of-3000 batch from unnecessarily rebuilding the whole heap.
+- Distant stalkers no longer create a Lua game-object wrapper or resolve the
+  look-at callback before the 3.5 m distance rejection. The exact distance and
+  callback are still evaluated for nearby NPC interaction.
+- NPC leg IK reuses the skeleton's already calculated bone transform instead
+  of walking the animation hierarchy again. This is adapted from the current
+  IX-Ray stalker/IK optimization and does not change animation or IK cadence.
+
+### Isolated addon work
+
+- `Anthology Performance v98 - Pools of Blood Base Grid` replaces the original
+  `online NPCs x all blood pools` proximity scan with a reusable 2 m spatial
+  grid. Actor checks run at 50 ms; NPC checks run at staggered 75-105 ms. Pool
+  drawing, expiry and bloody footsteps are unchanged.
+- `Anthology Performance v98 - WTF NPC Dialogue Cache` reuses WTF's generated
+  quest list for the same NPC for only 350 ms, covering repeated dialogue
+  predicates within one interaction without persisting eligibility results.
+- `Anthology Performance v98 - Base NPC Runtime` keeps MT UI and the Lua functor
+  cache enabled, keeps experimental Task Manager MT disabled, and turns off
+  continuous frame profiling for the actual FPS test.
+- All three addons are canonical under `D:/ANTHOLOGY_DEV/addons`, installed as
+  MO2 junctions and enabled separately at the top of the active profile. Lua
+  5.1 syntax validation passes. The original mod scripts were not edited.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` compiled and linked successfully. Build and
+  installed SHA-256 hashes match:
+  - DX11 EXE:
+    `4976B732704D4B82651EE68768384AAE51259EA3F23C52FE703BA1EC3CAC2C97`;
+  - DX11 PDB:
+    `4099C0A67CBDF571D6F900FD40AADC5A959D4F34E9806EA586E9912904D502A8`;
+  - DX11-AVX EXE:
+    `086AE794CA80BC615C50D23F1A2D0AA6DB35A9D3293FFAB41EC9C6B566871715`;
+  - DX11-AVX PDB:
+    `0AA90D808869CD4F093BAB904B1E30963C8E27C7CB11B5A5904B087897D0DF97`.
+- Pre-install binaries, symbols, MO2 profile, runtime settings and latest log
+  are backed up at `E:/ANTHOLOGY_BACKUPS/20260822_v98_pre_base_npc`.
+- Expected markers are `[anthology/v98]`, `[anthology/v98/blood-pool]` and
+  `[anthology/v98/wtf]`. No new game, shader-cache purge or save migration is
+  required. The game was not launched during installation.

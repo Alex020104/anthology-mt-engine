@@ -23,6 +23,7 @@ private:
 	Objects objects_relcase_active;
 	Objects objects_relcase_sleeping;
 	Objects m_crows[2];
+	Objects m_update_workload;
 	u32 m_owner_thread_id;
 
 public:

@@ -1,0 +1,141 @@
+local cell_size = 2
+local rebuild_interval = 250
+local actor_interval = 50
+local npc_interval = 75
+
+local grid = {}
+local active_buckets = {}
+local active_bucket_count = 0
+local next_rebuild = 0
+local actor_next_check = 0
+local npc_next_check = {}
+local installed = false
+local original_check = nil
+local step_counts = nil
+
+local function clear_active_buckets()
+	for i = 1, active_bucket_count do
+		local bucket = active_buckets[i]
+		for j = #bucket, 1, -1 do
+			bucket[j] = nil
+		end
+		active_buckets[i] = nil
+	end
+	active_bucket_count = 0
+end
+
+local function add_pool_position(pool_pos)
+	local cx = math.floor(pool_pos.x / cell_size)
+	local cz = math.floor(pool_pos.z / cell_size)
+	local column = grid[cx]
+	if not column then
+		column = {}
+		grid[cx] = column
+	end
+
+	local bucket = column[cz]
+	if not bucket then
+		bucket = {}
+		column[cz] = bucket
+	end
+	if #bucket == 0 then
+		active_bucket_count = active_bucket_count + 1
+		active_buckets[active_bucket_count] = bucket
+	end
+	bucket[#bucket + 1] = pool_pos
+end
+
+local function rebuild_grid(now)
+	clear_active_buckets()
+	local leaked = blood_pool and blood_pool.alreadyLeakedPools
+	if leaked then
+		for _, pools in pairs(leaked) do
+			for pool_pos in pairs(pools) do
+				add_pool_position(pool_pos)
+			end
+		end
+	end
+	next_rebuild = now + rebuild_interval
+end
+
+local function near_indexed_pool(pos, distance_sqr)
+	local cx = math.floor(pos.x / cell_size)
+	local cz = math.floor(pos.z / cell_size)
+	for x = cx - 1, cx + 1 do
+		local column = grid[x]
+		if column then
+			for z = cz - 1, cz + 1 do
+				local bucket = column[z]
+				if bucket then
+					for i = 1, #bucket do
+						if bucket[i]:distance_to_sqr(pos) < distance_sqr then
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function optimized_check(obj)
+	if not obj then return end
+	local now = time_global()
+	local id = obj:id()
+	if id == 0 then
+		if now < actor_next_check then return end
+		actor_next_check = now + actor_interval
+	else
+		if now < (npc_next_check[id] or 0) then return end
+		-- Stagger the callbacks so all NPCs in a smart do not land on one frame.
+		npc_next_check[id] = now + npc_interval + (id % 31)
+	end
+
+	if now >= next_rebuild then
+		rebuild_grid(now)
+	end
+	if active_bucket_count == 0 then return end
+
+	local pos = obj:position()
+	local trigger_distance = blood_pool.triggerDistance or (0.7 * 0.7)
+	if near_indexed_pool(pos, trigger_distance) then
+		step_counts[id] = blood_pool.stepMaxCount
+		return true
+	end
+end
+
+local function find_upvalue(fn, wanted)
+	if not (debug and debug.getupvalue) then return nil end
+	for i = 1, 24 do
+		local ok, name, value = pcall(debug.getupvalue, fn, i)
+		if not ok or not name then return nil end
+		if name == wanted then return value end
+	end
+end
+
+local function install_patch()
+	if installed or not (blood_pool and blood_pool.checkNearBloodPool) then return end
+	original_check = blood_pool.checkNearBloodPool
+	-- Pools of Blood keeps this table local to its script. Capture that exact
+	-- upvalue once; no per-frame debug API calls are made. If another version of
+	-- the addon changes its closure, retain the original implementation.
+	step_counts = find_upvalue(original_check, "stepCount")
+	if type(step_counts) ~= "table" then
+		printf("! [anthology/v98/blood-pool] compatible step counter not found; original callback retained")
+		return
+	end
+	blood_pool.checkNearBloodPool = optimized_check
+	installed = true
+	printf("* [anthology/v98/blood-pool] reusable base proximity grid active")
+end
+
+function on_game_start()
+	grid = {}
+	active_buckets = {}
+	active_bucket_count = 0
+	next_rebuild = 0
+	actor_next_check = 0
+	npc_next_check = {}
+	install_patch()
+end

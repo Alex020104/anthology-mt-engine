@@ -1,0 +1,14 @@
+local commands = {
+	"mt_frame_profile 0",
+	"mt_frame_profile_detail 0",
+	"mt_task_manager 0",
+	"mt_ui 1",
+	"lua_use_functor_cache 1",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/v98] v86 + v87 grass base/NPC candidate active")
+end

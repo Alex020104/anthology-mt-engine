@@ -232,8 +232,13 @@ void CObjectList::Update(bool bForce)
 		{
 			// Select Crow-Mode
 			Device.Statistic->UpdateClient_updated = 0;
-			Objects workload;
-			workload.reserve(objects_active.capacity());
+			// Reuse the snapshot storage. Populated bases rebuild this list every
+			// frame, so allocating a temporary vector here only adds allocator
+			// traffic without changing object order or update ownership.
+			Objects& workload = m_update_workload;
+			workload.clear_not_free();
+			if (workload.capacity() < objects_active.size())
+				workload.reserve(objects_active.capacity());
 
 			{
 				PROF_EVENT("CObjectList::Update/Crows");
@@ -279,6 +284,7 @@ void CObjectList::Update(bool bForce)
 					SingleUpdate(obj);
 				}
 			}
+			workload.clear_not_free();
 
 			Device.Statistic->UpdateClient.End();
 		}

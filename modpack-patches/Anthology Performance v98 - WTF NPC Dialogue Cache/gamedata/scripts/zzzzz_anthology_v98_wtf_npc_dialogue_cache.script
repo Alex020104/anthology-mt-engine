@@ -1,0 +1,32 @@
+local cache_lifetime = 350
+local quest_cache = {}
+local original_get_valid_quests = nil
+local installed = false
+
+local function install_patch()
+	if installed or not (igi_task_manager and igi_task_manager.get_valid_quests_for_npc) then return end
+	original_get_valid_quests = igi_task_manager.get_valid_quests_for_npc
+	igi_task_manager.get_valid_quests_for_npc = function(npc)
+		if not npc then
+			return original_get_valid_quests(npc)
+		end
+
+		local now = time_global()
+		local id = npc:id()
+		local cached = quest_cache[id]
+		if cached and now < cached.expires then
+			return cached.tasks
+		end
+
+		local tasks = original_get_valid_quests(npc)
+		quest_cache[id] = {expires = now + cache_lifetime, tasks = tasks}
+		return tasks
+	end
+	installed = true
+	printf("* [anthology/v98/wtf] per-interaction NPC quest cache active")
+end
+
+function on_game_start()
+	quest_cache = {}
+	install_patch()
+end
