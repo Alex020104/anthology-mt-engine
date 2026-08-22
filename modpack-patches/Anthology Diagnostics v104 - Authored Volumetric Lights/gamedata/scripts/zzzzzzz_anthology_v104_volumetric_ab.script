@@ -1,0 +1,26 @@
+local marker_printed = false
+
+local function read_mcm_number(path, fallback)
+	if ui_mcm and ui_mcm.get then
+		local value = tonumber(ui_mcm.get(path))
+		if value then return value end
+	end
+	return fallback
+end
+
+local function apply_authored_only()
+	local intensity = read_mcm_number("ssfx_module/shadows/volumetric_int_mcm", 0.6)
+	local quality = read_mcm_number("ssfx_module/shadows/volumetric_quality_mcm", 4)
+	get_console():execute(string.format("ssfx_volumetric (0,%s,%s,1)", intensity, quality))
+	if not marker_printed then
+		printf("[anthology/v104/volumetric-ab] SSS force-all disabled; authored volumetric lights retained")
+		marker_printed = true
+	end
+end
+
+function on_game_start()
+	-- SSS reapplies its vector when MCM changes. Register after its script and
+	-- keep this diagnostic override deterministic for the whole comparison run.
+	RegisterScriptCallback("on_option_change", apply_authored_only)
+	apply_authored_only()
+end

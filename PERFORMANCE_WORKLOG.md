@@ -3175,3 +3175,58 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   Test the same populated-base route for 1-2 minutes, climb one ledge and cross
   an indoor/outdoor boundary before exiting normally. A new game and shader
   cache purge are not required. The game was not launched during installation.
+
+## 2026-08-23 - v104 RAK indoor rays and local-volumetric A/B
+
+### Result of the v103 populated-base run
+
+- The accepted v103 patches worked, but their combined steady-frame gain was
+  necessarily small: average total frame time changed from about 13.43 to
+  13.06 ms. The actor binder improved by roughly 8.5%, SAR samples by about
+  22-24% and ledge samples by about 40-43%; the frame median did not materially
+  change because renderer and A-Life costs remained.
+- A new intermittent callback was attributed to `env_actorsnd.script:293` from
+  R.A.K Weapon Pack. It averaged about 2.53 ms in the two sampled invocations
+  and reached 5.05 ms. Each complete indoor test can issue five preliminary
+  directions plus eight full directions with up to three reflections.
+- The current SSS MCM state has `volumetric_force=true`, intensity `0.6` and
+  quality `4`. In R4 that quality produces 96 slices for every visible forced
+  volumetric shadow-light face. `light::set_volumetric` forces the flag even
+  when a lamp or torch config explicitly disabled it. A shadowed point light is
+  split into as many as six faces; models and NPCs are also rendered into each
+  applicable shadow map. This makes local lighting a credible populated-base
+  render cost, but the existing log cannot isolate GPU milliseconds per pass.
+
+### Separate patches
+
+- `Anthology Performance v104 - RAK Indoor Ray Gate` fixes the MCM table/value
+  error in the intended early-out, puts the 400 ms cadence before weapon/config
+  work, uses one actor origin for the complete ray sweep and reuses result
+  tables. Ray directions, lengths, bounce count, sound and MCM behaviour remain
+  otherwise unchanged.
+- `Anthology Diagnostics v104 - Authored Volumetric Lights` is an isolated A/B
+  module. It disables only SSS `force volumetric on all non-directional lights`.
+  Normal illumination, dynamic shadows, sunshafts and lights explicitly marked
+  volumetric remain. It intentionally does not change shadow resolution or the
+  user's MCM intensity/quality values.
+- This diagnostic is not yet the final volumetric optimization. If the same
+  base route gains materially, the next version will retain full near-light
+  quality and apply adaptive distance/coverage limits to forced volumes. If it
+  does not, work moves to shadow-map/model submission and A-Life rather than
+  degrading volumetric quality blindly.
+
+### Validation, installation and rollback
+
+- All added Lua files pass Lua 5.1 syntax validation; the volumetric override
+  mock executes exactly `ssfx_volumetric (0,0.6,4,1)` for the current MCM state.
+- Both standalone addons are stored under `D:/ANTHOLOGY_DEV/addons`, copied to
+  MO2 and enabled first in the active HARD profile. Exact pre-v104 source,
+  profile and user settings are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260823_v104_pre_rak_volumetric_ab`.
+- This is Lua-only, so the accepted installed executables remain unchanged:
+  - DX11: `31897E338DA51455EF4DFF4FC23A6BD6C64C051FF8892C6860BD68C2712586A6`;
+  - DX11-AVX: `476CB89634B0C6A0CE52A446CF75309D8FB808A43C10E62C95E5E0EE4D12CF47`.
+- Expected markers are `[anthology/v104/rak]` and
+  `[anthology/v104/volumetric-ab]`. A new game and shader-cache purge are not
+  required, but the save/level must be reloaded so lights are recreated. The
+  game was not launched during installation.
