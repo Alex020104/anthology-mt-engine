@@ -535,6 +535,14 @@ void CSheduler::UpdateInit()
 void CSheduler::UpdateRT()
 {
 	PROF_EVENT();
+	static u32 profile_first_frame = 0;
+	static u64 profile_total_ticks = 0;
+	static u64 profile_slowest_ticks = 0;
+	static u32 profile_updates = 0;
+	static u64 profile_items = 0;
+	static shared_str profile_slowest_name;
+	const bool profile = mt_FrameProfile && mt_FrameProfileDetailed && CPU::qpc_freq;
+	const u64 update_started_at = profile ? CPU::QPC() : 0;
 
 	// Realtime priority
 	m_processing_nowRT = true;
@@ -554,10 +562,45 @@ void CSheduler::UpdateRT()
 		VERIFY(T.Object->dbg_startframe != Device.dwFrame);
 		T.Object->dbg_startframe = Device.dwFrame;
 #endif
+		const u64 object_started_at = profile ? CPU::QPC() : 0;
 		T.Object->shedule_Update(Elapsed);
+		if (profile)
+		{
+			const u64 elapsed_ticks = CPU::QPC() - object_started_at;
+			++profile_items;
+			if (elapsed_ticks > profile_slowest_ticks)
+			{
+				profile_slowest_ticks = elapsed_ticks;
+				profile_slowest_name = T.scheduled_name;
+			}
+		}
 		T.dwTimeOfLastExecute = dwTime;
 	}
 	m_processing_nowRT = false;
+	if (profile)
+	{
+		if (!profile_updates)
+			profile_first_frame = Device.dwFrame;
+		profile_total_ticks += CPU::QPC() - update_started_at;
+		++profile_updates;
+		if (Device.dwFrame - profile_first_frame >= 300)
+		{
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			Msg("* [anthology/v100/scheduler-rt] avg=%.3f ms max-object=%s %.3f ms "
+				"items/frame=%.2f registered=%u",
+				double(profile_total_ticks) * ticks_to_ms / double(profile_updates),
+				profile_slowest_name.size() ? *profile_slowest_name : "none",
+				double(profile_slowest_ticks) * ticks_to_ms,
+				double(profile_items) / double(profile_updates),
+				static_cast<u32>(ItemsRT.size()));
+			profile_first_frame = Device.dwFrame;
+			profile_total_ticks = 0;
+			profile_slowest_ticks = 0;
+			profile_updates = 0;
+			profile_items = 0;
+			profile_slowest_name = nullptr;
+		}
+	}
 }
 
 void CSheduler::UpdateDeferred()

@@ -22,6 +22,7 @@
 #include "restriction_space.h"
 #include "profiler.h"
 #include "mt_config.h"
+#include "../xrEngine/EngineThreading.h"
 
 using namespace ALife;
 #ifdef	ENGINE_LUA_ALIFE_UPDAGE_MANAGER_CALLBACKS
@@ -113,8 +114,46 @@ void CALifeUpdateManager::update_scheduled(bool init_ef)
 void CALifeUpdateManager::update()
 {
 	PROF_EVENT("AI: A-Life Update");
+	struct SALifePhaseProfile
+	{
+		u32 first_frame = 0;
+		u32 calls = 0;
+		u64 switch_ticks = 0;
+		u64 scheduled_ticks = 0;
+		u64 max_switch_ticks = 0;
+		u64 max_scheduled_ticks = 0;
+	};
+	static SALifePhaseProfile profile;
+	const bool measure = mt_FrameProfile && mt_FrameProfileDetailed && CPU::qpc_freq;
+	const u64 switch_started_at = measure ? CPU::QPC() : 0;
 	update_switch();
+	const u64 scheduled_started_at = measure ? CPU::QPC() : 0;
 	update_scheduled(false);
+	if (measure)
+	{
+		const u64 finished_at = CPU::QPC();
+		const u64 switch_ticks = scheduled_started_at - switch_started_at;
+		const u64 scheduled_ticks = finished_at - scheduled_started_at;
+		if (!profile.calls)
+			profile.first_frame = Device.dwFrame;
+		++profile.calls;
+		profile.switch_ticks += switch_ticks;
+		profile.scheduled_ticks += scheduled_ticks;
+		profile.max_switch_ticks = std::max(profile.max_switch_ticks, switch_ticks);
+		profile.max_scheduled_ticks = std::max(profile.max_scheduled_ticks, scheduled_ticks);
+		if (Device.dwFrame - profile.first_frame >= 300)
+		{
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			Msg("* [anthology/v100/alife] calls=%u avg switch/scheduled=%.3f/%.3f ms "
+				"max=%.2f/%.2f ms",
+				profile.calls,
+				double(profile.switch_ticks) * ticks_to_ms / double(profile.calls),
+				double(profile.scheduled_ticks) * ticks_to_ms / double(profile.calls),
+				double(profile.max_switch_ticks) * ticks_to_ms,
+				double(profile.max_scheduled_ticks) * ticks_to_ms);
+			profile = {};
+		}
+	}
 }
 
 void CALifeUpdateManager::shedule_Update(u32 dt)

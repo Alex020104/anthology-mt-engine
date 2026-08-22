@@ -19,11 +19,13 @@ class CALifeScheduleRegistry : public CSafeMapIterator<
 private:
 	struct CUpdatePredicate
 	{
+		CALifeScheduleRegistry* m_registry;
 		u32 m_count;
 		mutable u32 m_current;
 
-		IC CUpdatePredicate(const u32& count)
+		IC CUpdatePredicate(CALifeScheduleRegistry* registry, const u32& count)
 		{
+			m_registry = registry;
 			m_count = count;
 			m_current = 0;
 		}
@@ -44,9 +46,7 @@ private:
 
 		IC void operator()(_iterator& i, u64 cycle_count) const
 		{
-			START_PROFILE("ALife/scheduled/update")
-				(*i).second->update();
-			STOP_PROFILE
+			m_registry->update_object((*i).second);
 		}
 	};
 
@@ -55,13 +55,25 @@ protected:
 
 protected:
 	u32 m_objects_per_update;
+	u32 m_profile_first_frame;
+	u32 m_profile_update_count;
+	u64 m_profile_total_ticks;
+	u64 m_profile_slowest_ticks;
+	ALife::_OBJECT_ID m_profile_slowest_id;
+	shared_str m_profile_slowest_section;
+	shared_str m_profile_slowest_name;
+
+private:
+	void update_object(CSE_ALifeSchedulable* object);
+	void reset_profile();
+	void flush_profile();
 
 public:
 	IC CALifeScheduleRegistry();
 	virtual ~CALifeScheduleRegistry();
 	void add(CSE_ALifeDynamicObject* object);
 	void remove(CSE_ALifeDynamicObject* object, bool no_assert = false);
-	IC void update();
+	void update();
 	IC CSE_ALifeSchedulable* object(const ALife::_OBJECT_ID& id, bool no_assert = false) const;
 	IC const u32& objects_per_update() const;
 	IC void objects_per_update(const u32& objects_per_update);

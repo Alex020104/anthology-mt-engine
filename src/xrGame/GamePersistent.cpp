@@ -31,6 +31,7 @@
 #include "UI/UIGameTutorial.h"
 
 #include "../xrEngine/xr_input.h"
+#include "../xrEngine/EngineThreading.h"
 
 #ifndef MASTER_GOLD
 #	include "custommonster.h"
@@ -42,6 +43,7 @@
 #include "gametype_chooser.h"
 
 extern BOOL mt_Scheduler;
+extern BOOL g_bLoaded;
 
 //#ifdef DEBUG_MEMORY_MANAGER
 //	static	void *	ode_alloc	(size_t size)								{ return Memory.mem_alloc(size,"ODE");			}
@@ -644,6 +646,24 @@ extern CUISequencer* g_tutorial2;
 void CGamePersistent::OnFrame()
 {
 	PROF_EVENT("CGamePersistent OnFrame");
+	struct SPersistentFrameProfile
+	{
+		u32 frames = 0;
+		u64 total = 0;
+		u64 environment = 0;
+		u64 scheduler_init = 0;
+		u64 scheduler_rt = 0;
+		u64 weather = 0;
+		u64 dof = 0;
+		u64 max_total = 0;
+		u64 max_environment = 0;
+		u64 max_scheduler_rt = 0;
+		u64 max_weather = 0;
+	};
+	static SPersistentFrameProfile frame_profile;
+	const bool measure_frame = mt_FrameProfile && mt_FrameProfileDetailed &&
+		!Device.dwPrecacheFrame && g_bLoaded && CPU::qpc_freq;
+	const u64 persistent_started_at = measure_frame ? CPU::QPC() : 0;
 	if (Device.dwPrecacheFrame == 5 && m_intro_event.empty())
 	{
 		m_intro_event.bind(this, &CGamePersistent::game_loaded);
@@ -774,7 +794,14 @@ void CGamePersistent::OnFrame()
 		}
 #endif // MASTER_GOLD
 	}
+	const u64 environment_started_at = measure_frame ? CPU::QPC() : 0;
 	inherited::OnFrame();
+	if (measure_frame)
+	{
+		const u64 elapsed = CPU::QPC() - environment_started_at;
+		frame_profile.environment += elapsed;
+		frame_profile.max_environment = std::max(frame_profile.max_environment, elapsed);
+	}
 
 	if (!Device.Paused())
 	{
@@ -788,14 +815,31 @@ void CGamePersistent::OnFrame()
 		else
 		{
 			PROF_EVENT("Sheduler RT");
+			const u64 scheduler_init_started_at = measure_frame ? CPU::QPC() : 0;
 			::Engine.Sheduler.UpdateInit();
+			if (measure_frame)
+				frame_profile.scheduler_init += CPU::QPC() - scheduler_init_started_at;
+			const u64 scheduler_rt_started_at = measure_frame ? CPU::QPC() : 0;
 			::Engine.Sheduler.UpdateRT();
+			if (measure_frame)
+			{
+				const u64 elapsed = CPU::QPC() - scheduler_rt_started_at;
+				frame_profile.scheduler_rt += elapsed;
+				frame_profile.max_scheduler_rt = std::max(frame_profile.max_scheduler_rt, elapsed);
+			}
 		}
 		if (measure_precache_scheduler)
 			pApp->LoadSessionRecordPrecacheScheduler(CPU::QPC() - scheduler_started_at);
 
 		// update weathers ambient
+		const u64 weather_started_at = measure_frame ? CPU::QPC() : 0;
 		WeathersUpdate();
+		if (measure_frame)
+		{
+			const u64 elapsed = CPU::QPC() - weather_started_at;
+			frame_profile.weather += elapsed;
+			frame_profile.max_weather = std::max(frame_profile.max_weather, elapsed);
+		}
 	}
 
 	if (0 != pDemoFile)
@@ -824,7 +868,41 @@ void CGamePersistent::OnFrame()
     if ((m_last_stats_frame + 1) < m_frame_counter)
         profiler().clear();
 #endif
+	const u64 dof_started_at = measure_frame ? CPU::QPC() : 0;
 	UpdateDof();
+	if (measure_frame)
+	{
+		frame_profile.dof += CPU::QPC() - dof_started_at;
+		const u64 total = CPU::QPC() - persistent_started_at;
+		frame_profile.total += total;
+		frame_profile.max_total = std::max(frame_profile.max_total, total);
+		++frame_profile.frames;
+		if (frame_profile.frames >= 300)
+		{
+			const double average_ms = 1000.0 /
+				(double(CPU::qpc_freq) * double(frame_profile.frames));
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			const u64 measured = frame_profile.environment + frame_profile.scheduler_init +
+				frame_profile.scheduler_rt + frame_profile.weather + frame_profile.dof;
+			const u64 rest = frame_profile.total > measured ? frame_profile.total - measured : 0;
+			Msg("* [anthology/v100/persistent] avg total/env/sched-init/sched-rt/weather/dof/rest="
+				"%.3f/%.3f/%.3f/%.3f/%.3f/%.3f/%.3f ms",
+				frame_profile.total * average_ms,
+				frame_profile.environment * average_ms,
+				frame_profile.scheduler_init * average_ms,
+				frame_profile.scheduler_rt * average_ms,
+				frame_profile.weather * average_ms,
+				frame_profile.dof * average_ms,
+				rest * average_ms);
+			Msg("* [anthology/v100/persistent] max total/env/sched-rt/weather="
+				"%.2f/%.2f/%.2f/%.2f ms",
+				frame_profile.max_total * ticks_to_ms,
+				frame_profile.max_environment * ticks_to_ms,
+				frame_profile.max_scheduler_rt * ticks_to_ms,
+				frame_profile.max_weather * ticks_to_ms);
+			frame_profile = {};
+		}
+	}
 }
 
 void CGamePersistent::ImGui_OnRender(LPCSTR name)

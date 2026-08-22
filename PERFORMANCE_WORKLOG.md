@@ -2980,3 +2980,55 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   save, walk a normal route around the populated base for 1-2 minutes, open one
   NPC dialogue, close the game normally, then inspect the new v99 profiler
   groups in `xray_chenc.log`.
+
+## 2026-08-22 - v100 persistent and A-Life breakdown
+
+### Result of the v99 populated-base run
+
+- Steady populated-base frames measured about 11.5-15 ms. `CLevel` itself was
+  only 0.72-0.97 ms, including 0.38-0.55 ms for object updates, so the already
+  patched Lua addons and `actor_on_update` are not the current base-FPS limit.
+- `CGamePersistent` was the largest main-frame callback at about 3.2-3.5 ms.
+  The renderer cost about 5-8 ms and the game worker about 5.5-7.4 ms.
+- Every large worker tail was `alife.update`: common peaks were 25-58 ms and
+  the measured maximum was 216.61 ms. The main frame must wait for that worker,
+  so putting A-Life on the secondary thread alone does not hide a monolithic
+  update.
+- The May Monolith `mt_SchedulerRT` experiment was not enabled. Its own commit
+  warns that moving the actor and all realtime objects to the worker causes
+  problems, and it would overlap mutable actor state with the main level frame.
+
+### Diagnostic adaptation
+
+- `CGamePersistent` now reports separate environment, scheduler-init,
+  realtime-scheduler, weather, DOF and remaining costs every 300 measured
+  gameplay frames.
+- The realtime scheduler reports its registered item count, average cost and
+  slowest object. Normal scheduled objects remain on the existing worker and
+  no scheduler order or thread ownership is changed.
+- `alife.update` now reports `switch` and `scheduled` time separately. The
+  offline scheduled registry also reports the slowest object's server ID,
+  section and replacement name. Per-object timers exist only while detailed
+  profiling is enabled.
+- No A-Life budget, online radius, NPC state, addon callback, loading, renderer,
+  grass, HOM/LOD, PiP, UI or save field is changed in v100.
+
+### Build, installation and rollback
+
+- `git diff --check` passes. Both `DX11|x64` and `DX11-AVX|x64` compile and
+  link successfully. A stale corrupt intermediate OpenAL library was rebuilt;
+  no OpenAL source or installed audio file was modified.
+- Installed hashes match the build outputs:
+  - DX11 EXE: `0DAB688118BF691FCAF95769085233C1169ACBCF3AB889457F1C63E6FA858C53`;
+  - DX11 PDB: `95851A0D0E6305F85F91368517E30F293D99D36A7B6AB631D3836DD9216681F5`;
+  - DX11-AVX EXE: `D61D59A63EB69D12651875E6F6D461E21395E3CBCFAA5DCA7348223613C2DF6C`;
+  - DX11-AVX PDB: `8D064276F08BECCB55DB3B5292E25FF233A4FB1491C5C8096ECE078B03D73763`.
+- `Anthology Diagnostics v100 - Persistent A-Life Breakdown` is stored under
+  `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and enabled first. v99 is
+  disabled; accepted v86/v87 and existing NPC/A-Life modules are unchanged.
+- The exact pre-v100 binaries, symbols, profile and touched source files are
+  recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v100_pre_persistent_alife_profile`.
+- Expected marker: `[anthology/v100] persistent and A-Life breakdown active`.
+  The game was not launched. Test the same save for 1-2 minutes inside a
+  populated base, open one NPC dialogue, exit normally and inspect the log.
