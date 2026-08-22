@@ -18,6 +18,8 @@ IC CALifeScheduleRegistry::CALifeScheduleRegistry()
 	m_profile_slowest_id = ALife::_OBJECT_ID(-1);
 	m_profile_slowest_section = "none";
 	m_profile_slowest_name = "none";
+	m_precache_was_active = false;
+	m_precache_warmup_done = false;
 }
 
 IC const u32& CALifeScheduleRegistry::objects_per_update() const

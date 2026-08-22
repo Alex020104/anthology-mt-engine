@@ -3173,3 +3173,63 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   task manager MT disabled`. No new game or cache purge is required. LAN
   binaries and the unrelated repository-root `AnomalyDX11AVX.exe` were not
   touched.
+
+## 2026-08-22 - v92 A-Life precache first sweep
+
+### Evidence from the v91 control run
+
+- The detailed online-object profile ruled out the ordinary `UpdateCL()` list
+  as the populated-base bottleneck: representative stable windows spent only
+  about 0.4-0.5 ms there. The game worker and scheduler remained the larger CPU
+  lanes.
+- Across 51 A-Life profile windows, 927 scheduled updates consumed 1085.83 ms
+  in total (1.171 ms average). Individual first-cycle objects produced atomic
+  tails which the 0.090-ms v88 budget cannot split: `simulation_controller`
+  reached 34.639 ms, `freedom_sim_squad_advanced` 44.155 ms,
+  `monolith_sim_squad_veteran` 28.861 ms and `duty_sim_squad_advanced`
+  22.554 ms.
+- The scheduled registry advances in ID order under a very small normal budget,
+  so first visits to roughly 3080 offline objects were being distributed over
+  many minutes of visible gameplay. This explains intermittent A-Life ticks;
+  it is not evidence that `mt_alife` is disabled. A-Life already runs on the
+  game worker and each object update is deliberately atomic because registry,
+  graph, smart-terrain and Lua state are shared.
+
+### Isolated engine candidate
+
+- On the first A-Life update inside the existing `Device.dwPrecacheFrame`
+  interval, v92 resets the safe registry cursor and performs exactly one ordered
+  pass over the currently scheduled offline objects. This moves their first
+  task/movement-state preparation behind the existing loading screen.
+- The temporary unrestricted pass is local to that call. Immediately after it,
+  the v88 scheduled budget is restored to 0.090 ms and normal object caps,
+  update order and MT ownership continue unchanged. A log line records the
+  processed count, wall time and restored budget.
+- This is not the rejected v70/v71 covered-world warmup: v92 does not extend the
+  load session, wait on runtime queues, lock the `Zone awaits` prompt for a
+  fixed time, run five seconds of normal frames or add world renders.
+- NPC positions, the 150-m online distance, save fields, task selection,
+  renderer, PiP, SSS, Lua GC and addon gameplay scripts are unchanged. A new
+  game and shader-cache purge are not required. The measured load-time delta and
+  tick result still require the same-save runtime test; no gain is claimed in
+  advance.
+
+### Build, installation and rollback
+
+- `git diff --check` passes. Both `DX11|x64` and `DX11-AVX|x64` compile and link
+  successfully. Built and installed hashes match:
+  - DX11 EXE: `9950866C1A4B2F1E43A270470DEBC5AD568551FA89B8260F7A026A1E263FB7C4`;
+  - DX11 PDB: `6F8FCC26563221295EB20607184083294701E48D4E499E64F44FFBA2EC07E2FE`;
+  - DX11-AVX EXE: `DFE0ECC56399BBE5350EC1C7050EFCD80BF59FD89C1E288ED7A14119A4220637`;
+  - DX11-AVX PDB: `C570736B099655C10222660785F855FA1B1A4C1CC18C3E2E982CE989F1537184`.
+- `Anthology Performance v92 - A-Life Precache First Sweep` is stored under
+  `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and enabled above v88. The v91
+  diagnostic companion is disabled and both runtime configs now use
+  `mt_frame_profile 0` and `mt_frame_profile_detail 0` for an unbiased test.
+- The complete pre-v92 v91 binaries, symbols, settings, profile, log and touched
+  sources are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v92_pre_v91_alife_scheduler_pacing`.
+- Expected markers are `[A-Life/v92] precache first sweep processed ...` and
+  `[anthology/v92] A-Life precache first sweep active; v91 detail profile
+  disabled`. The unrelated repository-root `AnomalyDX11AVX.exe` remains
+  untracked and untouched.

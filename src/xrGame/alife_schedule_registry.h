@@ -63,11 +63,14 @@ protected:
 	ALife::_OBJECT_ID m_profile_slowest_id;
 	shared_str m_profile_slowest_section;
 	shared_str m_profile_slowest_name;
+	bool m_precache_was_active;
+	bool m_precache_warmup_done;
 
 private:
 	void update_object(CSE_ALifeSchedulable* object);
 	void reset_profile();
 	void flush_profile();
+	void warmup_precache();
 
 public:
 	IC CALifeScheduleRegistry();
