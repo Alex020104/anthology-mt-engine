@@ -266,6 +266,11 @@ protected:
 	bool m_bOutBorder;
 	//сохраняет счетчик объектов в feel_touch, для которых необходимо обновлять размер колижена с актером 
 	u32 m_feel_touch_characters;
+	// Spatial queries do not need to run at render-frame frequency. Keeping
+	// their cadence on the actor prevents dense bases from turning them into
+	// an every-frame broad-phase scan while movement and physics stay realtime.
+	u32 m_next_feel_touch_update_time;
+	u32 m_next_feel_grenade_update_time;
 private:
 	void SwitchOutBorder(bool new_border_state);
 public:

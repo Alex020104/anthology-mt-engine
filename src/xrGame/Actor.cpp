@@ -75,6 +75,7 @@
 #include "UI/UIDragDropReferenceList.h"
 
 #include "build_config_defines.h"
+#include "../xrEngine/EngineThreading.h"
 
 #include "ActorNightVision.h"
 #include "Flashlight.h"
@@ -230,6 +231,8 @@ CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 	m_bOutBorder = false;
 	m_hit_probability = 1.f;
 	m_feel_touch_characters = 0;
+	m_next_feel_touch_update_time = 0;
+	m_next_feel_grenade_update_time = 0;
 	//-----------------------------------------------------------------------------------
 	m_dwILastUpdateTime = 0;
 
@@ -302,6 +305,8 @@ void CActor::reinit()
 	material().reinit();
 
 	m_pUsableObject = NULL;
+	m_next_feel_touch_update_time = 0;
+	m_next_feel_grenade_update_time = 0;
 	if (!g_dedicated_server)
 		memory().reinit();
 
@@ -1852,10 +1857,69 @@ void CActor::shedule_Update(u32 DT)
 
 		Center(C);
 		R = Radius();
-		feel_touch_update(C, R);
+		const u32 spatial_now = Device.dwTimeGlobal;
+		const bool profile_spatial = mt_FrameProfile && mt_FrameProfileDetailed &&
+			!Device.dwPrecacheFrame && CPU::qpc_freq;
+		static u64 touch_ticks = 0;
+		static u64 touch_max_ticks = 0;
+		static u64 grenade_ticks = 0;
+		static u64 grenade_max_ticks = 0;
+		static u32 spatial_frames = 0;
+		static u32 touch_updates = 0;
+		static u32 grenade_updates = 0;
+		static u32 spatial_last_report_frame = 0;
 
-		if (psDeviceFlags2.test(rsFeelGrenade))
+		// 30 Hz is enough for nearby-item/character membership. Pickup mode has
+		// its own immediate query in UpdateCL, so item pickup remains responsive.
+		if (!m_next_feel_touch_update_time || s32(spatial_now - m_next_feel_touch_update_time) >= 0)
+		{
+			const u64 started_at = profile_spatial ? CPU::QPC() : 0;
+			feel_touch_update(C, R);
+			m_next_feel_touch_update_time = spatial_now + 33;
+			if (profile_spatial)
+			{
+				const u64 elapsed = CPU::QPC() - started_at;
+				touch_ticks += elapsed;
+				touch_max_ticks = _max(touch_max_ticks, elapsed);
+				++touch_updates;
+			}
+		}
+
+		// The grenade warning HUD tolerates a 50 ms refresh interval and no
+		// longer scans the whole 10 m neighbourhood once per rendered frame.
+		if (psDeviceFlags2.test(rsFeelGrenade) &&
+			(!m_next_feel_grenade_update_time || s32(spatial_now - m_next_feel_grenade_update_time) >= 0))
+		{
+			const u64 started_at = profile_spatial ? CPU::QPC() : 0;
 			Feel_Grenade_Update(m_fFeelGrenadeRadius);
+			m_next_feel_grenade_update_time = spatial_now + 50;
+			if (profile_spatial)
+			{
+				const u64 elapsed = CPU::QPC() - started_at;
+				grenade_ticks += elapsed;
+				grenade_max_ticks = _max(grenade_max_ticks, elapsed);
+				++grenade_updates;
+			}
+		}
+
+		if (profile_spatial)
+		{
+			++spatial_frames;
+			if (!spatial_last_report_frame)
+				spatial_last_report_frame = Device.dwFrame;
+			else if (Device.dwFrame - spatial_last_report_frame >= 300)
+			{
+				const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+				Msg("* [anthology/v101/actor-spatial] avg-touch/grenade=%.3f/%.3f ms max=%.2f/%.2f ms updates=%u/%u frames=%u",
+					touch_updates ? double(touch_ticks) * ticks_to_ms / double(touch_updates) : 0.0,
+					grenade_updates ? double(grenade_ticks) * ticks_to_ms / double(grenade_updates) : 0.0,
+					double(touch_max_ticks) * ticks_to_ms, double(grenade_max_ticks) * ticks_to_ms,
+					touch_updates, grenade_updates, spatial_frames);
+				touch_ticks = touch_max_ticks = grenade_ticks = grenade_max_ticks = 0;
+				spatial_frames = touch_updates = grenade_updates = 0;
+				spatial_last_report_frame = Device.dwFrame;
+			}
+		}
 
 		// Dropping
 		if (b_DropActivated)

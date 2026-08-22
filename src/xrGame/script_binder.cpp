@@ -16,6 +16,7 @@
 #include "gameobject.h"
 #include "level.h"
 #include "../xrEngine/x_ray.h"
+#include "../xrEngine/EngineThreading.h"
 
 // comment next string when commiting
 //#define DBG_DISABLE_SCRIPTS
@@ -213,6 +214,10 @@ void CScriptBinder::set_object(CScriptBinderObject* object)
 void CScriptBinder::shedule_Update(u32 time_delta)
 {
 	PROF_EVENT("CScriptBinder::shedule_Update");
+	CGameObject* const game_object = smart_cast<CGameObject*>(this);
+	const bool profile_actor_binder = mt_FrameProfile && mt_FrameProfileDetailed &&
+		!Device.dwPrecacheFrame && CPU::qpc_freq && game_object && game_object->cast_actor();
+	const u64 profile_started_at = profile_actor_binder ? CPU::QPC() : 0;
 	if (m_object)
 	{
 		try
@@ -222,6 +227,29 @@ void CScriptBinder::shedule_Update(u32 time_delta)
 		catch (...)
 		{
 			clear();
+		}
+	}
+
+	if (profile_actor_binder)
+	{
+		static u64 total_ticks = 0;
+		static u64 max_ticks = 0;
+		static u32 calls = 0;
+		static u32 last_report_frame = 0;
+		const u64 elapsed = CPU::QPC() - profile_started_at;
+		total_ticks += elapsed;
+		max_ticks = _max(max_ticks, elapsed);
+		++calls;
+		if (!last_report_frame)
+			last_report_frame = Device.dwFrame;
+		else if (Device.dwFrame - last_report_frame >= 300)
+		{
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			Msg("* [anthology/v101/actor-binder] avg=%.3f ms max=%.2f ms calls=%u",
+				double(total_ticks) * ticks_to_ms / double(calls), double(max_ticks) * ticks_to_ms, calls);
+			total_ticks = max_ticks = 0;
+			calls = 0;
+			last_report_frame = Device.dwFrame;
 		}
 	}
 }

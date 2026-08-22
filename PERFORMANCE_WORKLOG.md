@@ -3032,3 +3032,63 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Expected marker: `[anthology/v100] persistent and A-Life breakdown active`.
   The game was not launched. Test the same save for 1-2 minutes inside a
   populated base, open one NPC dialogue, exit normally and inspect the log.
+
+## 2026-08-23 - v101 actor callback hotpath
+
+### Result of the v100 populated-base run
+
+- The user's controlled run exited cleanly. Steady total frame time was about
+  12.2-15.6 ms; rendering cost about 6.0-8.7 ms and the game worker about
+  5.8-6.6 ms.
+- `CLevel` cost only 0.83-1.18 ms and its object/script phases were below the
+  persistent base-FPS deficit. `CGamePersistent`, however, cost 3.19-3.64 ms.
+- The v100 split located effectively all persistent cost in the realtime
+  scheduler: 3.17-3.61 ms average with exactly five registered RT objects.
+  `actor` was the slowest object in every 300-frame window and produced
+  individual 9-30 ms peaks. Weather, environment and the remaining persistent
+  phases were only hundredths of a millisecond.
+- Offline A-Life remains a separate tail source: `switch` cost about 0.81 ms,
+  while batches of twenty scheduled offline squads commonly cost 9.6-20.5 ms
+  and peaked at 27-55 ms. It explains intermittent worker tails, but not the
+  steady populated-base 60-70 FPS limit, so v101 does not change accepted
+  A-Life/NPC placement behaviour.
+
+### Adapted optimization
+
+- Actor nearby-item/character membership uses a 30 Hz cadence instead of a
+  render-frame cadence. The grenade HUD scan uses 20 Hz. Player input,
+  movement, physics, animation and the immediate pickup-mode query remain on
+  their original paths.
+- The effective `axr_main.script` callback manager is supplied as the separate
+  `Anthology Performance v101 - Actor Callback Hotpath` addon. Registrations
+  still use the original set semantics, but dispatch uses a dense cached
+  snapshot rebuilt only when a callback is registered or removed. This avoids
+  a hash walk and `type()` call for every `actor_on_update` target every frame.
+- One `actor_on_update` target per frame is sampled with `profile_timer` in a
+  rotating order. The top twelve callbacks are reported every 1800 actor
+  frames without timing all roughly ninety handlers every frame. Engine-side
+  reports split the actor script binder and spatial scans from the existing RT
+  scheduler total.
+- The accepted v86 Lua GC path, v87 detail instancing/grass, v88 A-Life radius,
+  NPC placement, saves, loading, renderer quality, HOM/LOD, PiP and UI are not
+  changed.
+
+### Build, installation and rollback
+
+- Lua 5.1 syntax checks and `git diff --check` pass. Both `DX11|x64` and
+  `DX11-AVX|x64` compile and link successfully.
+- Installed hashes match the build outputs:
+  - DX11 EXE: `31897E338DA51455EF4DFF4FC23A6BD6C64C051FF8892C6860BD68C2712586A6`;
+  - DX11 PDB: `439D2A9E0BE5EAF1ADBF0232563C5070E7790002AE21B81BEA9CAA8A4154E395`;
+  - DX11-AVX EXE: `476CB89634B0C6A0CE52A446CF75309D8FB808A43C10E62C95E5E0EE4D12CF47`;
+  - DX11-AVX PDB: `DCE727E490C6952233C284BC599F3372782ED5847EBBAAC164EB10D19AE10846`.
+- The v101 addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned into
+  MO2 and enabled first. The v100 diagnostic addon is disabled; accepted
+  v86/v87/v88 and V81 addon patches remain enabled.
+- Exact pre-v101 binaries, symbols, source files, profile, log and v100 addon
+  are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v101_pre_actor_hotpath`.
+- Expected markers are `[anthology/v101]`,
+  `[anthology/v101/actor-binder]`, `[anthology/v101/actor-spatial]` and
+  `[anthology/v101/callback]`. No new game or shader-cache purge is required.
+  The game was not launched during installation.
