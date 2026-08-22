@@ -3119,3 +3119,59 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - No C++ source or installed executable changed. v102 keeps the v101 engine,
   v86 GC path, v87 grass/detail instancing, v88 A-Life/NPC behaviour, loading,
   renderer quality, HOM/LOD, PiP and UI unchanged.
+
+## 2026-08-23 - v103 populated-base script ray pacing
+
+### Result of the v102 populated-base run
+
+- The session completed and exited cleanly. Five complete 1200-frame callback
+  windows resolved roughly 594-609 registered `actor_on_update` targets.
+- `sar_main.script:349` was the largest persistent script target: about
+  0.426 ms average per sampled invocation and 0.748 ms maximum. It performed
+  acoustic geometry probes and resent the complete OpenAL EFX parameter set at
+  a cadence tied to render FPS.
+- `demonized_ledge_grabbing.script:449` followed at about 0.339 ms average and
+  0.566 ms maximum. The active MCM configuration had alternative detection,
+  fifteen ray steps and `throttleCheck = 0`, bypassing the movement early-out
+  and allowing the full ledge ray fan every frame.
+- The next persistent callbacks were much smaller: Arrival particles about
+  0.100 ms, actor effects about 0.093 ms and the cold system about 0.080 ms.
+  Actor spatial work itself was only 0.007-0.010 ms. This limits the honest
+  expected gain from the first two script patches to fractions of a millisecond,
+  not a twofold FPS increase; rendering and the game worker remain major costs.
+
+### Separate adapted patches
+
+- `Anthology Performance v103 - Ledge Grabbing Ray Pacing` enforces a safe
+  33 ms minimum interval before preconditions, vector allocation and geometry
+  rays. Larger user-selected intervals are preserved. Climb movement, ray count,
+  reach, animation, conditions and save data are unchanged.
+- `Anthology Performance v103 - Spatial Audio Rework` keeps the configured ray
+  and bounce counts and the original per-frame interpolation, but schedules the
+  acoustic probe and full EFX commit at no more than 20 Hz. The two heavy phases
+  are offset by 25 ms where frame rate permits.
+- The SAR room-size sample now uses its own ring index instead of the unrelated
+  enclosure-score index. An unconditional two-line debug print that ran every
+  750 ms was removed. The preset table is allocated once rather than per EFX
+  update.
+- No A-Life radius, NPC placement, grass, loading, renderer, HOM/LOD, PiP, UI,
+  MCM value or engine source was changed. The v102 diagnostic remains enabled
+  so the next controlled run can measure both callbacks after the patch.
+
+### Validation, installation and rollback
+
+- All four Lua files pass the installed Lua 5.1 parser and repository-to-D file
+  hashes match. Both standalone addons are stored under
+  `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and enabled above v102 in the
+  active HARD profile.
+- This is Lua-only, so no engine rebuild was required. The installed v101
+  binaries remain byte-identical:
+  - DX11: `31897E338DA51455EF4DFF4FC23A6BD6C64C051FF8892C6860BD68C2712586A6`;
+  - DX11-AVX: `476CB89634B0C6A0CE52A446CF75309D8FB808A43C10E62C95E5E0EE4D12CF47`.
+- The exact pre-v103 profile, log, binaries, original loose ledge script, SAR
+  archive and extracted SAR script are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260823_v103_pre_script_ray_pacing`.
+- Expected markers are `[anthology/v103/ledge]` and `[anthology/v103/sar]`.
+  Test the same populated-base route for 1-2 minutes, climb one ledge and cross
+  an indoor/outdoor boundary before exiting normally. A new game and shader
+  cache purge are not required. The game was not launched during installation.
