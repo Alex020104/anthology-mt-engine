@@ -1,0 +1,14 @@
+local commands = {
+	"r__hom_dynamic on",
+	"r__portal_traverse_stats 1",
+	"rs_stats on",
+	"mt_frame_profile 1",
+	"mt_frame_profile_detail 1",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/diagnostics-v96] HOM and populated-base profile active")
+end

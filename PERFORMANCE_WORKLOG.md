@@ -3378,3 +3378,22 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   from `E:/ANTHOLOGY_BACKUPS/20260822_v95_pre_v94_renderable_hom`.
   Runtime rollback is immediate with `r__hom_dynamic off`; a new game and
   shader-cache purge are not required.
+
+## 2026-08-22 - v96 HOM and populated-base diagnostic
+
+- The user's same-save v95 test showed no visible FPS change. The fresh log
+  proves that the v95 binary and companion were active, but
+  `r__portal_traverse_stats` and the frame profiler were disabled, so the run
+  contains no evidence that the extra box query rejected any renderables.
+- Blindly extending dynamic HOM is stopped. A temporary diagnostics-only addon
+  enables the existing portal/render counters, on-screen statistics and
+  detailed MT frame profile for one 30-40 second populated-base run.
+- The next log will identify total/frame/render/wait costs, scheduler and
+  online-object tails, while the overlay exposes
+  `dynamic HOM box: test[N] reject[M]`. If rejection is negligible, dynamic
+  HOM will be disabled rather than retained as extra CPU work.
+- This module changes no gameplay, save data, renderer quality or engine
+  binary. It must be disabled after the measurement because detailed profiling
+  has its own CPU overhead.
+- Pre-diagnostic runtime configs and the active MO2 profile are backed up under
+  `E:/ANTHOLOGY_BACKUPS/20260822_v96_pre_hom_base_diagnostic`.
