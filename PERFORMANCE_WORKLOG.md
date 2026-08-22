@@ -3057,3 +3057,48 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Expected startup marker: `[A-Life/v88] budgets switch/scheduled 0.810/0.090
   ms`. Runtime FPS and frame-time acceptance still require the same-save base
   test; no 100-120 FPS result is claimed before that measurement.
+
+## 2026-08-22 - v89 MT task-manager test lane
+
+### Same-save video evidence
+
+- The 163.85-second V88 capture is running the expected engine: the log contains
+  `[A-Life/v88] budgets switch/scheduled 0.810/0.090 ms`.
+- Once the actor leaves the Skadovsk area and looks away from the base/NPCs, the
+  overlay is generally around 90-105 FPS with short values above 120. Inside or
+  near the populated base it is commonly around 60-80 FPS. This makes the empty
+  outdoor route the useful upper-bound comparison for online-NPC/quest work.
+- The 150 m A-Life radius does not remove the Skadovsk population while the
+  actor is still inside that radius. V88 therefore cannot by itself make a
+  populated base equal to an empty outdoor scene.
+
+### Isolated activation
+
+- The engine already contains Monolith's `mt_task_manager` implementation, but
+  the active V88 profile had it disabled. The option moves
+  `CGameTaskManager::UpdateTasks()` from `CLevel::OnFrame()` on the main thread
+  to the existing `XRay::Engine::GameThread`, which overlaps world rendering.
+- Added the independent companion `Anthology Performance v89 - MT Task
+  Manager`. It enables `mt_task_manager 1` and the existing
+  `lua_use_functor_cache 1`, while explicitly retaining `mt_ui 0` and cheap
+  frame profiling only (`mt_frame_profile_detail 0`).
+- This path processes the actor's active game-task states and Lua completion/
+  failure functors. It does not move smart-terrain logic, combat AI or every
+  quest script attached to an NPC; the candidate is intentionally presented as
+  a measured task-lane test rather than a claim of doubled base FPS.
+- No executable rebuild is required because the command and worker path are
+  already present in the installed V88 binaries. No save, renderer, PiP, SSS,
+  UI, NPC placement or shader file is changed.
+
+### Installation and recovery
+
+- Canonical addon: `D:/ANTHOLOGY_DEV/addons/Anthology Performance v89 - MT
+  Task Manager`; the active HARD profile enables its MO2 junction above V88.
+- Both runtime `user.ltx` files contain `mt_task_manager 1`,
+  `lua_use_functor_cache 1` and keep `mt_ui 0`.
+- Pre-v89 settings, active profile and log are backed up under
+  `E:/ANTHOLOGY_BACKUPS/20260822_v89_pre_mt_task_manager`.
+- Expected startup marker: `[anthology/v89] MT task manager active; UI MT
+  remains disabled`. The same save and the same Skadovsk-to-empty-world route
+  are required for acceptance; the candidate is immediately reversible by
+  disabling the companion and restoring `mt_task_manager 0`.
