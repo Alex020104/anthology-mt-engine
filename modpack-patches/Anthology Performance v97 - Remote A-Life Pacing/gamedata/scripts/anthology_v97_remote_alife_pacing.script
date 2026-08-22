@@ -1,0 +1,3 @@
+function on_game_start()
+	printf("* [anthology/v97] remote offline A-Life pacing active (native movement continuous, full Lua logic 5-7 s beyond 300 m)")
+end

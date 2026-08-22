@@ -3397,3 +3397,55 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   has its own CPU overhead.
 - Pre-diagnostic runtime configs and the active MO2 profile are backed up under
   `E:/ANTHOLOGY_BACKUPS/20260822_v96_pre_hom_base_diagnostic`.
+
+## 2026-08-22 - v97 remote offline A-Life pacing
+
+### Result of the v96 populated-base profile
+
+- The same-route v95 test again produced no visible FPS change. Dynamic HOM is
+  therefore retired from the active profile instead of adding more renderable
+  tests: `r__hom_dynamic off`, portal counters off and frame diagnostics off.
+- Fifty-three stable 300-frame samples averaged 13.03 ms total, 4.84 ms in
+  FrameMove and 7.48 ms in `seqRender`; the secondary wait averaged only
+  0.23 ms. The renderer remains a large steady cost, but it does not explain
+  the periodic long frame.
+- The periodic tail is the scheduled offline A-Life lane. Single Lua-backed
+  squad updates exceeded the entire 0.090 ms registry budget because an object
+  update cannot be preempted: examples reached 13.894, 15.586, 21.976 and
+  36.050 ms. `seqParallel` independently recorded `alife.update` spikes up to
+  36.88 ms.
+- Moving Lua GC or mutable A-Life state to another thread is intentionally not
+  attempted. The Lua VM, simulation board, game graph and callbacks share
+  mutable state and require serial ownership.
+
+### Isolated v97 implementation
+
+- The native `cse_alife_online_offline_group.update` remains first and runs on
+  every scheduled pass, so offline game-graph movement and saved squad
+  positions continue to advance normally.
+- Only the subsequent Lua refresh, condlist, callback and target-selection
+  chain is paced for offline squads beyond 300 metres or on another level.
+  It runs every 5-7 seconds with a per-squad ID offset. Online and nearby
+  squads retain stock cadence. Story, companion, forced-online and explicitly
+  scripted-target squads are excluded from pacing as a quest-safety guard.
+- Remote squads now leave the PDA-marker path before repeated engine boundary
+  calls that cannot produce a visible mark on the actor's current map. Local
+  PDA visuals and hint refresh semantics are preserved.
+- A squad fallback `CALifeSmartTerrainTask` is reused while its graph and level
+  vertex remain unchanged, removing repeated short-lived luabind userdata.
+- This is a standalone full-file addon based on the effective unpacked
+  Anthology script. It does not modify another installed addon, the A-Life
+  150-metre online radius, save serialization, NPC position preservation,
+  renderer quality, PiP or SSS. Lua 5.1 syntax validation passes.
+
+### Installation and rollback
+
+- Canonical addon: `D:/ANTHOLOGY_DEV/addons/Anthology Performance v97 - Remote A-Life Pacing`.
+  It is mirrored in the repository and junctioned into MO2. v95 and v96 are
+  disabled in the profile; because MO2 was open during installation it must be
+  restarted once before the test.
+- No engine source changed in v97, so the already installed paired DX11 and
+  DX11-AVX v95 binaries remain byte-identical; a redundant binary rebuild is
+  not required for this script-only candidate.
+- Runtime configs, the MO2 profile and the original effective script are backed
+  up under `E:/ANTHOLOGY_BACKUPS/20260822_v97_pre_remote_alife_pacing`.
