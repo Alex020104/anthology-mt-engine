@@ -3285,3 +3285,59 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Expected markers are `[anthology/alife-v105]` and `[anthology/v105/rak]`.
   Reload the save or change levels before testing; a new game and shader-cache
   purge are not required. The game was not launched during installation.
+
+## 2026-08-23 - v106 immediate smart work
+
+### Why v105 produced no visible change
+
+- The controlled run loaded both v105 modules without a pre-bind error, so the
+  problem was not MO2 activation or a missing callback.
+- v105 still gave a supposedly unique `db.offline_objects` vertex priority over
+  the assigned smart job. In this pack that table is populated and cleared
+  sequentially during online creation, so a collapsed squad-centre position can
+  appear unique at the moment an individual NPC is inspected.
+- The active `[BS] Exo System` supplies the effective motivator binder. It calls
+  smart setup and then consumes `db.offline_objects` or
+  `db.spawned_vertex_by_id`, applying `level.vertex_position(vertex)` after the
+  job logic was initialized. This can overwrite an earlier correction.
+- `CALifeSmartTerrainTask` exposes both `level_vertex_id()` and the exact
+  `position()`. v105 used the navigation-node position rather than the exact
+  patrol/job point. It also skipped every `smart.arriving_npc` member, including
+  members whose server position was already at the smart centre.
+
+### v106 placement path
+
+- `Anthology A-Life v106 - Immediate Smart Work` always prioritizes the current
+  assigned job during online creation. It no longer attempts to infer whether
+  the current offline vertex is trustworthy.
+- The exact `alife_task:position()` is applied before the active smart
+  `setup_logic`. The class `setup_logic` path is also guarded during spawn so a
+  job selected from inside `select_npc_job` sees the same exact position.
+- The exact target is re-applied after the complete effective motivator binder
+  returns. This happens inside `net_spawn`, before the first rendered frame, and
+  prevents the Exo binder's coarser vertex redirect from becoming visible.
+- A member flagged as arriving but already within 30 metres of the target smart
+  is treated as arrived and placed at work. A real approach farther away keeps
+  its route. Companions and objects without a smart job remain untouched.
+- The first forty affected NPCs and one load summary are logged under
+  `[anthology/alife-v106]`. There is no per-frame callback or save-format change.
+
+### Validation, installation and rollback
+
+- Production and test scripts pass Lua 5.1 syntax validation. The regression
+  test models two base NPCs, a near arrival, a far arrival, first-time stock job
+  selection and the post-smart Exo vertex overwrite. Smart logic receives exact
+  positions, the final online objects retain them, and the far arrival is not
+  teleported.
+- The standalone addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned
+  into MO2 and enabled first in the HARD profile. v105 and v80 placement addons
+  are disabled; v88 150 m simulation and all accepted renderer/loading modules
+  remain unchanged.
+- This is Lua-only, so no engine executable was rebuilt or replaced. A new game
+  and shader-cache purge are not required.
+- Exact pre-v106 profile, v105 addon and test log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260823_v106_pre_immediate_smart_work`.
+- Expected startup line reports `setup_logic`, `setup_gulag` and `net_spawn` as
+  `true`. After loading a save, the summary must show non-zero `prebound` and
+  `finalized` counts for a populated base. The game was not launched during
+  installation.

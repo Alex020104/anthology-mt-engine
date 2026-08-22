@@ -1,0 +1,374 @@
+local original_setup_gulag = nil
+local original_setup_logic = nil
+local original_net_spawn = nil
+local wrappers_installed = false
+local setup_logic_installed = false
+local error_reported = false
+
+local spawn_context = {}
+local final_positions = {}
+local logged_npcs = {}
+local logged_arrivals = {}
+local diagnostic_budget = 40
+local arrival_budget = 12
+
+local stats = {
+	seen = 0,
+	prebound = 0,
+	finalized = 0,
+	near_arrival = 0,
+	far_arrival = 0,
+	no_smart = 0,
+	no_job = 0,
+	failed = 0,
+}
+
+local INVALID_SMART_ID = 65535
+local INVALID_LEVEL_VERTEX = 4294967295
+local ARRIVED_DISTANCE_SQR = 30 * 30
+
+local function valid_vertex(level_vertex)
+	return type(level_vertex) == "number"
+		and level_vertex >= 0
+		and level_vertex ~= INVALID_LEVEL_VERTEX
+end
+
+local function safe_name(object)
+	if not (object and object.name) then
+		return "?"
+	end
+	local ok, name = pcall(object.name, object)
+	return ok and tostring(name) or "?"
+end
+
+local function copy_position(position)
+	if not position then
+		return nil
+	end
+	local ok, result = pcall(function()
+		return vector():set(position)
+	end)
+	return ok and result or position
+end
+
+local function safe_set_position(npc, position)
+	if not (npc and position) then
+		return false
+	end
+	return pcall(npc.set_npc_position, npc, copy_position(position))
+end
+
+local function smart_for(se_obj)
+	if not se_obj then
+		return nil, nil
+	end
+
+	local smart_id = se_obj.m_smart_terrain_id
+	if not (smart_id and smart_id ~= INVALID_SMART_ID) then
+		return nil, nil
+	end
+
+	local simulation = alife()
+	return simulation and simulation:object(smart_id), smart_id
+end
+
+-- arriving_npc may remain set while the squad is already standing on the
+-- smart centre. Preserve real approaches, but treat a member within 30 metres
+-- of its destination as arrived so it does not fan out in front of the actor.
+local function truly_arriving(se_obj, smart, npc_id)
+	if not (smart and smart.arriving_npc and smart.arriving_npc[npc_id]) then
+		return false, false
+	end
+
+	local source = se_obj and se_obj.position
+	local destination = smart.position
+	if source and destination then
+		local ok, distance_sqr = pcall(source.distance_to_sqr, source, destination)
+		if ok and type(distance_sqr) == "number" and distance_sqr <= ARRIVED_DISTANCE_SQR then
+			return false, true
+		end
+	end
+
+	return true, false
+end
+
+local function job_target(smart, npc_id, allow_select)
+	local npc_info = smart and smart.npc_info and smart.npc_info[npc_id]
+	if not npc_info then
+		return nil
+	end
+
+	if not npc_info.job and allow_select and smart.select_npc_job then
+		pcall(smart.select_npc_job, smart, npc_info, true)
+		npc_info = smart.npc_info[npc_id] or npc_info
+	end
+
+	local job = npc_info.job
+	local task = job and job.alife_task
+	if not task then
+		return nil
+	end
+
+	local position_ok, position = pcall(function()
+		return task:position()
+	end)
+	local vertex_ok, level_vertex = pcall(function()
+		return task:level_vertex_id()
+	end)
+
+	if not position_ok then
+		position = nil
+	end
+	if not (vertex_ok and valid_vertex(level_vertex)) then
+		level_vertex = nil
+	end
+
+	local exact_position = position ~= nil
+	if not position and level_vertex then
+		local fallback_ok, fallback = pcall(level.vertex_position, level_vertex)
+		position = fallback_ok and fallback or nil
+	end
+
+	if not position then
+		return nil
+	end
+
+	return {
+		position = copy_position(position),
+		level_vertex = level_vertex,
+		job_section = job.section,
+		exact_position = exact_position,
+	}
+end
+
+local function seed_stock_redirect(npc_id, target)
+	if target.level_vertex and db and db.spawned_vertex_by_id then
+		db.spawned_vertex_by_id[npc_id] = target.level_vertex
+	end
+
+	local offline = db and db.offline_objects and db.offline_objects[npc_id]
+	if offline and target.level_vertex then
+		offline.level_vertex_id = target.level_vertex
+	end
+end
+
+local function log_target(npc, smart, npc_id, target, stage, was_near_arrival)
+	if logged_npcs[npc_id] or diagnostic_budget <= 0 then
+		return
+	end
+
+	logged_npcs[npc_id] = true
+	diagnostic_budget = diagnostic_budget - 1
+	local line = string.format(
+		"* [anthology/alife-v106] npc=%s id=%s smart=%s job=%s vertex=%s exact=%s stage=%s near_arrival=%s",
+		safe_name(npc),
+		tostring(npc_id),
+		safe_name(smart),
+		tostring(target.job_section or "?"),
+		tostring(target.level_vertex or "?"),
+		tostring(target.exact_position),
+		tostring(stage),
+		tostring(was_near_arrival)
+	)
+	printf("%s", line)
+end
+
+local function log_far_arrival(npc, smart, npc_id)
+	if logged_arrivals[npc_id] or arrival_budget <= 0 then
+		return
+	end
+	logged_arrivals[npc_id] = true
+	arrival_budget = arrival_budget - 1
+	printf("%s", string.format(
+		"* [anthology/alife-v106] keep real arrival npc=%s id=%s smart=%s",
+		safe_name(npc), tostring(npc_id), safe_name(smart)
+	))
+end
+
+local function apply_job_target(npc, smart, se_obj, stage, allow_select)
+	local npc_id = se_obj and se_obj.id or (npc and npc:id())
+	if not (npc_id and smart and smart.npc_info and smart.npc_info[npc_id]) then
+		stats.no_smart = stats.no_smart + 1
+		return false
+	end
+
+	local is_arriving, was_near_arrival = truly_arriving(se_obj, smart, npc_id)
+	if is_arriving then
+		stats.far_arrival = stats.far_arrival + 1
+		log_far_arrival(npc, smart, npc_id)
+		return false
+	end
+
+	local target = job_target(smart, npc_id, allow_select)
+	if not target then
+		stats.no_job = stats.no_job + 1
+		return false
+	end
+
+	if not safe_set_position(npc, target.position) then
+		stats.failed = stats.failed + 1
+		return false
+	end
+
+	seed_stock_redirect(npc_id, target)
+	final_positions[npc_id] = target
+	if not logged_npcs[npc_id] then
+		stats.prebound = stats.prebound + 1
+		if was_near_arrival then
+			stats.near_arrival = stats.near_arrival + 1
+		end
+	end
+	log_target(npc, smart, npc_id, target, stage, was_near_arrival)
+	return true
+end
+
+local function report_error(stage, err)
+	stats.failed = stats.failed + 1
+	if error_reported then
+		return
+	end
+	error_reported = true
+	printf("%s", "! [anthology/alife-v106] " .. tostring(stage) .. " skipped safely: " .. tostring(err))
+end
+
+local function install_setup_logic_wrapper()
+	local smart_class = smart_terrain and smart_terrain.se_smart_terrain
+	local current = smart_class and smart_class.setup_logic
+	if not current then
+		return false
+	end
+
+	original_setup_logic = current
+	smart_class.setup_logic = function(self, npc, ...)
+		local npc_id = npc and npc:id()
+		local context = npc_id and spawn_context[npc_id]
+		if context then
+			local ok, err = pcall(apply_job_target, npc, self, context.se_obj, "setup_logic", false)
+			if not ok then
+				report_error("setup_logic", err)
+			end
+		end
+		return original_setup_logic(self, npc, ...)
+	end
+	return true
+end
+
+local function install_setup_gulag_wrapper()
+	local current = smart_terrain and smart_terrain.setup_gulag_and_logic_on_spawn
+	if not current then
+		return false
+	end
+
+	original_setup_gulag = current
+	smart_terrain.setup_gulag_and_logic_on_spawn = function(npc, st, se_obj, stype, loaded)
+		local npc_id = se_obj and se_obj.id or (npc and npc:id())
+		local smart = smart_for(se_obj)
+		if npc_id then
+			stats.seen = stats.seen + 1
+			spawn_context[npc_id] = { se_obj = se_obj }
+		end
+
+		local before_ok, before_err = pcall(apply_job_target, npc, smart, se_obj, "before_setup", true)
+		if not before_ok then
+			report_error("before_setup", before_err)
+		end
+
+		local result = original_setup_gulag(npc, st, se_obj, stype, loaded)
+
+		local after_ok, after_err = pcall(apply_job_target, npc, smart, se_obj, "after_setup", false)
+		if not after_ok then
+			report_error("after_setup", after_err)
+		end
+		if npc_id then
+			spawn_context[npc_id] = nil
+		end
+		return result
+	end
+	return true
+end
+
+local function install_net_spawn_wrapper()
+	local binder = xr_motivator and xr_motivator.motivator_binder
+	local current = binder and binder.net_spawn
+	if not current then
+		return false
+	end
+
+	original_net_spawn = current
+	binder.net_spawn = function(self, se_abstract)
+		local npc = self and self.object
+		local npc_id = npc and npc:id()
+		if npc_id then
+			final_positions[npc_id] = nil
+		end
+
+		local result = original_net_spawn(self, se_abstract)
+		if result == false then
+			if npc_id then
+				final_positions[npc_id] = nil
+			end
+			return result
+		end
+
+		local target = npc_id and final_positions[npc_id]
+		if target and safe_set_position(npc, target.position) then
+			stats.finalized = stats.finalized + 1
+		end
+		if npc_id then
+			final_positions[npc_id] = nil
+		end
+		return result
+	end
+	return true
+end
+
+local function install_wrappers()
+	if wrappers_installed then
+		return
+	end
+
+	setup_logic_installed = install_setup_logic_wrapper()
+	local gulag_ok = install_setup_gulag_wrapper()
+	local net_spawn_ok = install_net_spawn_wrapper()
+	wrappers_installed = gulag_ok and net_spawn_ok
+
+	printf("%s", string.format(
+		"* [anthology/alife-v106] immediate smart work active: setup_logic=%s setup_gulag=%s net_spawn=%s",
+		tostring(setup_logic_installed), tostring(gulag_ok), tostring(net_spawn_ok)
+	))
+end
+
+function on_game_start()
+	spawn_context = {}
+	final_positions = {}
+	logged_npcs = {}
+	logged_arrivals = {}
+	diagnostic_budget = 40
+	arrival_budget = 12
+	error_reported = false
+	stats = {
+		seen = 0,
+		prebound = 0,
+		finalized = 0,
+		near_arrival = 0,
+		far_arrival = 0,
+		no_smart = 0,
+		no_job = 0,
+		failed = 0,
+	}
+	install_wrappers()
+end
+
+function actor_on_first_update()
+	printf("%s", string.format(
+		"* [anthology/alife-v106] load summary seen=%d prebound=%d finalized=%d near_arrival=%d far_arrival=%d no_smart=%d no_job=%d failed=%d",
+		stats.seen,
+		stats.prebound,
+		stats.finalized,
+		stats.near_arrival,
+		stats.far_arrival,
+		stats.no_smart,
+		stats.no_job,
+		stats.failed
+	))
+end
