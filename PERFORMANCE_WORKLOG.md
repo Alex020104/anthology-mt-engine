@@ -2938,3 +2938,45 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   marked/unmarked/finalized counters. No new game or shader-cache purge is
   required. Runtime acceptance still requires a controlled same-save session;
   the game was not launched during installation.
+
+## 2026-08-22 - v99 populated-base frame breakdown
+
+### Result of v98
+
+- The user's repeated same-save test showed no visible FPS improvement.
+- The log confirmed that all three v98 Lua modules were active, so the result
+  was not an installation or MO2-order problem.
+- V98 disabled gameplay profiling and optimized scheduler/allocation paths that
+  were too small to explain the populated-base deficit. Its three addons and
+  engine-only micro-optimizations are therefore not retained in v99.
+
+### Diagnostic scope
+
+- V99 returns to the accepted v86 engine plus the v87 DX11 detail-instancing
+  change. It does not change A-Life, NPC placement, Lua callback order, render
+  quality, loading, HOM/LOD policy, PiP, UI or save data.
+- Detailed profiling now reports every main `seqFrame` callback, the object/HUD
+  split, aggregate `UpdateCL` cost and slowest object, plus CLevel phases for
+  networking, map/tasks, inherited object work, scripts, sound, GC and script
+  attachments. Existing render and worker-thread statistics remain available.
+- `Anthology Diagnostics v99 - Base Frame Breakdown` enables
+  `mt_frame_profile 1` and `mt_frame_profile_detail 1` and logs the marker
+  `[anthology/v99]`. The instrumentation reports in 300-frame windows and is
+  deliberately a test-only build; it is not presented as an FPS improvement.
+
+### Build, installation and rollback
+
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully.
+- Installed candidate hashes:
+  - DX11 EXE: `CB465775341403899D2B8EABC10A531657EDE9BE022A500AEB237645817F7B96`;
+  - DX11-AVX EXE: `0C69BDD2A6388E8C3E546E500908CBCB150CEFC38EDCB206E84A8456F32A5BD1`.
+- The v99 addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned into
+  MO2 and enabled above the now-disabled v98 modules. V86, v87, accepted V81
+  addon patches, the V80 NPC placement module and the user's other mods remain
+  unchanged.
+- Pre-v99 binaries and the MO2 profile are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v99_pre_base_profile`.
+- The game was not launched during installation. Test protocol: use the same
+  save, walk a normal route around the populated base for 1-2 minutes, open one
+  NPC dialogue, close the game normally, then inspect the new v99 profiler
+  groups in `xray_chenc.log`.

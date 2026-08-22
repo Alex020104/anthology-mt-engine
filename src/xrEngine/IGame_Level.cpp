@@ -9,6 +9,7 @@
 #include "gamefont.h"
 #include "xrLevel.h"
 #include "CameraManager.h"
+#include "EngineThreading.h"
 #include "xr_object.h"
 #include "feel_sound.h"
 
@@ -318,13 +319,45 @@ void IGame_Level::OnFrame()
 	// Update all objects
 	VERIFY(bReady);
 	const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
-	const u64 objects_started_at = measure_precache ? CPU::QPC() : 0;
+	const bool measure_runtime = mt_FrameProfile && mt_FrameProfileDetailed && !Device.dwPrecacheFrame;
+	const bool measure_level = measure_precache || measure_runtime;
+	const u64 objects_started_at = measure_level ? CPU::QPC() : 0;
 	Objects.Update(false);
-	const u64 objects_finished_at = measure_precache ? CPU::QPC() : 0;
+	const u64 objects_finished_at = measure_level ? CPU::QPC() : 0;
 	g_hud->OnFrame();
+	const u64 hud_finished_at = measure_level ? CPU::QPC() : 0;
 	if (measure_precache)
 		pApp->LoadSessionRecordPrecacheUpdate(objects_finished_at - objects_started_at,
-			CPU::QPC() - objects_finished_at, 0);
+			hud_finished_at - objects_finished_at, 0);
+
+	if (measure_runtime)
+	{
+		struct SLevelObjectProfile
+		{
+			u32 frames = 0;
+			u64 objects = 0;
+			u64 hud = 0;
+			u64 max_objects = 0;
+			u64 max_hud = 0;
+		};
+		static SLevelObjectProfile profile;
+		const u64 object_ticks = objects_finished_at - objects_started_at;
+		const u64 hud_ticks = hud_finished_at - objects_finished_at;
+		++profile.frames;
+		profile.objects += object_ticks;
+		profile.hud += hud_ticks;
+		profile.max_objects = std::max(profile.max_objects, object_ticks);
+		profile.max_hud = std::max(profile.max_hud, hud_ticks);
+		if (profile.frames >= 300)
+		{
+			const double average_ms = 1000.0 / (double(CPU::qpc_freq) * double(profile.frames));
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			Msg("* [mt-frame/level-objects] avg(objects/hud)=%.2f/%.2f ms max=%.2f/%.2f ms",
+				profile.objects * average_ms, profile.hud * average_ms,
+				profile.max_objects * ticks_to_ms, profile.max_hud * ticks_to_ms);
+			profile = {};
+		}
+	}
 
 	// Ambience
 	if (Sounds_Random.size() && (Device.dwTimeGlobal > Sounds_Random_dwNextTime))

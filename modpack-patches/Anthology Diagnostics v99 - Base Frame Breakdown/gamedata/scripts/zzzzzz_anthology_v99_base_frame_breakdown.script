@@ -1,0 +1,11 @@
+local commands = {
+	"mt_frame_profile 1",
+	"mt_frame_profile_detail 1",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/v99] populated-base frame breakdown active")
+end

@@ -57,6 +57,75 @@ struct SPrecacheFrameCallbackProfile
 	u64 max_ticks = 0;
 };
 
+struct SRuntimeFrameCallbackProfile
+{
+	const void* object = nullptr;
+	xr_string type_name;
+	int priority = REG_PRIORITY_INVALID;
+	u32 calls = 0;
+	u64 total_ticks = 0;
+	u64 max_ticks = 0;
+};
+
+xr_vector<SRuntimeFrameCallbackProfile>& RuntimeFrameCallbackProfiles()
+{
+	static xr_vector<SRuntimeFrameCallbackProfile> profiles;
+	return profiles;
+}
+
+u32& RuntimeFrameCallbackFrames()
+{
+	static u32 frames = 0;
+	return frames;
+}
+
+void RecordRuntimeFrameCallback(const _REG_INFO& info, LPCSTR type_name, u64 elapsed_ticks)
+{
+	auto& profiles = RuntimeFrameCallbackProfiles();
+	auto profile = std::find_if(profiles.begin(), profiles.end(), [&info](const auto& candidate)
+	{
+		return candidate.object == info.Object;
+	});
+
+	if (profile == profiles.end())
+	{
+		profiles.emplace_back();
+		profile = profiles.end() - 1;
+		profile->object = info.Object;
+		profile->type_name = type_name;
+		profile->priority = info.Prio;
+	}
+
+	++profile->calls;
+	profile->total_ticks += elapsed_ticks;
+	profile->max_ticks = std::max(profile->max_ticks, elapsed_ticks);
+}
+
+void PrintAndResetRuntimeFrameCallbackProfiles()
+{
+	auto& profiles = RuntimeFrameCallbackProfiles();
+	const u32 frames = RuntimeFrameCallbackFrames();
+	std::sort(profiles.begin(), profiles.end(), [](const auto& left, const auto& right)
+	{
+		return left.total_ticks > right.total_ticks;
+	});
+
+	const double ticks_to_average_ms = frames && CPU::qpc_freq ?
+		1000.0 / (double(CPU::qpc_freq) * double(frames)) : 0.0;
+	const double ticks_to_ms = CPU::qpc_freq ? 1000.0 / double(CPU::qpc_freq) : 0.0;
+	for (u32 index = 0; index < profiles.size(); ++index)
+	{
+		const auto& profile = profiles[index];
+		Msg("* [mt-frame/seqframe] #%02u avg=%.3f ms max=%.2f ms calls/frame=%.2f prio=%d type=%s",
+			index + 1, profile.total_ticks * ticks_to_average_ms,
+			profile.max_ticks * ticks_to_ms, double(profile.calls) / double(frames),
+			profile.priority, profile.type_name.c_str());
+	}
+
+	profiles.clear();
+	RuntimeFrameCallbackFrames() = 0;
+}
+
 xr_vector<SPrecacheFrameCallbackProfile>& PrecacheFrameCallbackProfiles()
 {
 	static xr_vector<SPrecacheFrameCallbackProfile> profiles;
@@ -147,6 +216,48 @@ void ProcessPrecacheFrameCallbacks()
 	if (registrator.changed)
 		registrator.Resort();
 	registrator.in_process = false;
+}
+
+void ProcessRuntimeFrameCallbacks()
+{
+	auto& registrator = Device.seqFrame;
+	registrator.in_process = true;
+
+	if (registrator.R.empty())
+	{
+		registrator.in_process = false;
+		return;
+	}
+
+	auto process = [](const _REG_INFO& info)
+	{
+		pureFrame* callback = static_cast<pureFrame*>(info.Object);
+		const u64 started_at = CPU::QPC();
+		rp_Frame(info.Object);
+		RecordRuntimeFrameCallback(info, typeid(*callback).name(), CPU::QPC() - started_at);
+	};
+
+	if (registrator.R[0].Prio == REG_PRIORITY_CAPTURE)
+	{
+		const _REG_INFO info = registrator.R[0];
+		process(info);
+	}
+	else
+	{
+		for (u32 index = 0; index < registrator.R.size(); ++index)
+		{
+			const _REG_INFO info = registrator.R[index];
+			if (info.Prio != REG_PRIORITY_INVALID)
+				process(info);
+		}
+	}
+
+	if (registrator.changed)
+		registrator.Resort();
+	registrator.in_process = false;
+
+	if (++RuntimeFrameCallbackFrames() >= 300)
+		PrintAndResetRuntimeFrameCallbackProfiles();
 }
 } // namespace
 
@@ -1033,6 +1144,8 @@ void CRenderDevice::FrameMove()
 		if (dwPrecacheFrame == 1)
 			PrintPrecacheFrameCallbackProfiles();
 	}
+	else if (mt_FrameProfile && mt_FrameProfileDetailed && !dwPrecacheFrame)
+		ProcessRuntimeFrameCallbacks();
 	else
 		Device.seqFrame.Process(rp_Frame);
 	STOP_PROFILE;

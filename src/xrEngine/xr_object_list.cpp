@@ -5,11 +5,46 @@
 #include "xrSheduler.h"
 #include "xr_object_list.h"
 #include "std_classes.h"
+#include "EngineThreading.h"
 
 #include "xr_object.h"
 #include "../xrCore/net_utils.h"
 
 #include "CustomHUD.h"
+
+namespace
+{
+struct SObjectUpdateDetailProfile
+{
+	u32 frames = 0;
+	u64 list_ticks = 0;
+	u64 update_ticks = 0;
+	u64 update_calls = 0;
+	u64 workload_items = 0;
+	u64 max_update_ticks = 0;
+	shared_str max_update_section;
+	shared_str max_update_name;
+
+	void reset()
+	{
+		*this = {};
+	}
+};
+
+SObjectUpdateDetailProfile object_update_profile;
+
+void record_object_update(CObject* object, u64 elapsed)
+{
+	object_update_profile.update_ticks += elapsed;
+	++object_update_profile.update_calls;
+	if (elapsed <= object_update_profile.max_update_ticks)
+		return;
+
+	object_update_profile.max_update_ticks = elapsed;
+	object_update_profile.max_update_section = object->cNameSect();
+	object_update_profile.max_update_name = object->cName();
+}
+}
 
 class fClassEQ
 {
@@ -151,7 +186,11 @@ void CObjectList::SingleUpdate(CObject* O)
 
 	// Msg ("[%d][0x%08x]IAmNotACrowAnyMore (CObjectList::SingleUpdate)", Device.dwFrame, fast_dynamic_cast<void*>(O));
 
+	const bool measure_update = mt_FrameProfile && mt_FrameProfileDetailed;
+	const u64 update_started_at = measure_update ? CPU::QPC() : 0;
 	O->UpdateCL();
+	if (measure_update)
+		record_object_update(O, CPU::QPC() - update_started_at);
 #ifdef DEBUG
 	VERIFY3(O->dbg_update_cl == Device.dwFrame, "Broken sequence of calls to 'UpdateCL'", *O->cName());
 #endif
@@ -225,6 +264,11 @@ extern BOOL mt_Scheduler;
 void CObjectList::Update(bool bForce)
 {
 	PROF_EVENT("CObjectList::Update");
+	const bool measure_detail = mt_FrameProfile && mt_FrameProfileDetailed;
+	const u64 list_started_at = measure_detail ? CPU::QPC() : 0;
+	if (!measure_detail && object_update_profile.frames)
+		object_update_profile.reset();
+	u64 frame_workload_items = 0;
 	if (!Device.Paused() || bForce)
 	{
 		// Clients
@@ -262,6 +306,7 @@ void CObjectList::Update(bool bForce)
 					PROF_EVENT("CObjectList::Update/CopyWorkload");
 					workload = *required_workload;
 				}
+				frame_workload_items = workload.size();
 
 				crows.clear_not_free();
 
@@ -288,8 +333,30 @@ void CObjectList::Update(bool bForce)
     ProcessDestroyQueueImpl(force_destroy_queue);
     if (mt_Scheduler)
         Device.seqParallelBeforRender.push_back(xr_make_delegate(this, &CObjectList::ProcessDestroyQueue));
-    else
-        ProcessDestroyQueue();
+	else
+		ProcessDestroyQueue();
+
+	if (measure_detail)
+	{
+		++object_update_profile.frames;
+		object_update_profile.list_ticks += CPU::QPC() - list_started_at;
+		object_update_profile.workload_items += frame_workload_items;
+		if (object_update_profile.frames >= 300)
+		{
+			const double ticks_to_average_ms = 1000.0 /
+				(double(CPU::qpc_freq) * double(object_update_profile.frames));
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			Msg("* [mt-frame/objects] avg(list/updatecl)=%.2f/%.2f ms calls/frame=%.2f workload/frame=%.2f slowest=%s/%s %.2f ms",
+				object_update_profile.list_ticks * ticks_to_average_ms,
+				object_update_profile.update_ticks * ticks_to_average_ms,
+				double(object_update_profile.update_calls) / double(object_update_profile.frames),
+				double(object_update_profile.workload_items) / double(object_update_profile.frames),
+				object_update_profile.max_update_section.size() ? *object_update_profile.max_update_section : "none",
+				object_update_profile.max_update_name.size() ? *object_update_profile.max_update_name : "none",
+				object_update_profile.max_update_ticks * ticks_to_ms);
+			object_update_profile.reset();
+		}
+	}
 }
 
 void CObjectList::ProcessDestroyQueue()

@@ -1288,6 +1288,18 @@ BOOL mt_TaskManager = FALSE;
 void CLevel::OnFrame()
 {
 	PROF_EVENT("CLevel::OnFrame()");
+	const bool measure_detail = mt_FrameProfile && mt_FrameProfileDetailed && !Device.dwPrecacheFrame;
+	const u64 level_frame_started_at = measure_detail ? CPU::QPC() : 0;
+	u64 phase_started_at = level_frame_started_at;
+	u64 prefix_ticks = 0;
+	u64 network_ticks = 0;
+	u64 tasks_ticks = 0;
+	u64 inherited_ticks = 0;
+	u64 post_ticks = 0;
+	u64 scripts_ticks = 0;
+	u64 sounds_ticks = 0;
+	u64 gc_ticks = 0;
+	u64 attachments_ticks = 0;
 
     // demonized: update wallmarks before rendering
     ::Render->update_Wallmarks();
@@ -1308,6 +1320,12 @@ void CLevel::OnFrame()
 	Device.Statistic->TEST0.Begin();
 	BulletManager().CommitEvents();
 	Device.Statistic->TEST0.End();
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		prefix_ticks = now - phase_started_at;
+		phase_started_at = now;
+	}
 	// Client receive
 	if (net_isDisconnected())
 	{
@@ -1377,6 +1395,12 @@ void CLevel::OnFrame()
 		bReady && control_ready && queues_drained)
 		DumpClientSpawnProfile();
 	pApp->LoadSessionTryFinish(bReady, control_ready, queues_drained);
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		network_ticks = now - phase_started_at;
+		phase_started_at = now;
+	}
 
 	if (m_bNeed_CrPr)
 		make_NetCorrectionPrediction();
@@ -1388,12 +1412,24 @@ void CLevel::OnFrame()
 		else
 			MapManager().Update();
 
-        if (!mt_TaskManager && Device.dwPrecacheFrame == 0)
-            GameTaskManager().UpdateTasks();
+		if (!mt_TaskManager && Device.dwPrecacheFrame == 0)
+			GameTaskManager().UpdateTasks();
+	}
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		tasks_ticks = now - phase_started_at;
+		phase_started_at = now;
 	}
 
 	// Inherited update
 	inherited::OnFrame();
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		inherited_ticks = now - phase_started_at;
+		phase_started_at = now;
+	}
 	// Draw client/server stats
 	if (!g_dedicated_server && psDeviceFlags.test(rsStatistic))
 	{
@@ -1481,6 +1517,12 @@ void CLevel::OnFrame()
 #endif
 	g_pGamePersistent->Environment().SetGameTime(GetEnvironmentGameDayTimeSec(),
 	                                             game->GetEnvironmentGameTimeFactor());
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		post_ticks = now - phase_started_at;
+		phase_started_at = now;
+	}
 	if (!mt_ph_commander)
 	{
 		PROF_EVENT("m_ph_commander");
@@ -1492,6 +1534,12 @@ void CLevel::OnFrame()
 		m_ph_commander_scripts->update();
 		if (measure_precache)
 			pApp->LoadSessionRecordPrecacheUpdate(0, 0, CPU::QPC() - script_started_at);
+	}
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		scripts_ticks = now - phase_started_at;
+		phase_started_at = now;
 	}
 
 	// update static sounds
@@ -1505,10 +1553,22 @@ void CLevel::OnFrame()
 		else
 			m_level_sound_manager->Update();
 	}
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		sounds_ticks = now - phase_started_at;
+		phase_started_at = now;
+	}
 
 	// defer LUA-GC-STEP
 	if (!g_dedicated_server)
 		script_gc();
+	if (measure_detail)
+	{
+		const u64 now = CPU::QPC();
+		gc_ticks = now - phase_started_at;
+		phase_started_at = now;
+	}
 	if (pStatGraphR)
 	{
 		static float fRPC_Mult = 10.0f;
@@ -1519,6 +1579,64 @@ void CLevel::OnFrame()
 
 	for (auto& pair : m_script_attachments)
 		pair.second->Update();
+
+	if (measure_detail)
+	{
+		attachments_ticks = CPU::QPC() - phase_started_at;
+		const u64 total_ticks = CPU::QPC() - level_frame_started_at;
+		struct SLevelFrameDetailProfile
+		{
+			u32 frames = 0;
+			u64 total = 0;
+			u64 prefix = 0;
+			u64 network = 0;
+			u64 tasks = 0;
+			u64 inherited = 0;
+			u64 post = 0;
+			u64 scripts = 0;
+			u64 sounds = 0;
+			u64 gc = 0;
+			u64 attachments = 0;
+			u64 max_total = 0;
+			u64 max_tasks = 0;
+			u64 max_inherited = 0;
+			u64 max_scripts = 0;
+			u64 max_gc = 0;
+		};
+		static SLevelFrameDetailProfile profile;
+		++profile.frames;
+		profile.total += total_ticks;
+		profile.prefix += prefix_ticks;
+		profile.network += network_ticks;
+		profile.tasks += tasks_ticks;
+		profile.inherited += inherited_ticks;
+		profile.post += post_ticks;
+		profile.scripts += scripts_ticks;
+		profile.sounds += sounds_ticks;
+		profile.gc += gc_ticks;
+		profile.attachments += attachments_ticks;
+		profile.max_total = std::max(profile.max_total, total_ticks);
+		profile.max_tasks = std::max(profile.max_tasks, tasks_ticks);
+		profile.max_inherited = std::max(profile.max_inherited, inherited_ticks);
+		profile.max_scripts = std::max(profile.max_scripts, scripts_ticks);
+		profile.max_gc = std::max(profile.max_gc, gc_ticks);
+		if (profile.frames >= 300)
+		{
+			const double average_ms = 1000.0 / (double(CPU::qpc_freq) * double(profile.frames));
+			const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
+			Msg("* [mt-frame/level] avg(total/prefix/net/tasks/inherited/post)=%.2f/%.2f/%.2f/%.2f/%.2f/%.2f ms",
+				profile.total * average_ms, profile.prefix * average_ms,
+				profile.network * average_ms, profile.tasks * average_ms,
+				profile.inherited * average_ms, profile.post * average_ms);
+			Msg("* [mt-frame/level] avg(scripts/sounds/gc/attachments)=%.2f/%.2f/%.2f/%.2f ms max(total/tasks/inherited/scripts/gc)=%.2f/%.2f/%.2f/%.2f/%.2f ms",
+				profile.scripts * average_ms, profile.sounds * average_ms,
+				profile.gc * average_ms, profile.attachments * average_ms,
+				profile.max_total * ticks_to_ms, profile.max_tasks * ticks_to_ms,
+				profile.max_inherited * ticks_to_ms, profile.max_scripts * ticks_to_ms,
+				profile.max_gc * ticks_to_ms);
+			profile = {};
+		}
+	}
 }
 
 int psLUA_GCSTEP = 300;
