@@ -1,0 +1,3 @@
+function on_game_start()
+	printf("[anthology/v105/rak] indoor ray gate active: empty-hands guard, cadence-first and cached ray state")
+end

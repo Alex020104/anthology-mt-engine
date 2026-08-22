@@ -1,0 +1,182 @@
+local original_setup_gulag = nil
+local wrapper_installed = false
+local prebind_error_reported = false
+local smart_snapshots = {}
+
+local INVALID_SMART_ID = 65535
+local INVALID_LEVEL_VERTEX = 4294967295
+
+local function valid_vertex(level_vertex)
+	return type(level_vertex) == "number"
+		and level_vertex >= 0
+		and level_vertex ~= INVALID_LEVEL_VERTEX
+end
+
+local function smart_for(se_obj)
+	if not se_obj then
+		return nil, nil
+	end
+
+	local smart_id = se_obj.m_smart_terrain_id
+	if not (smart_id and smart_id ~= INVALID_SMART_ID) then
+		return nil, nil
+	end
+
+	local simulation = alife()
+	return simulation and simulation:object(smart_id), smart_id
+end
+
+local function offline_vertex(npc_id)
+	local offline = db and db.offline_objects and db.offline_objects[npc_id]
+	local level_vertex = offline and offline.level_vertex_id
+	return valid_vertex(level_vertex) and level_vertex or nil
+end
+
+local function spawned_vertex(npc_id)
+	local level_vertex = db and db.spawned_vertex_by_id and db.spawned_vertex_by_id[npc_id]
+	return valid_vertex(level_vertex) and level_vertex or nil
+end
+
+-- Capture all offline positions before setup_gulag clears them one NPC at a
+-- time. The immutable snapshot prevents the last members of a collapsed squad
+-- from treating the shared smart-centre vertex as a unique saved position.
+local function snapshot_for(smart_id, smart)
+	local snapshot = smart_snapshots[smart_id]
+	if snapshot then
+		return snapshot
+	end
+
+	local counts = {}
+	if smart and smart.npc_info then
+		for npc_id in pairs(smart.npc_info) do
+			local level_vertex = offline_vertex(npc_id)
+			if level_vertex then
+				counts[level_vertex] = (counts[level_vertex] or 0) + 1
+			end
+		end
+	end
+
+	local collapsed = {}
+	for level_vertex, count in pairs(counts) do
+		if count >= 2 then
+			collapsed[level_vertex] = true
+		end
+	end
+
+	snapshot = { collapsed = collapsed }
+	smart_snapshots[smart_id] = snapshot
+	return snapshot
+end
+
+local function assigned_job_vertex(smart, npc_id)
+	if not (smart and smart.npc_info) then
+		return nil
+	end
+
+	local npc_info = smart.npc_info[npc_id]
+	if not npc_info then
+		return nil
+	end
+
+	-- Match the stock smart-terrain flow: select a job only when the NPC does
+	-- not have one. Existing assignments and priorities are never reshuffled.
+	if not npc_info.job and smart.select_npc_job then
+		pcall(smart.select_npc_job, smart, npc_info, true)
+		npc_info = smart.npc_info[npc_id] or npc_info
+	end
+
+	local task = npc_info.job and npc_info.job.alife_task
+	if not task then
+		return nil
+	end
+
+	local ok, level_vertex = pcall(task.level_vertex_id, task)
+	return ok and valid_vertex(level_vertex) and level_vertex or nil
+end
+
+local function safe_set_vertex(npc, level_vertex)
+	if not (npc and valid_vertex(level_vertex)) then
+		return false
+	end
+
+	local position_ok, position = pcall(level.vertex_position, level_vertex)
+	if not (position_ok and position) then
+		return false
+	end
+
+	return pcall(npc.set_npc_position, npc, position)
+end
+
+local function prebind_smart_job(npc, se_obj)
+	local npc_id = se_obj and se_obj.id
+	local smart, smart_id = smart_for(se_obj)
+	if not (npc_id and smart and smart.npc_info and smart.npc_info[npc_id]) then
+		return
+	end
+
+	-- A squad that is genuinely travelling to a smart must keep its route.
+	if smart.arriving_npc and smart.arriving_npc[npc_id] then
+		return
+	end
+
+	local snapshot = snapshot_for(smart_id, smart)
+	local saved_vertex = offline_vertex(npc_id)
+	local restore_vertex = saved_vertex
+	local saved_is_collapsed = saved_vertex and snapshot.collapsed[saved_vertex]
+
+	-- A repeated offline vertex is the squad/smart centre collapse. Assign its
+	-- members to their already selected jobs before the job logic is activated.
+	if saved_is_collapsed then
+		restore_vertex = assigned_job_vertex(smart, npc_id) or spawned_vertex(npc_id)
+	else
+		restore_vertex = restore_vertex
+			or spawned_vertex(npc_id)
+			or assigned_job_vertex(smart, npc_id)
+	end
+
+	if not (restore_vertex and safe_set_vertex(npc, restore_vertex)) then
+		return
+	end
+
+	-- xr_motivator applies these redirects after setup_gulag returns. Keep it on
+	-- the same vertex so stock code cannot move the freshly configured NPC back
+	-- to the shared centre after the pre-bind.
+	if db and db.spawned_vertex_by_id then
+		db.spawned_vertex_by_id[npc_id] = restore_vertex
+	end
+
+	local offline = db and db.offline_objects and db.offline_objects[npc_id]
+	if offline then
+		offline.level_vertex_id = restore_vertex
+	end
+end
+
+local function install_wrapper()
+	if wrapper_installed then
+		return
+	end
+
+	local current = smart_terrain and smart_terrain.setup_gulag_and_logic_on_spawn
+	if not current then
+		return
+	end
+
+	original_setup_gulag = current
+	smart_terrain.setup_gulag_and_logic_on_spawn = function(npc, st, se_obj, stype, loaded)
+		local ok, err = pcall(prebind_smart_job, npc, se_obj)
+		if not ok and not prebind_error_reported then
+			prebind_error_reported = true
+			printf("! [anthology/alife-v105] pre-bind skipped safely: " .. tostring(err))
+		end
+		return original_setup_gulag(npc, st, se_obj, stype, loaded)
+	end
+
+	wrapper_installed = true
+	printf("* [anthology/alife-v105] prebound smart jobs active")
+end
+
+function on_game_start()
+	smart_snapshots = {}
+	prebind_error_reported = false
+	install_wrapper()
+end

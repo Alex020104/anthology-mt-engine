@@ -3230,3 +3230,58 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `[anthology/v104/volumetric-ab]`. A new game and shader-cache purge are not
   required, but the save/level must be reloaded so lights are recreated. The
   game was not launched during installation.
+
+## 2026-08-23 - v105 pre-bound smart jobs and RAK empty-hands guard
+
+### NPC placement cause
+
+- `Anthology A-Life v80 - CoP Online Placement` wrapped
+  `xr_motivator.motivator_binder.net_spawn`, but applied the corrected client
+  position only after the original spawn call returned. Stock
+  `setup_gulag_and_logic_on_spawn` had already selected and activated the smart
+  job by then, so its logic could start a visible route from the shared smart
+  centre before the late position correction.
+- v80 also counted duplicate offline vertices while the stock smart setup was
+  clearing `db.offline_objects` one NPC at a time. That made duplicate
+  classification dependent on spawn order: later members of the same collapsed
+  group could incorrectly see the shared centre as a unique saved position.
+
+### Separate adapted fixes
+
+- `Anthology A-Life v105 - Prebound Smart Jobs` wraps the narrower
+  `smart_terrain.setup_gulag_and_logic_on_spawn` entry point and positions a
+  member before the original smart job setup runs.
+- The first member of each smart captures an immutable count of all currently
+  saved offline vertices. Unique saved positions are kept exactly. Vertices
+  shared by at least two members are treated as a collapsed centre and replaced
+  with each member's assigned `alife_task` vertex.
+- Existing jobs and priorities are preserved. The stock `select_npc_job` path
+  is used only when no job exists. Squads marked in `smart.arriving_npc` retain
+  their real travel route. The stock post-setup redirect is seeded with the
+  same vertex, preventing it from undoing the pre-bind.
+- The wrapper is fail-open: an incompatible custom smart reports the first
+  error and continues through the original setup. There is no recurring scan,
+  actor update callback, new save field or new-game requirement.
+- `Anthology Performance v105 - RAK Empty Hands Guard` supersedes only the v104
+  RAK addon. It keeps the v104 ray pacing but does not query `SYS_GetParam` with
+  a nil weapon section or cast indoor rays while the actor has empty hands.
+  The repeated log errors observed in the v104 session are therefore removed
+  without changing weapon acoustics.
+
+### Validation, installation and rollback
+
+- All production Lua files pass the installed Lua 5.1 parser. A deterministic
+  smoke test proves that two sequentially spawned members sharing vertex 10 are
+  seen by smart setup at their distinct job vertices 101 and 102, a unique
+  vertex 303 is preserved, and an arriving member is not moved.
+- Both addons are stored under `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2
+  and enabled first in the active HARD profile. v80 placement and v104 RAK are
+  disabled; v88 150 m simulation and v104 authored-volumetric A/B remain active.
+- This is Lua-only. Installed executables remain byte-identical:
+  - DX11: `31897E338DA51455EF4DFF4FC23A6BD6C64C051FF8892C6860BD68C2712586A6`;
+  - DX11-AVX: `476CB89634B0C6A0CE52A446CF75309D8FB808A43C10E62C95E5E0EE4D12CF47`.
+- Exact pre-v105 profile, log and replaced addons are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260823_v105_prebound_smart_jobs`.
+- Expected markers are `[anthology/alife-v105]` and `[anthology/v105/rak]`.
+  Reload the save or change levels before testing; a new game and shader-cache
+  purge are not required. The game was not launched during installation.
