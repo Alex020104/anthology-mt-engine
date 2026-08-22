@@ -3092,3 +3092,30 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `[anthology/v101/actor-binder]`, `[anthology/v101/actor-spatial]` and
   `[anthology/v101/callback]`. No new game or shader-cache purge is required.
   The game was not launched during installation.
+
+## 2026-08-23 - v102 actor callback attribution
+
+### Result of the v101 run
+
+- The v101 marker was present and the controlled session exited cleanly.
+- Steady actor binder cost remained about 2.5-3.5 ms per frame. The paced actor
+  spatial query cost only about 0.004-0.013 ms per executed update, so it was
+  too small to produce a visible populated-base FPS change.
+- Roughly 600 distinct `actor_on_update` targets were sampled. A sampled target
+  reached about 1.96 ms, but X-Ray's `printf` did not interpret the numeric
+  format specifiers used by the diagnostic line and therefore displaced the
+  arguments instead of printing the callback source.
+
+### Diagnostic correction
+
+- The complete report line is now built with Lua `string.format` and passed to
+  engine `printf` through one `%s` placeholder.
+- Function callbacks and object methods both resolve through `debug.getinfo` to
+  a source file, definition line and callable name where available.
+- Callbacks are ranked by average invocation cost instead of accumulated time.
+  Reports now include sampled, registered and frame counts.
+- The reporting window is 1200 frames. Only one callback is timed per frame, so
+  normal dispatch semantics and the low profiling overhead are preserved.
+- No C++ source or installed executable changed. v102 keeps the v101 engine,
+  v86 GC path, v87 grass/detail instancing, v88 A-Life/NPC behaviour, loading,
+  renderer quality, HOM/LOD, PiP and UI unchanged.
