@@ -1,0 +1,13 @@
+local commands = {
+	"r__hom_dynamic on",
+	"r__portal_traverse_stats 0",
+	"mt_frame_profile 0",
+	"mt_frame_profile_detail 0",
+}
+
+function on_game_start()
+	for i = 1, #commands do
+		exec_console_cmd(commands[i])
+	end
+	printf("* [anthology/v95] one-box renderable HOM active")
+end

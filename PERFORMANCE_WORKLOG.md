@@ -3331,3 +3331,50 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260822_v94_pre_v93_scheduler_heap_reuse`.
   The unrelated repository-root `AnomalyDX11AVX.exe` remains untracked and
   untouched.
+
+## 2026-08-22 - v95 one-box renderable HOM
+
+### Why v94 showed no practical change
+
+- A fresh v94 frame profile confirmed that the scheduler queue itself was not
+  the limiting lane. The steady frame was dominated by GameThread work and
+  dynamic rendering; scheduler heap mechanics were only a subset of that cost.
+- The previous `r__hom_dynamic` implementation could not be enabled safely as
+  a performance option: it transformed and tested the AABB of every child
+  visual from `r_dsgraph_insert_dynamic`, after a complex renderable had
+  already expanded its hierarchy. This repeated CPU work for NPCs and other
+  compound objects and could cost more than the packets it rejected.
+
+### Isolated v95 implementation
+
+- The old child-visual HOM block is removed. The existing spatial-sphere HOM
+  query remains the cheap first stage.
+- After frustum acceptance and before `renderable_Render()`, v95 transforms
+  the bounding box of the complete renderable once and performs one tighter HOM
+  query. A rejected object never expands into child visuals or render packets.
+- The path is restricted to the normal world pass and excludes particles.
+  HUD, PiP, SSS, shadow passes, static geometry, LOD policy, A-Life, Lua,
+  saves and gameplay scripts are unchanged.
+- A proposed sun-shadow receiver experiment was deliberately removed before
+  installation because a projection-space AABB cannot safely use the ordinary
+  affine-box transform. v95 therefore measures only `r__hom_dynamic`.
+- Optional portal statistics now expose
+  `dynamic HOM box: test[N] reject[M]`. Normal testing keeps those statistics
+  disabled so their instrumentation does not contaminate the FPS result.
+
+### Build, installation and rollback
+
+- `git diff --check` passes. `DX11|x64` and `DX11-AVX|x64` both compile
+  and link successfully. Built and installed hashes match:
+  - DX11 EXE: `B6BA8F61218F4A153629B92B3E8A9A02D95613B4702619344521EDFD10E99128`;
+  - DX11 PDB: `4717E184EF444249A84C689ED961E8A592AD410896B6F254F0A765B0CE338791`;
+  - DX11-AVX EXE: `53F56A3CDCBFB35C36BF25386FAD2647312AD8F9D0E6011883386837ECE9DDE0`;
+  - DX11-AVX PDB: `731DEBD7A788C2F0CC6FEF79E6C428BB3A871A429C94C16F8EAE6894A477C423`.
+- Both runtime configs use `r__hom_dynamic on`; frame and portal diagnostics
+  are disabled for the performance test. The companion is canonical under
+  `D:/ANTHOLOGY_DEV/addons`, mirrored in the repository, junctioned into MO2
+  and enabled above the disabled v94 companion in the active profile file.
+- Pre-v95 v94 binaries, symbols, touched sources and configs are recoverable
+  from `E:/ANTHOLOGY_BACKUPS/20260822_v95_pre_v94_renderable_hom`.
+  Runtime rollback is immediate with `r__hom_dynamic off`; a new game and
+  shader-cache purge are not required.

@@ -65,6 +65,8 @@ void dxStatsRender::OutData4(CGameFont& F)
             pstats.dynamic_spatials_noopt, pstats.dynamic_frustum_tests, pstats.dynamic_frustum_tests_opt, pstats.dynamic_frustum_tests_noopt);
         F.OutNext("dynamic: hit[%u] o[%u] n[%u] rnd[%u] o[%u] n[%u]", pstats.dynamic_frustum_hits, pstats.dynamic_frustum_hits_opt,
             pstats.dynamic_frustum_hits_noopt, pstats.dynamic_rendered, pstats.dynamic_rendered_opt, pstats.dynamic_rendered_noopt);
+		F.OutNext("dynamic HOM box: test[%u] reject[%u]",
+			pstats.dynamic_hom_box_tests, pstats.dynamic_hom_box_rejects);
         F.OutNext("queue: st[%u] o[%u] n[%u] dyn[%u] o[%u] n[%u]", pstats.queue_static_packets, pstats.queue_static_packets_opt,
             pstats.queue_static_packets_noopt, pstats.queue_dynamic_packets, pstats.queue_dynamic_packets_opt, pstats.queue_dynamic_packets_noopt);
         F.OutNext("dedup: seen[%u] o[%u] n[%u] skip[%u] o[%u] n[%u]", pstats.static_dedup_seen, pstats.static_dedup_seen_opt,

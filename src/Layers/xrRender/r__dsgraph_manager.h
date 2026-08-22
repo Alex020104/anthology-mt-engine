@@ -180,6 +180,8 @@ struct PortalTraverseDebugStats
 	u32 dynamic_frustum_tests = 0;
 	u32 dynamic_frustum_hits = 0;
 	u32 dynamic_rendered = 0;
+	u32 dynamic_hom_box_tests = 0;
+	u32 dynamic_hom_box_rejects = 0;
 	u32 dynamic_spatials_opt = 0;
 	u32 dynamic_spatials_noopt = 0;
 	u32 dynamic_frustum_tests_opt = 0;

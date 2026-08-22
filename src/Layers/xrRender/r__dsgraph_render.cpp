@@ -15,6 +15,7 @@
 #include "flod.h"
 
 #include "../../xrEngine/xr_object.h"
+#include "xrRender_console.h"
 
 using namespace R_dsgraph;
 
@@ -690,6 +691,29 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 						if (0 == renderable) break;
 
 						if (O && O->dcast_Renderable() == renderable) break;
+
+						// v95: the old r__hom_dynamic path transformed and tested every
+						// child mesh after renderable_Render expanded the hierarchy. Use one
+						// tighter world-space AABB test for the complete renderable instead.
+						// The existing sphere HOM test above remains the cheap first stage;
+						// HUD/particle queues are intentionally excluded.
+						if (i_mask[CDSGraphManager::fl_normal] &&
+							!(spatial->spatial.type & STYPE_PARTICLE) &&
+							ps_r__common_flags.test(RFLAG_HOM_DYNAMIC) &&
+							renderable->renderable.visual)
+						{
+							if (dbg)
+								++dbg->dynamic_hom_box_tests;
+							Fbox world_bounds;
+							world_bounds.xform(renderable->renderable.visual->getVisData().box,
+								renderable->renderable.xform);
+							if (!RImplementation.HOM.visible(world_bounds))
+							{
+								if (dbg)
+									++dbg->dynamic_hom_box_rejects;
+								break;
+							}
+						}
 
 						// Rendering
 #if	RENDER==R_R1
