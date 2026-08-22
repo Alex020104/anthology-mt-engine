@@ -1,6 +1,6 @@
 local commands = {
 	"mt_task_manager 1",
-	"mt_ui 0",
+	"mt_ui 1",
 	"lua_use_functor_cache 1",
 	"mt_frame_profile 1",
 	"mt_frame_profile_detail 0",
@@ -10,5 +10,5 @@ function on_game_start()
 	for i = 1, #commands do
 		exec_console_cmd(commands[i])
 	end
-	printf("* [anthology/v89] MT task manager active; UI MT remains disabled")
+	printf("* [anthology/v89] MT task manager and protected UI lane active")
 end

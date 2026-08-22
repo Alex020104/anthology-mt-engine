@@ -3080,8 +3080,10 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   to the existing `XRay::Engine::GameThread`, which overlaps world rendering.
 - Added the independent companion `Anthology Performance v89 - MT Task
   Manager`. It enables `mt_task_manager 1` and the existing
-  `lua_use_functor_cache 1`, while explicitly retaining `mt_ui 0` and cheap
-  frame profiling only (`mt_frame_profile_detail 0`).
+  `lua_use_functor_cache 1` and `mt_ui 1`, while retaining cheap frame
+  profiling only (`mt_frame_profile_detail 0`). The current UI path guards
+  worker updates against rendering with `ui_lock` and separately protects the
+  `CustomStatics` collection.
 - This path processes the actor's active game-task states and Lua completion/
   failure functors. It does not move smart-terrain logic, combat AI or every
   quest script attached to an NPC; the candidate is intentionally presented as
@@ -3094,11 +3096,11 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 
 - Canonical addon: `D:/ANTHOLOGY_DEV/addons/Anthology Performance v89 - MT
   Task Manager`; the active HARD profile enables its MO2 junction above V88.
-- Both runtime `user.ltx` files contain `mt_task_manager 1`,
-  `lua_use_functor_cache 1` and keep `mt_ui 0`.
+- Both runtime `user.ltx` files contain `mt_task_manager 1`, `mt_ui 1` and
+  `lua_use_functor_cache 1`.
 - Pre-v89 settings, active profile and log are backed up under
   `E:/ANTHOLOGY_BACKUPS/20260822_v89_pre_mt_task_manager`.
-- Expected startup marker: `[anthology/v89] MT task manager active; UI MT
-  remains disabled`. The same save and the same Skadovsk-to-empty-world route
+- Expected startup marker: `[anthology/v89] MT task manager and protected UI
+  lane active`. The same save and the same Skadovsk-to-empty-world route
   are required for acceptance; the candidate is immediately reversible by
   disabling the companion and restoring `mt_task_manager 0`.
