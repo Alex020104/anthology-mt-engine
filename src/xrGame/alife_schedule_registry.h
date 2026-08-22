@@ -74,7 +74,6 @@ public:
 	virtual ~CALifeScheduleRegistry();
 	void add(CSE_ALifeDynamicObject* object);
 	void remove(CSE_ALifeDynamicObject* object, bool no_assert = false);
-	void preload_first_sweep();
 	void update();
 	IC CSE_ALifeSchedulable* object(const ALife::_OBJECT_ID& id, bool no_assert = false) const;
 	IC const u32& objects_per_update() const;

@@ -3281,3 +3281,53 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   No save, renderer, PiP, SSS, NPC placement or unrelated gameplay script was
   changed, and the repository-root untracked `AnomalyDX11AVX.exe` was not
   touched.
+
+## 2026-08-22 - v94 scheduler item and heap reuse
+
+### v93 result and rollback
+
+- The fresh test proves that v93 did execute: it processed all 3152 scheduled
+  A-Life objects in 1820.88 ms and restored the 0.090-ms runtime budget. The
+  user observed no change on the same route, so the first-pass hypothesis is
+  rejected rather than extended with more load work.
+- The explicit pass and its public registry method were removed. This returns
+  the extra 1.821 s to the load path while retaining the accepted v88 150-m
+  simulation, position persistence and normal bounded scheduler update.
+
+### Populated-base scheduler overhead
+
+- The v91 profile shows roughly 200-250 normal scheduled-object updates per
+  populated-base frame with `scheduler_batch_size 256`. The queue commonly
+  contains about 3000 items. This is persistent work proportional to the number
+  of online NPCs, unlike the disproved one-time A-Life preparation.
+- Every completed item previously constructed a replacement `Item`, called
+  virtual `shedule_Name()` again and generated `shared_str` reference traffic,
+  even when detailed profiling was disabled. v94 updates the two timing fields
+  in the existing item and moves it back into the queue with its already stored
+  diagnostic name. Callback order, interval and object pointer are unchanged.
+- Reinsertion previously chose full `make_heap` using an `n/16` approximation.
+  For the common `k=256`, `n~3000` case this rebuilt the entire queue each frame
+  even though `k*log2(n)` bounded insertions are cheaper. The threshold now
+  derives from the actual resulting queue size and heap depth. Queue access and
+  the size used for that decision are both protected by `ItemsLock`.
+- No NPC update is skipped, delayed beyond its existing scheduler deadline or
+  run concurrently. Renderer quality, Lua, AI state, PiP, SSS, saves and addon
+  gameplay scripts are unchanged. The candidate targets steady scheduler CPU
+  cost; no FPS gain is claimed before the same-save base test.
+
+### Build, installation and rollback
+
+- `git diff --check` passes. `DX11|x64` and `DX11-AVX|x64` both compile and
+  link successfully. Built and installed hashes match:
+  - DX11 EXE: `22539803A5FA433A37FA53A2B1994525409377374FDF1CE7660DBB2F6BB678E2`;
+  - DX11 PDB: `50CAD92BD53A8679B21F99FCC8D0C715CB726BCA298BF61F3CE842BE139E3DFC`;
+  - DX11-AVX EXE: `35776BD607D7E828D8839445A594FE976A80F8540B48DD3F70E98F9E06FEDE10`;
+  - DX11-AVX PDB: `C91B1CE57D1BD83F2582BE14B4B3B5EBEC8A65F40C03ADCF7F66B9D5BA49B7FE`.
+- `Anthology Performance v94 - Scheduler Heap Reuse` is canonical under
+  `D:/ANTHOLOGY_DEV/addons`, mirrored in the repository, junctioned into MO2
+  and enabled. v93 remains installed but disabled.
+- The complete pre-v94 v93 binaries, symbols, source, settings, profile, log
+  and companion are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260822_v94_pre_v93_scheduler_heap_reuse`.
+  The unrelated repository-root `AnomalyDX11AVX.exe` remains untracked and
+  untouched.

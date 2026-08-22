@@ -344,8 +344,8 @@ void CSheduler::ProcessStep()
 	u32 dwTime = Device.dwTimeGlobal;
 	static xr_vector<Item> ItemsBatch;
 	ItemsBatch.clear();
-	u32 ItemsCount = Items.size();
-	float target = psShedulerTarget;
+	u32 ItemsCount = 0;
+	float target = 0.f;
 	static u64 profile_slowest_ticks = 0;
 	static shared_str profile_slowest_name;
 	static u32 profile_updates = 0;
@@ -362,6 +362,11 @@ void CSheduler::ProcessStep()
 
 	{
 		xrSRWLockGuard g(ItemsLock);
+		if (SchedulerLog)
+		{
+			ItemsCount = static_cast<u32>(Items.size());
+			target = psShedulerTarget;
+		}
 		while (!Items.empty() && Top().dwTimeForExecute < dwTime && ItemsBatch.size() < batch_size)
 		{
 			// Optional: Also stop collecting if we are already out of time
@@ -433,13 +438,12 @@ void CSheduler::ProcessStep()
 				}
 			}
 
-			// Fill item structure
-			Item TNext;
-			TNext.dwTimeForExecute = dwTime + dwUpdate;
-			TNext.dwTimeOfLastExecute = dwTime;
-			TNext.Object = T.Object;
-			TNext.scheduled_name = T.Object->shedule_Name();
-			ItemsProcessed.push_back(std::move(TNext));
+			// Keep the existing item and its diagnostic name. Rebuilding an Item and
+			// calling shedule_Name() here used to create shared-string traffic for
+			// every scheduled object, every frame, even with profiling disabled.
+			T.dwTimeForExecute = dwTime + dwUpdate;
+			T.dwTimeOfLastExecute = dwTime;
+			ItemsProcessed.push_back(std::move(T));
 
 			m_current_step_obj = NULL;
 		}
@@ -459,17 +463,21 @@ void CSheduler::ProcessStep()
 	
 	// Reinsertion
 	{
-		// Strategy
-		// Rule of thumb: if k < n / log2(n), push_heap is faster. With default batch size of 128 its always faster, start choosing only with 256
-		// Otherwise, dump and heapify
-		// For n=3000, log2(n) is ~11.5. n/11.5 is ~260.
-		// We use a simple approximation: n >> 4 (which is n / 16) for a conservative safety margin.
+		// Strategy: inserting k changed items costs roughly k*log2(n), while a
+		// complete rebuild costs O(n). The previous n/16 approximation selected
+		// make_heap for Anthology's common k=256, n~3000 case even though bounded
+		// push_heap insertion is cheaper there.
 		u32 k = ItemsProcessed.size() + (ItemsBatch.size() - i);
-		u32 n = Items.size();
 
 		xrSRWLockGuard g(ItemsLock);
+		const u32 n = static_cast<u32>(Items.size());
+		const u32 resulting_size = n + k;
+		u32 heap_levels = 0;
+		for (u32 heap_size = resulting_size; heap_size > 1; heap_size >>= 1)
+			++heap_levels;
+		const u32 push_threshold = heap_levels ? resulting_size / heap_levels : resulting_size;
 
-		if (k < 256 || k < (n >> 4))
+		if (k <= push_threshold)
 		{
 			// Push finished
 			for (auto& T : ItemsProcessed)

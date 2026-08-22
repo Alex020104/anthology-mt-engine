@@ -74,34 +74,6 @@ void CALifeScheduleRegistry::flush_profile()
 	reset_profile();
 }
 
-void CALifeScheduleRegistry::preload_first_sweep()
-{
-	const u32 object_count = static_cast<u32>(objects().size());
-	if (!object_count)
-		return;
-
-	// Offline brains keep process-local movement/task state which is rebuilt
-	// after a save is loaded.  With the normal sub-millisecond runtime slice the
-	// first visit to all scheduled objects is spread over many minutes, so the
-	// expensive first updates show up as isolated gameplay hitches.  The v92
-	// precache-frame trigger was never reached from the A-Life scheduler.  v93 is
-	// therefore called explicitly after the level graph has been published but
-	// before client spawn begins.  A-Life remains single-owner and ordered; only
-	// the time at which this already due work is performed changes.
-	const float runtime_process_time = m_max_process_time;
-	const u64 started_at = CPU::qpc_freq ? CPU::QPC() : 0;
-	begin();
-	m_max_process_time = flt_max;
-	const u32 processed = inherited::update(CUpdatePredicate(this, object_count), false);
-	m_max_process_time = runtime_process_time;
-
-	const double elapsed_ms = CPU::qpc_freq ?
-		double(CPU::QPC() - started_at) * 1000.0 / double(CPU::qpc_freq) : 0.0;
-	Msg("* [A-Life/v93] load first sweep processed %u/%u objects in %.2f ms; "
-		"runtime budget restored to %.3f ms",
-		processed, object_count, elapsed_ms, runtime_process_time * 1000.f);
-}
-
 void CALifeScheduleRegistry::update()
 {
 	if (!objects().empty())
