@@ -232,9 +232,13 @@ void ProcessRuntimeFrameCallbacks()
 	auto process = [](const _REG_INFO& info)
 	{
 		pureFrame* callback = static_cast<pureFrame*>(info.Object);
+		// A frame callback may remove and destroy itself (CUISequencer does this
+		// when the loading prompt is dismissed).  Keep all RTTI access before the
+		// callback so runtime profiling never dereferences a dead object.
+		const xr_string type_name = typeid(*callback).name();
 		const u64 started_at = CPU::QPC();
 		rp_Frame(info.Object);
-		RecordRuntimeFrameCallback(info, typeid(*callback).name(), CPU::QPC() - started_at);
+		RecordRuntimeFrameCallback(info, type_name.c_str(), CPU::QPC() - started_at);
 	};
 
 	if (registrator.R[0].Prio == REG_PRIORITY_CAPTURE)

@@ -3448,3 +3448,66 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   undesirable runtime position, the pre-v107 transition save from 02:00:36 is
   the known safe test point; no save was modified by the installation itself.
 - The game was not launched. Engine binaries were not rebuilt or replaced.
+
+## 2026-08-23 - v108 deferred smart-cover placement and frame-profiler crash fix
+
+### Confirmed crash cause
+
+- The failing transition completed server/Lua work, native level preparation,
+  4052 client spawns and final precache. The last active UI callback was
+  `UIIntroScreen`; no Lua exception from the A-Life patch preceded the crash.
+- The generated minidump reports exception `0xC0000005`, a read from address
+  `0x16`, at `VCRUNTIME140.dll+0x50ed`. Disassembly identifies that address as
+  `__std_type_info_name`; the native stack points to `device.cpp:237`.
+- Runtime callback diagnostics called `typeid(*callback).name()` after
+  `rp_Frame(info.Object)` returned. A `CUISequencer` is allowed to remove and
+  destroy itself from its own `OnFrame`, so the profiler dereferenced the dead
+  callback only after the legitimate loading-prompt destruction. The Win32
+  error-8 text was stale secondary state, not evidence that the 32 GB system
+  RAM or pagefile was exhausted.
+- The runtime profiler now captures its RTTI name before invoking the callback,
+  matching the already-safe precache profiler. No callback ordering, UI logic,
+  rendering or profiling cadence changed.
+
+### NPC fan-out cause and v108 placement path
+
+- v107.1 correctly rejected the dangerous `(0,0,0)` animpoint placeholder, but
+  then failed open whenever a cover such as `zat_a2_sc_tech` had not yet reached
+  `se_smart_cover.registered_smartcovers`. Stock AI consequently spawned the
+  worker at the common smart position and visibly walked it to work.
+- `Anthology A-Life v108 - Deferred Smart-Cover Placement` observes exact
+  smart-cover server positions through `server_entity_on_register`. An
+  animpoint that exists after its worker is queued and resolved once during
+  `actor_on_first_update`, after client spawning but while the loading screen
+  still covers the world.
+- Already available `animpoint`, explicit `beh`, `walker` and `camper` targets
+  retain the immediate in-`net_spawn` placement and final post-binder
+  correction. Real far arrivals retain their travel route.
+- The generic storage fallback was removed. `mob_walker`, other unknown
+  schemes, zero placeholders and persistent `db.offline_objects` are not
+  modified. There is no recurring actor/NPC update and no save-format change.
+  A new game is not required.
+
+### Validation, build, installation and rollback
+
+- Lua 5.1 syntax validation and the deterministic v108 smoke test pass. The
+  regression covers an already registered cover, a cover registered after its
+  worker, a pre-observed server cover, two distinct `beh` jobs, walker, camper,
+  far arrival, zero placeholder and untouched `mob_walker`.
+- `git diff --check` passes. Both `DX11|x64` and `DX11-AVX|x64` compile and link
+  successfully. Build and installed hashes match:
+  - DX11 EXE: `2579172CE67EDDF044F7EFFA0044EAD851DF1AC15DF7344D6E153FCACB757C6A`;
+  - DX11 PDB: `165780D4460821D061A552CA4310FA925186A32CBB826F524DB9DA54B3CE06CB`;
+  - DX11-AVX EXE: `6E9A9CEAD31FD5AA1525B02527481F491188BF61968DF664C28AC213F900C0B0`;
+  - DX11-AVX PDB: `CD38B8A775D5C194E382882024ACF067042715631F18FAD6C9E9090A4DFC21F6`.
+- The addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and
+  enabled first in the HARD profile. v107/v106/v105/v80 are disabled; accepted
+  v88 A-Life radius and the existing performance/loading modules are unchanged.
+- MO2 was closed through its normal main-window close path before editing the
+  profile, preventing another cached-state overwrite. The game was not
+  launched.
+- The previous addon, profile, crash log, minidump and all four installed
+  binaries are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260823_v108_pre_deferred_smartcover_and_profiler_fix`.
+  Expected markers are `[anthology/alife-v108]`, including one load summary
+  with `deferred_placed` and `unresolved` counts.
