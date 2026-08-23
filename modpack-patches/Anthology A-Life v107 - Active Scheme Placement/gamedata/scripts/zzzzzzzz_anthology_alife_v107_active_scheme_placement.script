@@ -67,6 +67,18 @@ local function vertex_for_position(position)
 	return ok and valid_vertex(level_vertex) and level_vertex or nil
 end
 
+local function is_origin_placeholder(position)
+	if not position then
+		return true
+	end
+	local ok, is_origin = pcall(function()
+		return math.abs(position.x or 0) < 0.001
+			and math.abs(position.y or 0) < 0.001
+			and math.abs(position.z or 0) < 0.001
+	end)
+	return ok and is_origin or false
+end
+
 local function smart_for(se_obj)
 	if not se_obj then
 		return nil, nil
@@ -169,6 +181,9 @@ local function target_from_cover(storage, scheme, section)
 	local registry = se_smart_cover and se_smart_cover.registered_smartcovers
 	local cover = cover_name and registry and registry[cover_name]
 	local position = cover and cover.position
+	if is_origin_placeholder(position) then
+		return nil
+	end
 	return make_target(position, nil, "animpoint_cover", scheme, section)
 end
 
@@ -239,7 +254,6 @@ local function resolve_active_scheme_target(npc)
 
 	if storage then
 		target = target_from_desired(storage.desired_target, scheme .. "_desired", scheme, section)
-			or make_target(storage.animpoint or storage.position, storage.level_vertex_id, scheme .. "_position", scheme, section)
 			or target_from_cover(storage, scheme, section)
 			or target_from_path(storage.path_walk, scheme .. "_path", scheme, section)
 	end
@@ -278,7 +292,7 @@ local function log_target(npc, smart, npc_id, target, stage, was_near_arrival)
 	logged_npcs[npc_id] = true
 	diagnostic_budget = diagnostic_budget - 1
 	printf("%s", string.format(
-		"* [anthology/alife-v107] npc=%s id=%s smart=%s job=%s scheme=%s section=%s source=%s vertex=%s pos=%s stage=%s near_arrival=%s",
+		"* [anthology/alife-v107.1] npc=%s id=%s smart=%s job=%s scheme=%s section=%s source=%s vertex=%s pos=%s stage=%s near_arrival=%s",
 		safe_name(npc),
 		tostring(npc_id),
 		safe_name(smart),
@@ -300,7 +314,7 @@ local function log_miss(npc, smart, npc_id, scheme, section)
 	logged_misses[npc_id] = true
 	miss_budget = miss_budget - 1
 	printf("%s", string.format(
-		"* [anthology/alife-v107] no active work target npc=%s id=%s smart=%s job=%s scheme=%s section=%s",
+		"* [anthology/alife-v107.1] no active work target npc=%s id=%s smart=%s job=%s scheme=%s section=%s",
 		safe_name(npc), tostring(npc_id), safe_name(smart), tostring(job_section(smart, npc_id)),
 		tostring(scheme or "?"), tostring(section or "?")
 	))
@@ -313,7 +327,7 @@ local function log_far_arrival(npc, smart, npc_id)
 	logged_arrivals[npc_id] = true
 	arrival_budget = arrival_budget - 1
 	printf("%s", string.format(
-		"* [anthology/alife-v107] keep real arrival npc=%s id=%s smart=%s",
+		"* [anthology/alife-v107.1] keep real arrival npc=%s id=%s smart=%s",
 		safe_name(npc), tostring(npc_id), safe_name(smart)
 	))
 end
@@ -324,7 +338,7 @@ local function report_error(stage, err)
 		return
 	end
 	error_reported = true
-	printf("%s", "! [anthology/alife-v107] " .. tostring(stage) .. " skipped safely: " .. tostring(err))
+	printf("%s", "! [anthology/alife-v107.1] " .. tostring(stage) .. " skipped safely: " .. tostring(err))
 end
 
 local function apply_active_target(npc, smart, se_obj, stage, report_missing)
@@ -479,7 +493,7 @@ local function install_wrappers()
 	wrappers_installed = setup_gulag_ok and net_spawn_ok
 
 	printf("%s", string.format(
-		"* [anthology/alife-v107] active scheme placement: setup_logic=%s setup_gulag=%s net_spawn=%s",
+		"* [anthology/alife-v107.1] safe active scheme placement: setup_logic=%s setup_gulag=%s net_spawn=%s",
 		tostring(setup_logic_ok), tostring(setup_gulag_ok), tostring(net_spawn_ok)
 	))
 end
@@ -509,7 +523,7 @@ end
 
 function actor_on_first_update()
 	printf("%s", string.format(
-		"* [anthology/alife-v107] load summary seen=%d placed=%d finalized=%d near_arrival=%d far_arrival=%d missed=%d failed=%d",
+		"* [anthology/alife-v107.1] load summary seen=%d placed=%d finalized=%d near_arrival=%d far_arrival=%d missed=%d failed=%d",
 		stats.seen,
 		stats.placed,
 		stats.finalized,

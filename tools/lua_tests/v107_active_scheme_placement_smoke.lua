@@ -61,6 +61,7 @@ end
 
 local smartcovers = {
 	base_cover = { position = vec(501, 0, 0) },
+	zero_cover = { position = vec(0, 0, 0) },
 }
 se_smart_cover = { registered_smartcovers = smartcovers }
 
@@ -120,6 +121,24 @@ smart_terrain.se_smart_terrain.setup_logic = function(_, npc)
 			active_section = "cover_work",
 			animpoint = { cover_name = "base_cover" },
 		}
+	elseif id == 7 then
+		-- Stock animpoint storage may contain a zero-vector placeholder while
+		-- its smart-cover is absent or not registered yet. It is not a target.
+		db.storage[id] = {
+			active_scheme = "animpoint",
+			active_section = "missing_cover_work",
+			animpoint = {
+				cover_name = "missing_cover",
+				position = vec(0, 0, 0),
+				level_vertex_id = 777,
+			},
+		}
+	elseif id == 8 then
+		db.storage[id] = {
+			active_scheme = "animpoint",
+			active_section = "zero_cover_work",
+			animpoint = { cover_name = "zero_cover" },
+		}
 	end
 	setup_positions[id] = npc:position().x
 end
@@ -140,7 +159,7 @@ local function make_smart(name, ids, arriving)
 	return setmetatable(smart, { __index = smart_terrain.se_smart_terrain })
 end
 
-local base = make_smart("base", { 1, 2, 3, 4, 5 })
+local base = make_smart("base", { 1, 2, 3, 4, 5, 7, 8 })
 local arrival = make_smart("arrival", { 6 }, { [6] = true })
 local smarts = { [51] = base, [52] = arrival }
 
@@ -205,6 +224,8 @@ local walker = spawn(3, 51, 0)
 local camper = spawn(4, 51, 0)
 local animpoint = spawn(5, 51, 0)
 local far_arrival = spawn(6, 52, 100)
+local missing_cover = spawn(7, 51, 0)
+local zero_cover = spawn(8, 51, 0)
 
 assert(camp_a:position().x == 101, "first camp worker stayed at the common smart centre")
 assert(camp_b:position().x == 202, "second camp worker did not receive its distinct pt1")
@@ -213,6 +234,10 @@ assert(walker:position().x == 301, "walker did not start at the assigned work pa
 assert(camper:position().x == 401, "camper did not start at the assigned work path")
 assert(animpoint:position().x == 501, "animpoint NPC did not start at its smart-cover")
 assert(far_arrival:position().x == -1, "real far arrival was teleported")
+assert(missing_cover:position().x == -1, "missing smart-cover teleported NPC to a zero placeholder")
+assert(db.spawned_vertex_by_id[7] == nil, "missing smart-cover seeded an unsafe redirect")
+assert(zero_cover:position().x == -1, "zero smart-cover placeholder moved an NPC")
+assert(db.spawned_vertex_by_id[8] == nil, "zero smart-cover placeholder seeded a redirect")
 assert(db.storage[1].beh.desired_target, "beh target was not initialized before the first update")
 assert(db.storage[2].beh.desired_target, "second beh target was not initialized before the first update")
 

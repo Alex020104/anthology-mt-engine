@@ -3401,3 +3401,50 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - This is Lua-only; accepted installed executables remain byte-identical:
   - DX11: `31897E338DA51455EF4DFF4FC23A6BD6C64C051FF8892C6860BD68C2712586A6`;
   - DX11-AVX: `476CB89634B0C6A0CE52A446CF75309D8FB808A43C10E62C95E5E0EE4D12CF47`.
+
+## 2026-08-23 - v107.1 missing-NPC emergency hotfix
+
+### Live regression evidence
+
+- The first enabled v107 run exposed a distinction which the isolated mock did
+  not model: on Jupiter and Zaton many standard `animpoint` storages exist
+  before their referenced smart-cover is present in
+  `se_smart_cover.registered_smartcovers`.
+- Stock code logged `There is no smart_cover with name [...]`. In the same
+  spawn, the generic v107 fallback accepted the scheme's placeholder
+  `storage.position = (0,0,0)` as a finished target. The diagnostic lines prove
+  this directly: Jupiter NPCs were moved to `(0,0,0)`/vertex `715044`, while
+  Zaton NPCs were moved to `(0,0,0)`/vertex `943939`. This caused the reported
+  disappearance of the base population.
+- The unrelated startup error remains `utjan_mag_skill.script:4` indexing a nil
+  `magazines` global. It did not produce this placement pattern.
+
+### Safe correction
+
+- The generic `storage.animpoint or storage.position` fallback has been removed
+  completely. A standard animpoint is now moved only when its named registered
+  smart-cover supplies a real position.
+- A `(0,0,0)` smart-cover position is also treated as an uninitialized
+  placeholder. Missing, late or incompatible smart-covers are fail-open: v107.1
+  performs no move and leaves stock spawn/animpoint logic untouched.
+- `walker`, `camper`, matching custom `beh` desired targets and registered
+  smart-covers retain the existing exact-placement path. No recurring callback
+  or save field was added.
+- Diagnostics use the distinct `[anthology/alife-v107.1]` marker so a corrected
+  run cannot be confused with the bad log.
+
+### Validation, deployment and recovery
+
+- Lua 5.1 syntax and deterministic execution pass. The regression now includes
+  both an absent smart-cover whose storage contains a zero placeholder and a
+  registered cover whose position is still zero; neither NPC is moved and
+  neither receives a redirect.
+- The corrected file is deployed to the existing standalone addon under
+  `D:/ANTHOLOGY_DEV/addons`; the MO2 junction resolves to the same byte-identical
+  file. The pre-hotfix addon, active profile and bad live log are recoverable
+  from `E:/ANTHOLOGY_BACKUPS/20260823_v107_1_pre_safe_animpoint_hotfix`.
+- v107 changes no save format. Reloading a save recreates the online client
+  objects. If the transition autosave made during the bad test retains an
+  undesirable runtime position, the pre-v107 transition save from 02:00:36 is
+  the known safe test point; no save was modified by the installation itself.
+- The game was not launched. Engine binaries were not rebuilt or replaced.
