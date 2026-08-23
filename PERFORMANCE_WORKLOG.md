@@ -3341,3 +3341,63 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `true`. After loading a save, the summary must show non-zero `prebound` and
   `finalized` counts for a populated base. The game was not launched during
   installation.
+
+## 2026-08-23 - v107 active-scheme NPC placement
+
+### Confirmed v106 error
+
+- The live v106 log proves that the addon loaded and ran without a Lua error,
+  but different work sections on the same base received the same A-Life task
+  vertex. For example, `esc_smart_terrain_5_7_camp_work_5`, `_6` and `_8` all
+  resolved to vertex `447245`; the equivalent camp workers on
+  `esc_smart_terrain_2_12` all resolved to `87659`.
+- `CALifeSmartTerrainTask:position()` is therefore only the route/smart target
+  for these jobs, not the individual place where the active client scheme
+  performs its work. v106 was executing correctly against the wrong position
+  source, which explains the unchanged visible centre-to-work fan-out.
+- The unpacked effective base logic confirms that those jobs activate the
+  standard `animpoint` scheme and have distinct cover names such as
+  `esc_smart_terrain_5_7_animpoint_kamp5`, `...kamp6` and `...kamp8`.
+- The HARD profile had both v105 and v106 enabled again. MO2 remained open from
+  before the previous profile edit and later rewrote its in-memory state. This
+  is a separate stacking problem and is why profile changes must be made only
+  after MO2 exits.
+
+### v107 solution
+
+- `Anthology A-Life v107 - Active Scheme Placement` waits for stock smart logic
+  to assign and configure the active scheme, then resolves the actual client
+  work coordinate rather than the shared A-Life task coordinate.
+- Standard `animpoint` jobs use the position of their registered smart-cover.
+  `walker` and `camper` jobs use point zero of their already-prefixed assigned
+  work path. Custom `beh` jobs use their existing matching `desired_target` or
+  initialize the same `pt1` animpoint target which their first update would
+  otherwise create visibly.
+- The exact target is applied after `setup_logic`, after the encompassing smart
+  setup, and finally after the complete effective Exo motivator binder. The
+  Exo navigation-vertex redirect can therefore no longer leave the NPC at the
+  smart centre. A redirect discovered only after the binder is not retained,
+  avoiding stale state on a later online transition.
+- Real arrivals farther than 30 metres from their destination retain their
+  normal route. The patch is fail-open for unknown schemes, has no recurring
+  update callback, changes no save data and requires no new game.
+- Spawn diagnostics now include active scheme, section, source, exact position
+  and vertex under `[anthology/alife-v107]`. Distinct camp jobs should report
+  distinct `animpoint_cover` coordinates.
+
+### Validation and staging
+
+- Production and regression Lua pass the installed Lua 5.1 parser. The
+  deterministic smoke test covers two jobs that share one smart but receive
+  distinct active-scheme positions, standard `animpoint`, `walker`, `camper`,
+  the post-setup Exo overwrite and a real far arrival; it passes.
+- The standalone source is stored under `D:/ANTHOLOGY_DEV/addons` and a MO2
+  junction is staged. Exact pre-v107 profile, v105/v106 addons and the live log
+  are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260823_v107_pre_active_scheme_placement`.
+- MO2 process 17900 was still running during staging. The profile switch is
+  intentionally deferred until MO2 is closed so it cannot re-enable v105/v106
+  from its cached state. The game was not launched.
+- This is Lua-only; accepted installed executables remain byte-identical:
+  - DX11: `31897E338DA51455EF4DFF4FC23A6BD6C64C051FF8892C6860BD68C2712586A6`;
+  - DX11-AVX: `476CB89634B0C6A0CE52A446CF75309D8FB808A43C10E62C95E5E0EE4D12CF47`.

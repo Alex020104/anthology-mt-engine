@@ -1,0 +1,521 @@
+local original_setup_gulag = nil
+local original_setup_logic = nil
+local original_net_spawn = nil
+local wrappers_installed = false
+local error_reported = false
+
+local spawn_context = {}
+local final_targets = {}
+local placed_ids = {}
+local logged_npcs = {}
+local logged_misses = {}
+local logged_arrivals = {}
+local diagnostic_budget = 60
+local miss_budget = 30
+local arrival_budget = 12
+
+local stats = {
+	seen = 0,
+	placed = 0,
+	finalized = 0,
+	near_arrival = 0,
+	far_arrival = 0,
+	missed = 0,
+	failed = 0,
+}
+
+local INVALID_SMART_ID = 65535
+local INVALID_LEVEL_VERTEX = 4294967295
+local ARRIVED_DISTANCE_SQR = 30 * 30
+
+local function valid_vertex(level_vertex)
+	return type(level_vertex) == "number"
+		and level_vertex >= 0
+		and level_vertex ~= INVALID_LEVEL_VERTEX
+end
+
+local function safe_name(object)
+	if not (object and object.name) then
+		return "?"
+	end
+	local ok, name = pcall(object.name, object)
+	return ok and tostring(name) or "?"
+end
+
+local function copy_position(position)
+	if not position then
+		return nil
+	end
+	local ok, result = pcall(function()
+		return vector():set(position)
+	end)
+	return ok and result or position
+end
+
+local function safe_set_position(npc, position)
+	if not (npc and position) then
+		return false
+	end
+	return pcall(npc.set_npc_position, npc, copy_position(position))
+end
+
+local function vertex_for_position(position)
+	if not position then
+		return nil
+	end
+	local ok, level_vertex = pcall(level.vertex_id, copy_position(position))
+	return ok and valid_vertex(level_vertex) and level_vertex or nil
+end
+
+local function smart_for(se_obj)
+	if not se_obj then
+		return nil, nil
+	end
+
+	local smart_id = se_obj.m_smart_terrain_id
+	if not (smart_id and smart_id ~= INVALID_SMART_ID) then
+		return nil, nil
+	end
+
+	local simulation = alife()
+	return simulation and simulation:object(smart_id), smart_id
+end
+
+local function truly_arriving(se_obj, smart, npc_id)
+	if not (smart and smart.arriving_npc and smart.arriving_npc[npc_id]) then
+		return false, false
+	end
+
+	local source = se_obj and se_obj.position
+	local destination = smart.position
+	if source and destination then
+		local ok, distance_sqr = pcall(source.distance_to_sqr, source, destination)
+		if ok and type(distance_sqr) == "number" and distance_sqr <= ARRIVED_DISTANCE_SQR then
+			return false, true
+		end
+	end
+
+	return true, false
+end
+
+local function read_ini_value(ini, section, key)
+	if not (ini and section and key and ini.r_string_ex) then
+		return nil
+	end
+	local ok, value = pcall(ini.r_string_ex, ini, section, key)
+	return ok and value or nil
+end
+
+local function make_target(position, level_vertex, source, scheme, section)
+	if not position then
+		return nil
+	end
+	if not valid_vertex(level_vertex) then
+		level_vertex = vertex_for_position(position)
+	end
+	return {
+		position = copy_position(position),
+		level_vertex = level_vertex,
+		source = source,
+		scheme = scheme,
+		section = section,
+	}
+end
+
+local function target_from_desired(desired, source, scheme, section)
+	if type(desired) ~= "table" then
+		return nil
+	end
+	if desired.active_section and section and tostring(desired.active_section) ~= tostring(section) then
+		return nil
+	end
+	return make_target(
+		desired.animpoint or desired.position,
+		desired.level_vertex_id,
+		source,
+		scheme,
+		section
+	)
+end
+
+local function target_from_beh(npc, root, scheme, section)
+	local beh = root and root.beh
+	if not beh then
+		return nil
+	end
+
+	local existing = target_from_desired(beh.desired_target, "beh_desired", scheme, section)
+	if existing then
+		return existing
+	end
+
+	local pt1 = read_ini_value(root.ini, section, "pt1")
+	if not (type(pt1) == "string" and (string.find(pt1, "animpoint:", 1, true) or string.find(pt1, "pos:", 1, true))) then
+		return nil
+	end
+	if not (xr_logic_ex and type(xr_logic_ex.load_animpoint) == "function") then
+		return nil
+	end
+
+	local ok, desired = pcall(xr_logic_ex.load_animpoint, npc, 1)
+	if not ok then
+		return nil
+	end
+	return target_from_desired(desired, "beh_pt1", scheme, section)
+end
+
+local function target_from_cover(storage, scheme, section)
+	local cover_name = storage and storage.cover_name
+	local registry = se_smart_cover and se_smart_cover.registered_smartcovers
+	local cover = cover_name and registry and registry[cover_name]
+	local position = cover and cover.position
+	return make_target(position, nil, "animpoint_cover", scheme, section)
+end
+
+local function target_from_path(path_name, source, scheme, section)
+	-- The luabind constructor can be exposed as a callable class table rather
+	-- than a plain Lua function, so its presence is the relevant check.
+	if not (path_name and patrol) then
+		return nil
+	end
+	if level and type(level.patrol_path_exists) == "function" then
+		local exists_ok, exists = pcall(level.patrol_path_exists, path_name)
+		if exists_ok and not exists then
+			return nil
+		end
+	end
+
+	local ok, path = pcall(patrol, path_name)
+	if not (ok and path) then
+		return nil
+	end
+	local count_ok, count = pcall(path.count, path)
+	if count_ok and type(count) == "number" and count <= 0 then
+		return nil
+	end
+	local point_ok, position = pcall(path.point, path, 0)
+	if not (point_ok and position) then
+		return nil
+	end
+	local vertex_ok, level_vertex = pcall(path.level_vertex_id, path, 0)
+	if not vertex_ok then
+		level_vertex = nil
+	end
+	return make_target(position, level_vertex, source, scheme, section)
+end
+
+local function resolve_active_scheme_target(npc)
+	local npc_id = npc and npc:id()
+	local root = npc_id and db and db.storage and db.storage[npc_id]
+	if not root then
+		return nil, nil, nil
+	end
+
+	local scheme = root.active_scheme and tostring(root.active_scheme) or "?"
+	local section = root.active_section and tostring(root.active_section) or "?"
+	local storage = root[scheme]
+	local target = nil
+
+	if scheme == "beh" or root.beh then
+		target = target_from_beh(npc, root, scheme, section)
+		if target then
+			return target, scheme, section
+		end
+	end
+
+	if scheme == "animpoint" then
+		target = target_from_cover(storage, scheme, section)
+		if target then
+			return target, scheme, section
+		end
+	end
+
+	if scheme == "walker" or scheme == "camper" then
+		target = target_from_path(storage and storage.path_walk, scheme .. "_path", scheme, section)
+		if target then
+			return target, scheme, section
+		end
+	end
+
+	if storage then
+		target = target_from_desired(storage.desired_target, scheme .. "_desired", scheme, section)
+			or make_target(storage.animpoint or storage.position, storage.level_vertex_id, scheme .. "_position", scheme, section)
+			or target_from_cover(storage, scheme, section)
+			or target_from_path(storage.path_walk, scheme .. "_path", scheme, section)
+	end
+
+	return target, scheme, section
+end
+
+local function job_section(smart, npc_id)
+	local info = smart and smart.npc_info and smart.npc_info[npc_id]
+	return info and info.job and info.job.section or "?"
+end
+
+local function seed_stock_redirect(npc_id, target)
+	if target.level_vertex and db and db.spawned_vertex_by_id then
+		db.spawned_vertex_by_id[npc_id] = target.level_vertex
+	end
+
+	local offline = db and db.offline_objects and db.offline_objects[npc_id]
+	if offline and target.level_vertex then
+		offline.level_vertex_id = target.level_vertex
+	end
+end
+
+local function position_text(position)
+	local ok, result = pcall(function()
+		return string.format("%.2f,%.2f,%.2f", position.x, position.y, position.z)
+	end)
+	return ok and result or "?"
+end
+
+local function log_target(npc, smart, npc_id, target, stage, was_near_arrival)
+	if logged_npcs[npc_id] or diagnostic_budget <= 0 then
+		return
+	end
+
+	logged_npcs[npc_id] = true
+	diagnostic_budget = diagnostic_budget - 1
+	printf("%s", string.format(
+		"* [anthology/alife-v107] npc=%s id=%s smart=%s job=%s scheme=%s section=%s source=%s vertex=%s pos=%s stage=%s near_arrival=%s",
+		safe_name(npc),
+		tostring(npc_id),
+		safe_name(smart),
+		tostring(job_section(smart, npc_id)),
+		tostring(target.scheme or "?"),
+		tostring(target.section or "?"),
+		tostring(target.source or "?"),
+		tostring(target.level_vertex or "?"),
+		position_text(target.position),
+		tostring(stage),
+		tostring(was_near_arrival)
+	))
+end
+
+local function log_miss(npc, smart, npc_id, scheme, section)
+	if logged_misses[npc_id] or miss_budget <= 0 then
+		return
+	end
+	logged_misses[npc_id] = true
+	miss_budget = miss_budget - 1
+	printf("%s", string.format(
+		"* [anthology/alife-v107] no active work target npc=%s id=%s smart=%s job=%s scheme=%s section=%s",
+		safe_name(npc), tostring(npc_id), safe_name(smart), tostring(job_section(smart, npc_id)),
+		tostring(scheme or "?"), tostring(section or "?")
+	))
+end
+
+local function log_far_arrival(npc, smart, npc_id)
+	if logged_arrivals[npc_id] or arrival_budget <= 0 then
+		return
+	end
+	logged_arrivals[npc_id] = true
+	arrival_budget = arrival_budget - 1
+	printf("%s", string.format(
+		"* [anthology/alife-v107] keep real arrival npc=%s id=%s smart=%s",
+		safe_name(npc), tostring(npc_id), safe_name(smart)
+	))
+end
+
+local function report_error(stage, err)
+	stats.failed = stats.failed + 1
+	if error_reported then
+		return
+	end
+	error_reported = true
+	printf("%s", "! [anthology/alife-v107] " .. tostring(stage) .. " skipped safely: " .. tostring(err))
+end
+
+local function apply_active_target(npc, smart, se_obj, stage, report_missing)
+	local npc_id = se_obj and se_obj.id or (npc and npc:id())
+	if not npc_id then
+		return false
+	end
+
+	local is_arriving, was_near_arrival = truly_arriving(se_obj, smart, npc_id)
+	if is_arriving then
+		if not logged_arrivals[npc_id] then
+			stats.far_arrival = stats.far_arrival + 1
+		end
+		log_far_arrival(npc, smart, npc_id)
+		return false
+	end
+
+	local target, scheme, section = resolve_active_scheme_target(npc)
+	if not target then
+		if report_missing then
+			stats.missed = stats.missed + 1
+			log_miss(npc, smart, npc_id, scheme, section)
+		end
+		return false
+	end
+
+	if not safe_set_position(npc, target.position) then
+		stats.failed = stats.failed + 1
+		return false
+	end
+
+	-- The Exo binder consumes this redirect after smart setup. If the target
+	-- only becomes available after the complete binder returned, leave no stale
+	-- redirect for a future online transition and rely on the exact final move.
+	if stage ~= "after_net_spawn" then
+		seed_stock_redirect(npc_id, target)
+	end
+	final_targets[npc_id] = target
+	if not placed_ids[npc_id] then
+		placed_ids[npc_id] = true
+		stats.placed = stats.placed + 1
+		if was_near_arrival then
+			stats.near_arrival = stats.near_arrival + 1
+		end
+	end
+	log_target(npc, smart, npc_id, target, stage, was_near_arrival)
+	return true
+end
+
+local function install_setup_logic_wrapper()
+	local smart_class = smart_terrain and smart_terrain.se_smart_terrain
+	local current = smart_class and smart_class.setup_logic
+	if not current then
+		return false
+	end
+
+	original_setup_logic = current
+	smart_class.setup_logic = function(self, npc, ...)
+		local result = original_setup_logic(self, npc, ...)
+		local npc_id = npc and npc:id()
+		local context = npc_id and spawn_context[npc_id]
+		if context then
+			local ok, err = pcall(apply_active_target, npc, self, context.se_obj, "after_setup_logic", false)
+			if not ok then
+				report_error("setup_logic", err)
+			end
+		end
+		return result
+	end
+	return true
+end
+
+local function install_setup_gulag_wrapper()
+	local current = smart_terrain and smart_terrain.setup_gulag_and_logic_on_spawn
+	if not current then
+		return false
+	end
+
+	original_setup_gulag = current
+	smart_terrain.setup_gulag_and_logic_on_spawn = function(npc, st, se_obj, stype, loaded)
+		local npc_id = se_obj and se_obj.id or (npc and npc:id())
+		local smart = smart_for(se_obj)
+		if npc_id then
+			stats.seen = stats.seen + 1
+			spawn_context[npc_id] = { se_obj = se_obj }
+		end
+
+		local result = original_setup_gulag(npc, st, se_obj, stype, loaded)
+		local ok, err = pcall(apply_active_target, npc, smart, se_obj, "after_smart_setup", false)
+		if not ok then
+			report_error("smart_setup", err)
+		end
+		if npc_id then
+			spawn_context[npc_id] = nil
+		end
+		return result
+	end
+	return true
+end
+
+local function install_net_spawn_wrapper()
+	local binder = xr_motivator and xr_motivator.motivator_binder
+	local current = binder and binder.net_spawn
+	if not current then
+		return false
+	end
+
+	original_net_spawn = current
+	binder.net_spawn = function(self, se_abstract)
+		local npc = self and self.object
+		local npc_id = npc and npc:id()
+		if npc_id then
+			final_targets[npc_id] = nil
+		end
+
+		local result = original_net_spawn(self, se_abstract)
+		if result == false then
+			if npc_id then
+				final_targets[npc_id] = nil
+			end
+			return result
+		end
+
+		local smart = smart_for(se_abstract)
+		if npc_id and not final_targets[npc_id] then
+			local ok, err = pcall(apply_active_target, npc, smart, se_abstract, "after_net_spawn", true)
+			if not ok then
+				report_error("net_spawn_target", err)
+			end
+		end
+
+		local target = npc_id and final_targets[npc_id]
+		if target and safe_set_position(npc, target.position) then
+			stats.finalized = stats.finalized + 1
+		end
+		if npc_id then
+			final_targets[npc_id] = nil
+		end
+		return result
+	end
+	return true
+end
+
+local function install_wrappers()
+	if wrappers_installed then
+		return
+	end
+
+	local setup_logic_ok = install_setup_logic_wrapper()
+	local setup_gulag_ok = install_setup_gulag_wrapper()
+	local net_spawn_ok = install_net_spawn_wrapper()
+	wrappers_installed = setup_gulag_ok and net_spawn_ok
+
+	printf("%s", string.format(
+		"* [anthology/alife-v107] active scheme placement: setup_logic=%s setup_gulag=%s net_spawn=%s",
+		tostring(setup_logic_ok), tostring(setup_gulag_ok), tostring(net_spawn_ok)
+	))
+end
+
+function on_game_start()
+	spawn_context = {}
+	final_targets = {}
+	placed_ids = {}
+	logged_npcs = {}
+	logged_misses = {}
+	logged_arrivals = {}
+	diagnostic_budget = 60
+	miss_budget = 30
+	arrival_budget = 12
+	error_reported = false
+	stats = {
+		seen = 0,
+		placed = 0,
+		finalized = 0,
+		near_arrival = 0,
+		far_arrival = 0,
+		missed = 0,
+		failed = 0,
+	}
+	install_wrappers()
+end
+
+function actor_on_first_update()
+	printf("%s", string.format(
+		"* [anthology/alife-v107] load summary seen=%d placed=%d finalized=%d near_arrival=%d far_arrival=%d missed=%d failed=%d",
+		stats.seen,
+		stats.placed,
+		stats.finalized,
+		stats.near_arrival,
+		stats.far_arrival,
+		stats.missed,
+		stats.failed
+	))
+end
