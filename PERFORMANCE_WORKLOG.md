@@ -3631,3 +3631,71 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   Pripyat arrival global cameras use a viewpoint different from the actor.
 - Kept v110 camera, dialogue and door-sound changes intact; no renderer,
   performance, A-Life radius or user configuration changes.
+
+## 2026-08-24 — v113 stock CoP readiness and listener-cut audio fix
+
+### Confirmed v112 regressions
+
+- The v112 staging script passed raw `smart_cover.position` and patrol points
+  to `set_npc_position`/`server.position`. The client call destroys the active
+  animation movement controller before forcing the transform and performs no
+  floor or navigation projection. This directly explains the underground and
+  flying cinematic actors seen in the latest recordings.
+- v111/v112 iterated the wrapper records in `SIMBOARD.smarts` as if they were
+  `se_smart_terrain` objects. The actual smart terrain is stored in `.smrt`,
+  which is why the fresh log reported `rebound=0` after restoring the covers.
+- Sokolov was the only `pri_a15` animpoint without
+  `out_restr = pri_a15_sr_start`. The log consequently rejected only his
+  cinematic destination as inaccessible by its restrictors.
+- Camera cuts changed the global audio-listener position instantaneously.
+  The old code converted that displacement into a smoothed velocity; with the
+  configured Doppler power it could cross OpenAL's speed-of-sound boundary and
+  make pitch zero for several frames. The measured sound dips followed the
+  authored camera cuts.
+- Restoring Anthology's extra `jup_b219_underpass_opening` restrictor sound
+  would regress v110: the animated hermetic door already plays the same OGG as
+  its 3D `start_snd`. v113 intentionally leaves the v110 deduplication active.
+
+### v113 correction
+
+- Removed all v112 NPC staging and direct position writes. The stock walker
+  and animpoint controllers remain solely responsible for movement, floor
+  placement, orientation and animation.
+- Rebound restored smart-cover jobs through `entry.smrt or entry` and added a
+  direct post-`spawn_level` hook in ID Cleaner, eliminating callback-order
+  dependence. The repair is scoped to the authored `pri_a15` jobs for scene
+  readiness; unrelated incomplete addon jobs cannot block the cinematic.
+- Added bounded readiness gates under the existing black screen. Underpass
+  requires the expected stock walkers to reach their first authored waypoint
+  (three stable updates, 100 ms settle, 3 s hard fallback). Pripyat requires
+  the expected stock animpoint controllers to start on their matching covers
+  (three stable updates, 150 ms settle, 5 s hard fallback). Both fallbacks
+  continue the quest rather than leaving `Zone waits` indefinitely.
+- Restored the original Underpass Zulus squad spawn point and added the
+  missing Sokolov out-restrictor. The narrow v111 SAR EFX guard remains, while
+  the full `sar_main.script` is not overridden.
+- `CSoundRender_CoreA::update_listener` now treats the first sample, invalid or
+  long frame deltas and listener jumps above 60 m/s as discontinuities. It
+  clears the velocity smoothing state for that sample, preserving normal
+  continuous Doppler while preventing camera edits and teleports from muting
+  cinematic sound.
+
+### Validation, installation and rollback
+
+- All three addon scripts pass the Lua 5.1 parser. The dedicated v113 smoke
+  test exercises the `.smrt` wrapper rebind, both three-update readiness gates,
+  both hard fallbacks and the required authored config patches. The v113 LTX
+  files contain no duplicate keys or direct NPC positioning calls and do not
+  override the duplicate Underpass sound or full Spatial Audio Rework script.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully. MT is part
+  of both configurations; AVX is the CPU-instruction variant, not a separate
+  threading switch. Build and installed SHA-256 values match:
+  - DX11 EXE: `88B8809691E2FD8EB8FA59FF625F1CAD37B95A2B0F8051F3DC5CE7E20F1565FB`;
+  - DX11 PDB: `318EF609939600FB62A51CC4D397460963310239651F5714C0D534AD9E4319B4`;
+  - DX11-AVX EXE: `C01273B04402F1B23635C6EB749F62251EE3AD6E60D06A261CB1805211DB290B`;
+  - DX11-AVX PDB: `7C3F08C9E3333A5F64133D4DED0FA69821FCF1ECF71CFDFE521E0384F66091EE`.
+- The canonical addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned
+  into MO2 and enabled first in the HARD profile. v111 and v112 are disabled;
+  v110 remains enabled. The game was not launched.
+- The pre-v113 engine binaries and profile are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260824_v113_stock_cop_readiness`.

@@ -1,0 +1,396 @@
+-- Anthology Cutscenes v113
+-- Restore legacy smart-cover jobs and wait for the stock walker/animpoint
+-- controllers to reach authored positions. This file never moves an NPC.
+
+local EVENT_ID = "anthology_cutscenes_v113"
+local EVENT_ACTION = "rebind_smartcover_jobs"
+local RETRY_INTERVAL = 0.05
+local RETRY_LIMIT = 100
+local READY_STABLE_UPDATES = 3
+
+local PRI_READY_INFO = "anthology_v113_pri_a15_ready"
+local PAS_READY_INFO = "anthology_v113_pas_b400_ready"
+
+local callbacks_registered = false
+local retries_left = 0
+local repair_done = false
+local pri_stable_updates = 0
+local pas_stable_updates = 0
+local last_repair_summary = nil
+
+local PRI_CAST = {
+	{ story = "pri_a15_actor",            cover = "pri_a15_animpoint_actor" },
+	{ story = "pri_a15_military_tarasov", cover = "pri_a15_animpoint_military_1" },
+	{ story = "pri_a15_military_2",       cover = "pri_a15_animpoint_military_2" },
+	{ story = "pri_a15_military_3",       cover = "pri_a15_animpoint_military_3" },
+	{ story = "pri_a15_military_4",       cover = "pri_a15_animpoint_military_4" },
+	{ story = "pri_a15_vano",             cover = "pri_a15_animpoint_vano",     out_info = "pri_a15_vano_out" },
+	{ story = "pri_a15_sokolov_scene",    cover = "pri_a15_animpoint_sokolov",  out_info = "pri_a15_sokolov_out" },
+	{ story = "pri_a15_zulus",            cover = "pri_a15_animpoint_zulus",    out_info = "pri_a15_zulus_out" },
+	{ story = "pri_a15_wanderer",         cover = "pri_a15_animpoint_wanderer", out_info = "pri_a15_wanderer_out" },
+}
+
+local PAS_CAST = {
+	{
+		story = "pas_b400_zulus",
+		section = "walker@zulus_elevator_1",
+		path = "pas_b400_elevator_zulus_1_walk",
+	},
+	{
+		story = "pas_b400_vano",
+		section = "walker@vano_elevator_1",
+		path = "pas_b400_elevator_vano_1_walk",
+		required_info = "jup_a10_vano_agree_go_und",
+	},
+	{
+		story = "pas_b400_sokolov",
+		section = "walker@sokolov_elevator_1",
+		path = "pas_b400_elevator_sokolov_1_walk",
+		required_info = "jup_b218_soldier_hired",
+	},
+	{
+		story = "pas_b400_wanderer",
+		section = "walker@wanderer_elevator_1",
+		path = "pas_b400_elevator_wanderer_1_walk",
+		required_info = "jup_b218_monolith_hired",
+	},
+}
+
+local function info(name)
+	if type(has_alife_info) ~= "function" then
+		return false
+	end
+	local ok, value = pcall(has_alife_info, name)
+	return ok and value == true
+end
+
+local function current_level_name()
+	if not (level and type(level.name) == "function") then
+		return ""
+	end
+	local ok, name = pcall(level.name)
+	return ok and tostring(name or "") or ""
+end
+
+local function story_object(story_id)
+	if type(get_story_object) ~= "function" then
+		return nil
+	end
+	local ok, object = pcall(get_story_object, story_id)
+	return ok and object or nil
+end
+
+local function give_info(name, message)
+	if not (db and db.actor and db.actor.give_info_portion) then
+		return false
+	end
+	local ok = pcall(db.actor.give_info_portion, db.actor, name)
+	if ok then
+		printf("%s", message)
+	end
+	return ok
+end
+
+local function smart_name(smart)
+	if not smart then
+		return "<nil>"
+	end
+	local ok, name = pcall(function()
+		return smart:name()
+	end)
+	return ok and tostring(name) or "<unknown>"
+end
+
+local function fill_job_task(smart, job, graph)
+	if not (smart and job and graph and gulag_general and se_smart_cover) then
+		return "skip"
+	end
+	if gulag_general.get_job_type(job) ~= "smartcover_job" then
+		return "skip"
+	end
+
+	local ltx = job.ltx or smart.ltx
+	local section = job.section
+	if not (ltx and section and ltx.line_exist and ltx:line_exist(section, "active")) then
+		return "invalid"
+	end
+
+	local active_section = ltx:r_string_ex(section, "active")
+	local cover_name = active_section and ltx:r_string_ex(active_section, "cover_name") or nil
+	if not cover_name then
+		return "invalid"
+	end
+
+	local registry = se_smart_cover.registered_smartcovers
+	local cover = registry and registry[cover_name] or nil
+	if not cover then
+		return "missing", cover_name
+	end
+
+	local ok_task, task = pcall(
+		CALifeSmartTerrainTask,
+		cover.m_game_vertex_id,
+		cover.m_level_vertex_id
+	)
+	if not (ok_task and task) then
+		return "invalid", cover_name
+	end
+
+	local ok_fill = pcall(function()
+		job.alife_task = task
+		job.game_vertex_id = task:game_vertex_id()
+		job.level_id = graph:vertex(job.game_vertex_id):level_id()
+		job.position = task:position()
+	end)
+	return ok_fill and "rebound" or "invalid", cover_name
+end
+
+local function critical_pri_jobs_ready(rebound_covers)
+	if current_level_name() ~= "pripyat" then
+		return true, nil
+	end
+	local registry = se_smart_cover and se_smart_cover.registered_smartcovers or nil
+	if not registry then
+		return false, "registry"
+	end
+	for _, entry in ipairs(PRI_CAST) do
+		if not registry[entry.cover] then
+			return false, entry.cover
+		end
+		if not rebound_covers[entry.cover] then
+			return false, "job:" .. entry.cover
+		end
+	end
+	return true, nil
+end
+
+local function repair_jobs()
+	local board = rawget(_G, "SIMBOARD")
+	local smarts = board and board.smarts
+	if not (smarts and game_graph and CALifeSmartTerrainTask) then
+		repair_done = false
+		return false, 0, 0, 0, { "SIMBOARD" }
+	end
+
+	local graph = game_graph()
+	local rebound, missing, invalid = 0, 0, 0
+	local samples = {}
+	local rebound_covers = {}
+	for _, entry in pairs(smarts) do
+		-- SIMBOARD.smarts stores wrapper records in Anthology/Anomaly. The
+		-- actual se_smart_terrain object is entry.smrt.
+		local smart = entry and (entry.smrt or entry)
+		if smart and smart.is_on_actor_level and not smart.disabled then
+			local job_tables = { smart.stalker_jobs, smart.monster_jobs, smart.heli_jobs }
+			for index = 1, 3 do
+				for _, job in ipairs(job_tables[index] or {}) do
+					local ok, status, cover_name = pcall(fill_job_task, smart, job, graph)
+					if not ok or status == "invalid" then
+						invalid = invalid + 1
+					elseif status == "missing" then
+						missing = missing + 1
+						if #samples < 6 then
+							samples[#samples + 1] = smart_name(smart) .. ":" .. tostring(cover_name)
+						end
+					elseif status == "rebound" then
+						rebound = rebound + 1
+						rebound_covers[cover_name] = true
+					end
+				end
+			end
+		end
+	end
+
+	local covers_ready, missing_cover = critical_pri_jobs_ready(rebound_covers)
+	if not covers_ready and #samples < 6 then
+		samples[#samples + 1] = "critical:" .. tostring(missing_cover)
+	end
+	-- Unrelated addon jobs may be incomplete and are reported above, but they
+	-- must not block this scene. Readiness is tied only to the nine authored
+	-- pri_a15 smart-cover tasks.
+	repair_done = covers_ready
+
+	local summary = string.format(
+		"level=%s rebound=%d missing=%d invalid=%d ready=%s samples=%s",
+		current_level_name(), rebound, missing, invalid, tostring(repair_done),
+		#samples > 0 and table.concat(samples, ",") or "none"
+	)
+	if summary ~= last_repair_summary then
+		last_repair_summary = summary
+		printf("%s", "* [anthology/cutscenes-v113] smart-cover repair " .. summary)
+	end
+	return repair_done, rebound, missing, invalid, samples
+end
+
+local function delayed_repair()
+	local ready = repair_jobs()
+	if ready then
+		return true
+	end
+	retries_left = retries_left - 1
+	return retries_left <= 0
+end
+
+local function schedule_repair()
+	repair_done = false
+	pri_stable_updates = 0
+	pas_stable_updates = 0
+	retries_left = RETRY_LIMIT
+	if repair_jobs() then
+		return
+	end
+	if type(RemoveTimeEvent) == "function" then
+		RemoveTimeEvent(EVENT_ID, EVENT_ACTION)
+	end
+	if type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, EVENT_ACTION, RETRY_INTERVAL, delayed_repair)
+	end
+end
+
+local function actor_first_update()
+	schedule_repair()
+end
+
+local function after_id_cleaner_spawn()
+	-- ID Cleaner restores preserved server-side smart covers during its own
+	-- actor_on_first_update callback. Rebind immediately after that exact point
+	-- instead of depending on callback registration order.
+	schedule_repair()
+end
+
+local function pri_cast_ready()
+	if not repair_done then
+		return false, "smart-cover repair pending"
+	end
+	for _, entry in ipairs(PRI_CAST) do
+		if not (entry.out_info and info(entry.out_info)) then
+			local object = story_object(entry.story)
+			if not object then
+				return false, entry.story .. ":offline"
+			end
+			local root = db and db.storage and db.storage[object:id()] or nil
+			local storage = root and root.animpoint or nil
+			local controller = storage and storage.animpoint or nil
+			if not (root and root.active_scheme == "animpoint") then
+				return false, entry.story .. ":scheme"
+			end
+			if not (storage and storage.cover_name == entry.cover) then
+				return false, entry.story .. ":cover"
+			end
+			if not (controller and controller.started == true and controller.cover_name == storage.cover_name) then
+				return false, entry.story .. ":reach"
+			end
+		end
+	end
+	return true, "ready"
+end
+
+local function pas_entry_expected(entry)
+	return not entry.required_info or info(entry.required_info)
+end
+
+local function pas_entry_ready(entry)
+	local object = story_object(entry.story)
+	if not object then
+		return false, entry.story .. ":offline"
+	end
+	local root = db and db.storage and db.storage[object:id()] or nil
+	if not (root and root.active_scheme == "walker" and root.active_section == entry.section) then
+		return false, entry.story .. ":scheme"
+	end
+
+	if level and level.patrol_path_exists then
+		local ok_exists, exists = pcall(level.patrol_path_exists, entry.path)
+		if ok_exists and not exists then
+			return false, entry.story .. ":path"
+		end
+	end
+	local ok_path, path = pcall(patrol, entry.path)
+	if not (ok_path and path) then
+		return false, entry.story .. ":path"
+	end
+	local ok_point, point = pcall(function()
+		return path:point(0)
+	end)
+	if not (ok_point and point) then
+		return false, entry.story .. ":point"
+	end
+	local ok_distance, distance_sqr = pcall(function()
+		return object:position():distance_to_sqr(point)
+	end)
+	if not (ok_distance and distance_sqr <= 2.25) then
+		return false, entry.story .. ":distance"
+	end
+	return true, "ready"
+end
+
+local function pas_cast_ready()
+	for _, entry in ipairs(PAS_CAST) do
+		if pas_entry_expected(entry) then
+			local ready, reason = pas_entry_ready(entry)
+			if not ready then
+				return false, reason
+			end
+		end
+	end
+	return true, "ready"
+end
+
+local function actor_update()
+	if not (db and db.actor) then
+		return
+	end
+
+	local level_name = current_level_name()
+	if level_name == "pripyat"
+		and info("cop_start")
+		and not info("pri_a15_cutscene_go")
+		and not info("pri_a15_cutscene_end")
+		and not info(PRI_READY_INFO)
+	then
+		local ready = pri_cast_ready()
+		pri_stable_updates = ready and (pri_stable_updates + 1) or 0
+		if pri_stable_updates >= READY_STABLE_UPDATES then
+			give_info(
+				PRI_READY_INFO,
+				"* [anthology/cutscenes-v113] pri_a15 stock animpoints ready"
+			)
+		end
+	else
+		pri_stable_updates = 0
+	end
+
+	if level_name == "jupiter_underground"
+		and info("cop_start")
+		and not info("pas_b400_task_given")
+		and not info(PAS_READY_INFO)
+	then
+		local ready = pas_cast_ready()
+		pas_stable_updates = ready and (pas_stable_updates + 1) or 0
+		if pas_stable_updates >= READY_STABLE_UPDATES then
+			give_info(
+				PAS_READY_INFO,
+				"* [anthology/cutscenes-v113] pas_b400 stock walkers ready"
+			)
+		end
+	else
+		pas_stable_updates = 0
+	end
+end
+
+function on_game_start()
+	if callbacks_registered and type(UnregisterScriptCallback) == "function" then
+		UnregisterScriptCallback("actor_on_first_update", actor_first_update)
+		UnregisterScriptCallback("actor_on_update", actor_update)
+	end
+	if type(RegisterScriptCallback) == "function" then
+		RegisterScriptCallback("actor_on_first_update", actor_first_update)
+		RegisterScriptCallback("actor_on_update", actor_update)
+		callbacks_registered = true
+	end
+	printf("%s", "* [anthology/cutscenes-v113] stock CoP readiness active")
+end
+
+-- Exported at module load time. anthology_id_cleaner invokes this after its
+-- spawn_level pass, when all preserved covers for the current level exist.
+_G.anthology_cutscenes_v113_after_id_cleaner_spawn = after_id_cleaner_spawn

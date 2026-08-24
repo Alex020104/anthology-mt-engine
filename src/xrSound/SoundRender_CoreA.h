@@ -30,6 +30,7 @@ class CSoundRender_CoreA : public CSoundRender_Core
 		Fvector prevVelocity;
 		Fvector curVelocity;
 		Fvector accVelocity;
+		bool velocityInitialized;
 		Fvector orientation[2];
 	};
 

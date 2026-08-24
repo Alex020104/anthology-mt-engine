@@ -478,6 +478,7 @@ void CSoundRender_CoreA::_initialize(int stage)
 	Listener.prevVelocity.set(0.0f, 0.0f, 0.0f);
 	Listener.curVelocity.set(0.0f, 0.0f, 0.0f);
 	Listener.accVelocity.set(0.0f, 0.0f, 0.0f);
+	Listener.velocityInitialized = false;
 	Listener.orientation[0].set(0.0f, 0.0f, 0.0f);
 	Listener.orientation[1].set(0.0f, 0.0f, 0.0f);
 
@@ -544,13 +545,40 @@ void CSoundRender_CoreA::update_listener(const Fvector& P, const Fvector& D, con
 
 	Listener.curVelocity.sub(P, Listener.position);
 
-	float a = soundSmoothingParams::getTimeDeltaSmoothing();
-	int p = soundSmoothingParams::power;
-	Listener.accVelocity.x = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.x * p / dt, Listener.accVelocity.x, a);
-	Listener.accVelocity.y = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.y * p / dt, Listener.accVelocity.y, a);
-	Listener.accVelocity.z = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.z * p / dt, Listener.accVelocity.z, a);
-	
-	Listener.prevVelocity.set(Listener.accVelocity);
+	// An absolute-camera cut, level transition, or teleport is a position
+	// discontinuity rather than physical listener movement. Passing that jump
+	// to OpenAL as velocity can drive its Doppler pitch to zero and mute a
+	// cinematic sound for several smoothed frames.
+	constexpr float maxContinuousListenerSpeed = 60.0f;
+	constexpr float maxListenerSampleDelta = 0.25f;
+
+	const bool invalidSample =
+		!Listener.velocityInitialized ||
+		!_valid(dt) ||
+		dt <= EPS_S ||
+		dt > maxListenerSampleDelta;
+
+	const float maxContinuousStep = invalidSample ? 0.0f : maxContinuousListenerSpeed * dt;
+	const bool positionDiscontinuity =
+		!invalidSample &&
+		Listener.curVelocity.square_magnitude() > _sqr(maxContinuousStep);
+
+	if (invalidSample || positionDiscontinuity)
+	{
+		Listener.curVelocity.set(0.0f, 0.0f, 0.0f);
+		Listener.accVelocity.set(0.0f, 0.0f, 0.0f);
+		Listener.prevVelocity.set(0.0f, 0.0f, 0.0f);
+	}
+	else
+	{
+		const float a = soundSmoothingParams::getTimeDeltaSmoothing();
+		const int p = soundSmoothingParams::power;
+		Listener.accVelocity.x = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.x * p / dt, Listener.accVelocity.x, a);
+		Listener.accVelocity.y = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.y * p / dt, Listener.accVelocity.y, a);
+		Listener.accVelocity.z = soundSmoothingParams::getSmoothedValue(Listener.curVelocity.z * p / dt, Listener.accVelocity.z, a);
+		Listener.prevVelocity.set(Listener.accVelocity);
+	}
+	Listener.velocityInitialized = true;
 
 	// Msg("listener sound update delta %.3f, velocity %.3f, %.3f, %.3f, power %.1f, alpha %.3f", dt, Listener.prevVelocity.x, Listener.prevVelocity.y, Listener.prevVelocity.z, soundSmoothingParams::power, soundSmoothingParams::alpha);
 
