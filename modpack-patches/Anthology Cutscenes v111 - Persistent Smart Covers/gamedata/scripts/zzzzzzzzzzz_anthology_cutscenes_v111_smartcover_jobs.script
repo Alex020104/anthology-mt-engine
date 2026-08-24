@@ -1,0 +1,144 @@
+-- Anthology Cutscenes v111
+-- Repairs smart-cover Alife tasks after legacy ID Cleaner saves restore their
+-- covers on actor_on_first_update. New saves keep covers permanently, so the
+-- stock smart_terrain load order binds these tasks normally.
+
+local EVENT_ID = "anthology_cutscenes_v111"
+local EVENT_ACTION = "rebind_smartcover_jobs"
+local callback_registered = false
+local retries_left = 8
+
+local function smart_name(smart)
+	if not smart then
+		return "<nil>"
+	end
+	local ok, name = pcall(function()
+		return smart:name()
+	end)
+	return ok and tostring(name) or "<unknown>"
+end
+
+local function fill_job_task(smart, job, gg)
+	if not (smart and job and gg and gulag_general and se_smart_cover) then
+		return "skip"
+	end
+
+	local ltx = job.ltx or smart.ltx
+	local section = job.section
+	if not (ltx and section and ltx:line_exist(section, "active")) then
+		return "skip"
+	end
+	if gulag_general.get_job_type(job) ~= "smartcover_job" then
+		return "skip"
+	end
+
+	local active_section = ltx:r_string_ex(section, "active")
+	if not active_section then
+		return "invalid"
+	end
+	local cover_name = ltx:r_string_ex(active_section, "cover_name")
+	if not cover_name then
+		return "invalid"
+	end
+	local registry = se_smart_cover.registered_smartcovers
+	local cover = registry and registry[cover_name] or nil
+	if not cover then
+		return "missing", cover_name
+	end
+
+	local ok_task, task = pcall(
+		CALifeSmartTerrainTask,
+		cover.m_game_vertex_id,
+		cover.m_level_vertex_id
+	)
+	if not (ok_task and task) then
+		return "invalid", cover_name
+	end
+
+	local ok_fill = pcall(function()
+		job.alife_task = task
+		job.game_vertex_id = task:game_vertex_id()
+		job.level_id = gg:vertex(job.game_vertex_id):level_id()
+		job.position = task:position()
+	end)
+	return ok_fill and "rebound" or "invalid", cover_name
+end
+
+local function repair_jobs()
+	local board = rawget(_G, "SIMBOARD")
+	local smarts = board and board.smarts
+	if not smarts then
+		return 0, 0, 0, false
+	end
+
+	local gg = game_graph()
+	local rebound, missing, invalid = 0, 0, 0
+	local missing_samples = {}
+	for _, smart in pairs(smarts) do
+		if smart and smart.is_on_actor_level and not smart.disabled then
+			local job_tables = { smart.stalker_jobs, smart.monster_jobs, smart.heli_jobs }
+			for index = 1, 3 do
+				local jobs = job_tables[index]
+				for _, job in ipairs(jobs or {}) do
+					local ok, status, cover_name = pcall(fill_job_task, smart, job, gg)
+					if not ok or status == "invalid" then
+						invalid = invalid + 1
+					elseif status == "missing" then
+						missing = missing + 1
+						if #missing_samples < 5 then
+							missing_samples[#missing_samples + 1] = smart_name(smart) .. ":" .. tostring(cover_name)
+						end
+					elseif status == "rebound" then
+						rebound = rebound + 1
+					end
+				end
+			end
+		end
+	end
+
+	printf(
+		"* [anthology/cutscenes-v111] smart-cover jobs rebound=%d missing=%d invalid=%d samples=%s",
+		rebound,
+		missing,
+		invalid,
+		#missing_samples > 0 and table.concat(missing_samples, ",") or "none"
+	)
+	return rebound, missing, invalid, true
+end
+
+local function delayed_repair()
+	local _, missing, _, ready = repair_jobs()
+	if ready and missing == 0 then
+		return true
+	end
+	if retries_left <= 0 then
+		return true
+	end
+	retries_left = retries_left - 1
+	if type(ResetTimeEvent) == "function" then
+		ResetTimeEvent(EVENT_ID, EVENT_ACTION, 0.05)
+	end
+	return false
+end
+
+local function actor_first_update()
+	retries_left = 8
+	local _, missing, _, ready = repair_jobs()
+	if (not ready or missing > 0) and type(CreateTimeEvent) == "function" then
+		if type(RemoveTimeEvent) == "function" then
+			RemoveTimeEvent(EVENT_ID, EVENT_ACTION)
+		end
+		CreateTimeEvent(EVENT_ID, EVENT_ACTION, 0.05, delayed_repair)
+	end
+end
+
+function on_game_start()
+	if callback_registered and type(UnregisterScriptCallback) == "function" then
+		UnregisterScriptCallback("actor_on_first_update", actor_first_update)
+	end
+	if type(RegisterScriptCallback) == "function" then
+		RegisterScriptCallback("actor_on_first_update", actor_first_update)
+		callback_registered = true
+	end
+	printf("%s", "* [anthology/cutscenes-v111] persistent smart-cover compatibility active")
+end

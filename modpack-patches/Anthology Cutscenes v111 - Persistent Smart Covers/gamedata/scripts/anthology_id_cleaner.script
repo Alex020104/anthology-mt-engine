@@ -1,0 +1,2499 @@
+local STATE_KEY = "anthology_id_cleaner"
+local STATE_VERSION = 14
+local BUILD_VERSION = "14.12-preserve-smartcovers-retry-restore"
+local CONFIG_PATH = "plugins\\id_cleaner_anthology.ltx"
+local EVENT_ID = "anthology_id_cleaner"
+local ACTION_SCAN = "scan_story_ids"
+local ACTION_START_SCAN = "start_scan"
+local ACTION_REPAIR_PRESERVED = "repair_preserved_spawn"
+local PHYSIC_SAFE_TAG = "no_story_no_logic"
+local DESTROYABLE_SAFE_TAG = "destroyable_no_story_no_logic"
+local RESTRICTOR_SAFE_TAG = "restrictor_no_story_no_logic"
+local AGGRESSIVE_SAFE_TAG = "aggressive_no_story_no_logic"
+local ZONE_SAFE_TAG = "zone_no_story_no_logic"
+
+local DEFAULT_RANGES = {}
+
+local settings = {
+	enabled = true,
+	debug = false,
+	report_on_scan = true,
+	report_on_save = true,
+	aggressive_extra_spawn_objects = true,
+	purge_all_configured_objects = false,
+	report_live_audit = true,
+	live_audit_top = 30,
+	strict_safe_sections = true,
+	scan_live_objects = true,
+	cleanup_on_first_update = true,
+	repair_missing_mapped_objects = true,
+	release_on_level_changing = true,
+	spawn_on_first_update = true,
+	scan_batch = 96,
+	live_scan_batch = 512,
+	scan_interval = 0.03,
+	movement_epsilon = 0.75,
+	preserve_mutable_objects = true,
+	restore_missing_preserved_spawn_objects = true,
+	preserved_repair_batch = 128,
+	preserved_repair_interval = 0.05,
+}
+
+local ranges = {}
+local exact_story_ids = {}
+local mapped_objects = {}
+local spawn_objects = {}
+local spawn_objects_by_name = {}
+local preserved_spawn_objects = {}
+local preserved_spawn_objects_by_name = {}
+local config_loaded = false
+
+local SAFE_SECTIONS = {
+	lights_hanging_lamp = true,
+	lights_signal_light = true,
+}
+
+local SAFE_SPAWN_SECTIONS = {
+	lights_hanging_lamp = true,
+	lights_signal_light = true,
+	smart_cover = true,
+	breakable_object = true,
+	climable_object = true,
+	campfire = true,
+	camp_zone = true,
+	physic_object = true,
+	physic_destroyable_object = true,
+}
+
+local ALWAYS_PRESERVED_SPAWN_SECTIONS = {
+	space_restrictor = true,
+	-- Smart terrains bind animpoint jobs while server entities register.
+	-- Releasing covers on a level change and recreating them on the first
+	-- gameplay update leaves every such job bound to the smart centre.
+	smart_cover = true,
+}
+
+local FORCED_PRESERVED_REPAIR_SPAWN_OBJECTS = {
+	level_prefix_space_restrictor = 7836,
+}
+
+local MUTABLE_SPAWN_SECTIONS = {
+	breakable_object = true,
+	physic_object = true,
+	physic_destroyable_object = true,
+}
+
+local MUTABLE_AGGRESSIVE_SECTION_PREFIXES = {
+	"box_",
+	"bochka_",
+	"banka_",
+	"bottle_",
+	"stul_",
+	"vedro_",
+	"komp_",
+	"balon_",
+	"teapot_",
+}
+
+local MUTABLE_AGGRESSIVE_SECTIONS = {
+	krujka = true,
+	ognetushitel = true,
+}
+
+local PROTECTED_SECTIONS = {
+	space_restrictor = true,
+	level_changer = true,
+	smart_terrain = true,
+	anomal_zone = true,
+	inventory_box = true,
+	physic_object = true,
+	physic_door = true,
+	physic_destroyable_object = true,
+	door_lab_x8 = true,
+	stalker = true,
+	helicopter = true,
+	m_trader = true,
+	m_lesnik = true,
+	m_car = true,
+}
+
+local PROTECTED_KEY_TOKENS = {
+	"sleep",
+	"level_changer",
+	"level_change",
+	"space_restrictor_to",
+	"perehod",
+	"teleport",
+	"_to_",
+}
+
+local PHYSIC_PROTECTED_KEY_TOKENS = {
+	"door",
+	"button",
+	"code",
+	"lock",
+	"keypad",
+	"panel",
+	"radio",
+	"tiski",
+	"vintil",
+	"balon",
+	"rupor",
+	"actor",
+	"scene",
+	"scena",
+	"quest",
+}
+
+local DESTROYABLE_PROTECTED_KEY_TOKENS = {
+	"sleep",
+	"level_changer",
+	"level_change",
+	"space_restrictor_to",
+	"perehod",
+	"teleport",
+	"_to_",
+	"door",
+	"button",
+	"code",
+	"lock",
+	"keypad",
+	"panel",
+	"radio",
+	"tiski",
+	"vintil",
+	"balon",
+	"rupor",
+	"actor",
+	"scene",
+	"scena",
+	"quest",
+	"secret",
+	"safe",
+	"blocked",
+}
+
+local RESTRICTOR_PROTECTED_KEY_TOKENS = {
+	"sleep",
+	"level_changer",
+	"level_change",
+	"space_restrictor_to",
+	"perehod",
+	"teleport",
+	"_to_",
+	"to_",
+	"from_",
+	"_from_",
+	"transition",
+	"exit",
+	"enter",
+	"door",
+	"actor",
+	"scene",
+	"scena",
+	"quest",
+	"story",
+	"cut",
+	"secret",
+}
+
+local AGGRESSIVE_PROTECTED_KEY_TOKENS = {
+	"sleep",
+	"level_changer",
+	"level_change",
+	"space_restrictor_to",
+	"perehod",
+	"teleport",
+	"_to_",
+	"to_",
+	"from_",
+	"_from_",
+	"transition",
+	"exit",
+	"enter",
+	"door",
+	"actor",
+	"scene",
+	"scena",
+	"quest",
+	"story",
+	"cut",
+	"secret",
+	"stash",
+	"treasure",
+	"safe",
+	"locked",
+	"lock",
+}
+
+local ZONE_ANOMALY_PREFIXES = {
+	"zone_mine_",
+	"zone_field_",
+	"zone_radioactive_",
+	"zone_burning_fuzz",
+	"zone_mosquito_bald",
+	"zone_witches_galantine",
+	"zone_zharka_static",
+	"zone_buzz",
+	"zone_gravi_zone",
+	"zone_no_gravity",
+	"zone_himi_acidic",
+	"zone_zhar",
+}
+
+local function empty_state()
+	return {
+		version = STATE_VERSION,
+		initialized = false,
+		ids_by_level = {},
+		objects_by_level = {},
+		spawn_by_level = {},
+		restore_by_level = {},
+		preserved_repair_done = false,
+		preserved_repair_signature = nil,
+	}
+end
+
+local state = empty_state()
+
+local scan_running = false
+local scan_range_index = 1
+local scan_next_id = nil
+local scan_exact_index = 1
+local scan_numeric_done = false
+local live_scan_next_id = 1
+local scan_seen_ids = {}
+local scan_seen_objects = {}
+local scan_seen_spawn_names = {}
+local live_section_counts = {}
+local live_objects_scanned = 0
+local tracked_spawn_by_name = {}
+local inventory_sweep_pending = true
+local preserved_repair_running = false
+local preserved_repair_entries = nil
+local preserved_repair_index = 1
+local preserved_repair_cache = nil
+local preserved_repair_checked = 0
+local preserved_repair_live = 0
+local preserved_repair_restored = 0
+local preserved_repair_failed = 0
+
+local function empty_stats()
+	return {
+		numeric_scanned = 0,
+		numeric_found = 0,
+		mapped_configured = 0,
+		mapped_found = 0,
+		spawn_configured = 0,
+		spawn_found = 0,
+		released = 0,
+		release_failed = 0,
+		spawn_checked = 0,
+		spawned = 0,
+		spawn_failed = 0,
+		retired = 0,
+		preserved_mutable = 0,
+		invalid = 0,
+	}
+end
+
+local stats = empty_stats()
+
+local function format_message(message, ...)
+	local text = tostring(message or "")
+	if select("#", ...) <= 0 then
+		return text
+	end
+
+	local ok, formatted = pcall(string.format, text, ...)
+	if ok then
+		return formatted
+	end
+
+	local args = { ... }
+	local index = 0
+	return (string.gsub(text, "%%s", function()
+		index = index + 1
+		return tostring(args[index])
+	end))
+end
+
+local function report(message, ...)
+	local text = "[id_cleaner_anthology] " .. format_message(message, ...)
+	local wrote = false
+
+	if type(_G) == "table" and type(_G.log) == "function" then
+		wrote = pcall(_G.log, text)
+	end
+
+	if not wrote and type(printf) == "function" then
+		pcall(printf, "%s", text)
+	end
+end
+
+local function log(message, ...)
+	if settings.debug then
+		report(message, ...)
+	end
+end
+
+report("script loaded: version=%s build=%s", tostring(STATE_VERSION), BUILD_VERSION)
+
+local function trim(value)
+	value = tostring(value or "")
+	value = string.gsub(value, "^%s+", "")
+	value = string.gsub(value, "%s+$", "")
+	return value
+end
+
+local function strip_comment(value)
+	value = tostring(value or "")
+	local pos = string.find(value, ";", 1, true)
+	if pos then
+		value = string.sub(value, 1, pos - 1)
+	end
+	return trim(value)
+end
+
+local function read_comment(value)
+	value = tostring(value or "")
+	local pos = string.find(value, ";", 1, true)
+	if not pos then
+		return ""
+	end
+
+	return trim(string.sub(value, pos + 1))
+end
+
+local function is_protected_story(story_key, section)
+	local key = string.lower(tostring(story_key or ""))
+	section = string.lower(trim(section or ""))
+
+	if section ~= "" then
+		if PROTECTED_SECTIONS[section] then
+			return true
+		end
+		if settings.strict_safe_sections and not SAFE_SECTIONS[section] then
+			return true
+		end
+	end
+
+	for _, token in ipairs(PROTECTED_KEY_TOKENS) do
+		if string.find(key, token, 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function is_protected_entry(entry)
+	return entry and is_protected_story(entry.key, entry.section)
+end
+
+local function is_zone_anomaly_section(section)
+	section = string.lower(trim(section or ""))
+	for _, prefix in ipairs(ZONE_ANOMALY_PREFIXES) do
+		if string.sub(section, 1, string.len(prefix)) == prefix then
+			return true
+		end
+	end
+	return false
+end
+
+local function is_protected_spawn_name(name, section, tag)
+	local key = string.lower(tostring(name or ""))
+	section = string.lower(trim(section or ""))
+	tag = string.lower(trim(tag or ""))
+	local zone_anomaly = is_zone_anomaly_section(section)
+
+	if section ~= "" then
+		if ALWAYS_PRESERVED_SPAWN_SECTIONS[section] then
+			return true
+		end
+		if section == "physic_object" then
+			if tag ~= PHYSIC_SAFE_TAG then
+				return true
+			end
+			for _, token in ipairs(PHYSIC_PROTECTED_KEY_TOKENS) do
+				if string.find(key, token, 1, true) then
+					return true
+				end
+			end
+		elseif section == "physic_destroyable_object" then
+			if tag ~= DESTROYABLE_SAFE_TAG then
+				return true
+			end
+			for _, token in ipairs(DESTROYABLE_PROTECTED_KEY_TOKENS) do
+				if string.find(key, token, 1, true) then
+					return true
+				end
+			end
+		elseif tag == AGGRESSIVE_SAFE_TAG then
+			if not settings.aggressive_extra_spawn_objects or PROTECTED_SECTIONS[section] then
+				return true
+			end
+			for _, token in ipairs(AGGRESSIVE_PROTECTED_KEY_TOKENS) do
+				if string.find(key, token, 1, true) then
+					return true
+				end
+			end
+		elseif zone_anomaly then
+			if tag ~= ZONE_SAFE_TAG then
+				return true
+			end
+		elseif PROTECTED_SECTIONS[section] then
+			return true
+		end
+		if settings.strict_safe_sections and not (SAFE_SPAWN_SECTIONS[section] or zone_anomaly or tag == AGGRESSIVE_SAFE_TAG) then
+			return true
+		end
+	end
+
+	for _, token in ipairs(PROTECTED_KEY_TOKENS) do
+		if string.find(key, token, 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function is_protected_spawn_entry(entry)
+	return entry and is_protected_spawn_name(entry.name, entry.section, entry.tag)
+end
+
+local function copy_default_ranges()
+	local result = {}
+	for i, range in ipairs(DEFAULT_RANGES) do
+		result[i] = { first = range.first, last = range.last }
+	end
+	return result
+end
+
+local function section_exists(ini, section)
+	if not (ini and section) then
+		return false
+	end
+
+	local ok, exists = pcall(function()
+		return ini:section_exist(section)
+	end)
+	return ok and exists == true
+end
+
+local function line_exists(ini, section, line)
+	if not (ini and section and line) then
+		return false
+	end
+
+	local ok, exists = pcall(function()
+		return ini:line_exist(section, line)
+	end)
+	return ok and exists == true
+end
+
+local function read_string(ini, section, line, default)
+	if not line_exists(ini, section, line) then
+		return default
+	end
+
+	local ok, value = pcall(function()
+		return ini:r_string_ex(section, line)
+	end)
+	if ok and value ~= nil then
+		return value
+	end
+
+	ok, value = pcall(function()
+		return ini:r_string(section, line)
+	end)
+	return ok and value ~= nil and value or default
+end
+
+local function read_bool(ini, section, line, default)
+	local value = read_string(ini, section, line, nil)
+	if value == nil then
+		return default
+	end
+
+	value = string.lower(tostring(value))
+	if value == "true" or value == "1" or value == "yes" or value == "on" then
+		return true
+	end
+	if value == "false" or value == "0" or value == "no" or value == "off" then
+		return false
+	end
+	return default
+end
+
+local function read_number(ini, section, line, default)
+	local value = tonumber(read_string(ini, section, line, nil))
+	return value ~= nil and value or default
+end
+
+local function parse_numbers(text)
+	local result = {}
+	for token in string.gmatch(tostring(text or ""), "%-?%d+") do
+		result[#result + 1] = tonumber(token)
+	end
+	return result
+end
+
+local function append_range_from_text(text)
+	local nums = parse_numbers(text)
+	if #nums < 2 then
+		return
+	end
+
+	local first = nums[1]
+	local last = nums[2]
+	if first > last then
+		first, last = last, first
+	end
+
+	ranges[#ranges + 1] = { first = first, last = last }
+end
+
+local function append_ids_from_text(text)
+	for _, story_id in ipairs(parse_numbers(text)) do
+		exact_story_ids[#exact_story_ids + 1] = story_id
+	end
+end
+
+local function split_csv(text)
+	local result = {}
+	for part in string.gmatch(tostring(text or ""), "([^,]+)") do
+		result[#result + 1] = trim(part)
+	end
+	return result
+end
+
+local function parse_object_value(value)
+	local text = strip_comment(value)
+	local section = read_comment(value)
+	local tag = ""
+	local spawn_id = tonumber(string.match(text, "%-?%d+"))
+	if not spawn_id then
+		return nil, "", ""
+	end
+
+	local comma = string.find(text, ",", 1, true)
+	if comma then
+		local parts = split_csv(string.sub(text, comma + 1))
+		if parts[1] and parts[1] ~= "" then
+			section = parts[1]
+		end
+		if parts[2] and parts[2] ~= "" then
+			tag = parts[2]
+		end
+	end
+
+	return spawn_id, section, tag
+end
+
+local function append_mapped_object(id, value)
+	local key = strip_comment(id)
+	local spawn_id, section = parse_object_value(value)
+	if not spawn_id then
+		return
+	end
+
+	if key ~= "" and not is_protected_story(key, section) then
+		mapped_objects[#mapped_objects + 1] = { key = key, spawn_id = spawn_id, section = section }
+	end
+end
+
+local function append_spawn_object(id, value)
+	local name = strip_comment(id)
+	local spawn_id, section, tag = parse_object_value(value)
+	if not spawn_id then
+		return
+	end
+
+	if name ~= "" and not is_protected_spawn_name(name, section, tag) then
+		local entry = { name = name, spawn_id = spawn_id, section = section, tag = tag }
+		spawn_objects[#spawn_objects + 1] = entry
+		spawn_objects_by_name[name] = entry
+	end
+end
+
+local function append_preserved_spawn_object(id, value)
+	local name = strip_comment(id)
+	local spawn_id, section, tag = parse_object_value(value)
+	if not spawn_id then
+		return
+	end
+
+	if name ~= "" and ALWAYS_PRESERVED_SPAWN_SECTIONS[section] then
+		local entry = { name = name, spawn_id = spawn_id, section = section, tag = tag }
+		preserved_spawn_objects[#preserved_spawn_objects + 1] = entry
+		preserved_spawn_objects_by_name[name] = entry
+	end
+end
+
+local function read_section_lines(ini, section, callback)
+	if not section_exists(ini, section) then
+		return false
+	end
+
+	local ok_count, count = pcall(function()
+		return ini:line_count(section)
+	end)
+	if not (ok_count and count) then
+		return true
+	end
+
+	for i = 0, count - 1 do
+		local ok_line, result, id, value = pcall(function()
+			return ini:r_line(section, i, "", "")
+		end)
+		if ok_line and result then
+			callback(id, value)
+		end
+	end
+
+	return true
+end
+
+local function load_config()
+	if config_loaded then
+		return
+	end
+	config_loaded = true
+
+	ranges = copy_default_ranges()
+	exact_story_ids = {}
+	mapped_objects = {}
+	spawn_objects = {}
+	spawn_objects_by_name = {}
+	preserved_spawn_objects = {}
+	preserved_spawn_objects_by_name = {}
+
+	local ok, ini = pcall(function()
+		return ini_file(CONFIG_PATH)
+	end)
+	if not (ok and ini) then
+		report("config missing or unreadable: %s", CONFIG_PATH)
+		return
+	end
+
+	settings.enabled = read_bool(ini, "settings", "enabled", settings.enabled)
+	settings.debug = read_bool(ini, "settings", "debug", settings.debug)
+	settings.report_on_scan = read_bool(ini, "settings", "report_on_scan", settings.report_on_scan)
+	settings.report_on_save = read_bool(ini, "settings", "report_on_save", settings.report_on_save)
+	settings.aggressive_extra_spawn_objects = read_bool(ini, "settings", "aggressive_extra_spawn_objects", settings.aggressive_extra_spawn_objects)
+	settings.purge_all_configured_objects = read_bool(ini, "settings", "purge_all_configured_objects", settings.purge_all_configured_objects)
+	settings.report_live_audit = read_bool(ini, "settings", "report_live_audit", settings.report_live_audit)
+	settings.live_audit_top = math.max(1, math.floor(read_number(ini, "settings", "live_audit_top", settings.live_audit_top)))
+	settings.strict_safe_sections = read_bool(ini, "settings", "strict_safe_sections", settings.strict_safe_sections)
+	settings.scan_live_objects = read_bool(ini, "settings", "scan_live_objects", settings.scan_live_objects)
+	settings.cleanup_on_first_update = read_bool(ini, "settings", "cleanup_on_first_update", settings.cleanup_on_first_update)
+	settings.repair_missing_mapped_objects = read_bool(ini, "settings", "repair_missing_mapped_objects", settings.repair_missing_mapped_objects)
+	settings.release_on_level_changing = read_bool(ini, "settings", "release_on_level_changing", settings.release_on_level_changing)
+	settings.spawn_on_first_update = read_bool(ini, "settings", "spawn_on_first_update", settings.spawn_on_first_update)
+	settings.scan_batch = math.max(1, math.floor(read_number(ini, "settings", "scan_batch", settings.scan_batch)))
+	settings.live_scan_batch = math.max(1, math.floor(read_number(ini, "settings", "live_scan_batch", settings.live_scan_batch)))
+	settings.scan_interval = math.max(0.01, read_number(ini, "settings", "scan_interval", settings.scan_interval))
+	settings.movement_epsilon = math.max(0.01, read_number(ini, "settings", "movement_epsilon", settings.movement_epsilon))
+	settings.preserve_mutable_objects = read_bool(ini, "settings", "preserve_mutable_objects", settings.preserve_mutable_objects)
+	settings.restore_missing_preserved_spawn_objects = read_bool(ini, "settings", "restore_missing_preserved_spawn_objects", settings.restore_missing_preserved_spawn_objects)
+	settings.preserved_repair_batch = math.max(1, math.floor(read_number(ini, "settings", "preserved_repair_batch", settings.preserved_repair_batch)))
+	settings.preserved_repair_interval = math.max(0.01, read_number(ini, "settings", "preserved_repair_interval", settings.preserved_repair_interval))
+
+	if section_exists(ini, "ranges") then
+		ranges = {}
+		read_section_lines(ini, "ranges", function(id, value)
+			local text = value and value ~= "" and value or id
+			append_range_from_text(text)
+		end)
+	end
+
+	if section_exists(ini, "story_ids") then
+		read_section_lines(ini, "story_ids", function(id, value)
+			local text = value and value ~= "" and value or id
+			append_ids_from_text(text)
+		end)
+	end
+
+	if section_exists(ini, "objects") then
+		read_section_lines(ini, "objects", append_mapped_object)
+	end
+
+	if section_exists(ini, "spawn_objects") then
+		read_section_lines(ini, "spawn_objects", append_spawn_object)
+	end
+
+	if section_exists(ini, "preserved_spawn_objects") then
+		read_section_lines(ini, "preserved_spawn_objects", append_preserved_spawn_object)
+	end
+
+	report(
+		"config loaded: enabled=%s mapped=%s spawn=%s preserved=%s ranges=%s exact=%s scan_live=%s aggressive=%s purge_all=%s preserve_mutable=%s repair_preserved=%s report_on_save=%s",
+		tostring(settings.enabled),
+		tostring(#mapped_objects),
+		tostring(#spawn_objects),
+		tostring(#preserved_spawn_objects),
+		tostring(#ranges),
+		tostring(#exact_story_ids),
+		tostring(settings.scan_live_objects),
+		tostring(settings.aggressive_extra_spawn_objects),
+		tostring(settings.purge_all_configured_objects),
+		tostring(settings.preserve_mutable_objects),
+		tostring(settings.restore_missing_preserved_spawn_objects),
+		tostring(settings.report_on_save)
+	)
+	if settings.purge_all_configured_objects then
+		report("WARNING purge-all mode enabled: configured live objects will be released on every level and not auto-restored")
+	end
+end
+
+local function get_sim()
+	if type(alife) ~= "function" then
+		return nil
+	end
+
+	local ok, sim = pcall(alife)
+	return ok and sim or nil
+end
+
+local function current_level_id(sim)
+	sim = sim or get_sim()
+	if not sim then
+		return nil
+	end
+
+	local ok, level_id = pcall(function()
+		return sim:level_id()
+	end)
+	return ok and level_id or nil
+end
+
+local function story_object(story_id, sim)
+	if type(story_id) ~= "number" then
+		return nil
+	end
+
+	sim = sim or get_sim()
+	if not sim then
+		return nil
+	end
+
+	local ok, se_obj = pcall(function()
+		return sim:story_object(story_id)
+	end)
+	return ok and se_obj or nil
+end
+
+local function safe_se_id(se_obj)
+	if not se_obj then
+		return nil
+	end
+
+	if type(se_obj.id) == "function" then
+		local ok, id = pcall(function()
+			return se_obj:id()
+		end)
+		return ok and id or nil
+	end
+
+	return se_obj.id
+end
+
+local function safe_se_by_id(obj_id, sim)
+	if not obj_id then
+		return nil
+	end
+
+	sim = sim or get_sim()
+	if not sim then
+		return nil
+	end
+
+	local ok, se_obj = pcall(function()
+		return sim:object(obj_id)
+	end)
+	return ok and se_obj or nil
+end
+
+local function safe_section_name(se_obj)
+	if not se_obj or type(se_obj.section_name) ~= "function" then
+		return nil
+	end
+
+	local ok, section = pcall(function()
+		return se_obj:section_name()
+	end)
+	return ok and section or nil
+end
+
+local function is_protected_story_object(story_key, se_obj)
+	return is_protected_story(story_key, safe_section_name(se_obj))
+end
+
+local function current_preserved_repair_signature()
+	return tostring(BUILD_VERSION) .. "|" .. tostring(#preserved_spawn_objects)
+end
+
+local function safe_object_name(se_obj)
+	if not se_obj or type(se_obj.name) ~= "function" then
+		return nil
+	end
+
+	local ok, name = pcall(function()
+		return se_obj:name()
+	end)
+	return ok and name or nil
+end
+
+local function safe_parent_id(se_obj)
+	if not se_obj then
+		return nil
+	end
+
+	local ok, parent_id = pcall(function()
+		return se_obj.parent_id
+	end)
+	parent_id = ok and tonumber(parent_id) or nil
+	if not parent_id or parent_id == -1 or parent_id == 65535 then
+		return nil
+	end
+
+	return parent_id
+end
+
+local function safe_position_snapshot(se_obj)
+	if not se_obj then
+		return nil
+	end
+
+	local ok, position = pcall(function()
+		return se_obj.position
+	end)
+	if not (ok and position) then
+		return nil
+	end
+
+	local x = tonumber(position.x)
+	local y = tonumber(position.y)
+	local z = tonumber(position.z)
+	if not (x and y and z) then
+		return nil
+	end
+
+	return { x = x, y = y, z = z }
+end
+
+local function build_live_name_cache(sim)
+	local cache = {}
+	sim = sim or get_sim()
+	if not sim then
+		return cache
+	end
+
+	for obj_id = 1, 65534 do
+		local se_obj = safe_se_by_id(obj_id, sim)
+		local name = safe_object_name(se_obj)
+		if name then
+			cache[name] = se_obj
+		end
+	end
+
+	return cache
+end
+
+local function spawn_object_for_entry(entry, sim, cache)
+	if not entry then
+		return nil
+	end
+
+	local se_obj = safe_se_by_id(entry.obj_id, sim)
+	if se_obj and safe_object_name(se_obj) == entry.name and safe_section_name(se_obj) == entry.section then
+		return se_obj
+	end
+
+	if cache and entry.name then
+		se_obj = cache[entry.name]
+		if se_obj and safe_section_name(se_obj) == entry.section then
+			return se_obj
+		end
+	end
+
+	if not cache then
+		cache = build_live_name_cache(sim)
+	end
+
+	se_obj = cache[entry.name]
+	if se_obj and safe_section_name(se_obj) == entry.section then
+		return se_obj
+	end
+
+	return nil
+end
+
+local function mapped_story_object(story_key, sim)
+	local numeric = tonumber(story_key)
+	if numeric then
+		return story_object(numeric, sim)
+	end
+
+	if type(get_story_se_object) == "function" then
+		local ok, se_obj = pcall(get_story_se_object, story_key)
+		if ok and se_obj then
+			return se_obj
+		end
+	end
+
+	if type(get_story_object_id) == "function" then
+		local ok, obj_id = pcall(get_story_object_id, story_key)
+		if ok and obj_id then
+			return safe_se_by_id(obj_id, sim)
+		end
+	end
+
+	return nil
+end
+
+local function register_story_key(story_key, se_obj)
+	if not (story_key and se_obj and story_objects and story_objects.register) then
+		return false
+	end
+	if tonumber(story_key) then
+		return false
+	end
+
+	local obj_id = safe_se_id(se_obj)
+	if not obj_id then
+		return false
+	end
+
+	local ok = pcall(function()
+		story_objects.register(obj_id, story_key)
+	end)
+	return ok == true
+end
+
+local function object_level_id(se_obj)
+	local gvid = se_obj and se_obj.m_game_vertex_id
+	if not gvid or type(game_graph) ~= "function" then
+		return nil
+	end
+
+	local ok_vertex, vertex = pcall(function()
+		return game_graph():vertex(gvid)
+	end)
+	if not (ok_vertex and vertex) then
+		return nil
+	end
+
+	local ok_level, level_id = pcall(function()
+		return vertex:level_id()
+	end)
+	return ok_level and level_id or nil
+end
+
+local function level_id_list(level_id)
+	if level_id == nil then
+		return nil
+	end
+
+	state.ids_by_level[level_id] = state.ids_by_level[level_id] or {}
+	return state.ids_by_level[level_id]
+end
+
+local function level_object_list(level_id)
+	if level_id == nil then
+		return nil
+	end
+
+	state.objects_by_level[level_id] = state.objects_by_level[level_id] or {}
+	return state.objects_by_level[level_id]
+end
+
+local function level_spawn_list(level_id)
+	if level_id == nil then
+		return nil
+	end
+
+	state.spawn_by_level[level_id] = state.spawn_by_level[level_id] or {}
+	return state.spawn_by_level[level_id]
+end
+
+local function index_spawn_entry(level_id, entry)
+	if entry and entry.name and not entry.retired then
+		tracked_spawn_by_name[entry.name] = { level_id = level_id, entry = entry }
+	end
+end
+
+local function rebuild_tracked_spawn_index()
+	tracked_spawn_by_name = {}
+	for level_id, list in pairs(state.spawn_by_level or {}) do
+		if type(list) == "table" then
+			for _, entry in ipairs(list) do
+				index_spawn_entry(level_id, entry)
+			end
+		end
+	end
+end
+
+local function prune_protected_story_ids()
+	local sim = get_sim()
+	if not sim then
+		return 0
+	end
+
+	local removed = 0
+	for level_id, list in pairs(state.ids_by_level or {}) do
+		if type(list) == "table" then
+			local kept = {}
+			for _, story_id in ipairs(list) do
+				local se_obj = story_object(story_id, sim)
+				if se_obj and is_protected_story_object(story_id, se_obj) then
+					removed = removed + 1
+				else
+					kept[#kept + 1] = story_id
+				end
+			end
+			state.ids_by_level[level_id] = kept
+		end
+	end
+
+	if removed > 0 then
+		report("forgot %s protected numeric story ids outside cleaner rotation", tostring(removed))
+	end
+	return removed
+end
+
+local function retire_spawn_entry(entry, reason)
+	if not entry or entry.retired then
+		return
+	end
+
+	entry.retired = true
+	if entry.name then
+		tracked_spawn_by_name[entry.name] = nil
+	end
+	stats.retired = stats.retired + 1
+	log("retire spawn object %s: %s", tostring(entry.name), tostring(reason))
+end
+
+local function is_mutable_spawn_entry(entry)
+	if not entry then
+		return false
+	end
+	if MUTABLE_SPAWN_SECTIONS[entry.section] == true then
+		return true
+	end
+	if entry.tag ~= AGGRESSIVE_SAFE_TAG then
+		return false
+	end
+
+	local section = string.lower(tostring(entry.section or ""))
+	if MUTABLE_AGGRESSIVE_SECTIONS[section] then
+		return true
+	end
+	for _, prefix in ipairs(MUTABLE_AGGRESSIVE_SECTION_PREFIXES) do
+		if string.sub(section, 1, #prefix) == prefix then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function is_preserved_spawn_entry(entry)
+	return entry and (ALWAYS_PRESERVED_SPAWN_SECTIONS[entry.section] == true or (settings.preserve_mutable_objects and is_mutable_spawn_entry(entry)))
+end
+
+local function restore_preserved_spawn_entry(entry, sim, cache)
+	if not entry then
+		return true, "invalid"
+	end
+	-- Smart covers from pre-v111 state are migrated by spawn_level for their
+	-- own level. Keep a missing entry until that level is visited; once the
+	-- object is live it can be forgotten because it will never be released
+	-- again.
+	if entry.section == "smart_cover" then
+		if spawn_object_for_entry(entry, sim, cache) then
+			return true, "live"
+		end
+		return false, "pending"
+	end
+	if not ALWAYS_PRESERVED_SPAWN_SECTIONS[entry.section] then
+		return true, "mutable"
+	end
+
+	if spawn_object_for_entry(entry, sim, cache) then
+		return true, "live"
+	end
+
+	return true, "missing"
+end
+
+local function prune_preserved_mutable_spawn_entries()
+	local removed = 0
+	local missing = 0
+	local sim = get_sim()
+	local cache = sim and build_live_name_cache(sim) or nil
+	for level_id, list in pairs(state.spawn_by_level or {}) do
+		if type(list) == "table" then
+			local kept = {}
+			for _, entry in ipairs(list) do
+				if is_preserved_spawn_entry(entry) then
+					local forget, reason = restore_preserved_spawn_entry(entry, sim, cache)
+					if forget then
+						removed = removed + 1
+						if reason == "missing" then
+							missing = missing + 1
+						end
+						if entry.name then
+							tracked_spawn_by_name[entry.name] = nil
+						end
+					else
+						kept[#kept + 1] = entry
+					end
+				else
+					kept[#kept + 1] = entry
+				end
+			end
+			state.spawn_by_level[level_id] = kept
+		end
+	end
+
+	if removed > 0 then
+		report("forgot %s preserved spawn objects outside cleaner rotation (missing=%s)", tostring(removed), tostring(missing))
+	end
+	return removed
+end
+
+local function add_preserved_repair_entry(result, seen, entry)
+	if not (entry and entry.name and type(entry.spawn_id) == "number" and ALWAYS_PRESERVED_SPAWN_SECTIONS[entry.section]) then
+		return
+	end
+	-- Legacy smart-cover entries must be restored only when their own level
+	-- becomes active, not eagerly across the entire game graph.
+	if entry.section == "smart_cover" then
+		return
+	end
+
+	local key = tostring(entry.name) .. "|" .. tostring(entry.spawn_id)
+	if seen[key] then
+		return
+	end
+
+	seen[key] = true
+	result[#result + 1] = {
+		name = entry.name,
+		spawn_id = entry.spawn_id,
+		section = entry.section,
+		tag = entry.tag,
+		obj_id = entry.obj_id,
+	}
+end
+
+local function collect_preserved_repair_entries()
+	local result = {}
+	local seen = {}
+	for _, entry in ipairs(preserved_spawn_objects) do
+		add_preserved_repair_entry(result, seen, entry)
+	end
+	for _, list in pairs(state.spawn_by_level or {}) do
+		if type(list) == "table" then
+			for _, entry in ipairs(list) do
+				add_preserved_repair_entry(result, seen, entry)
+			end
+		end
+	end
+	return result
+end
+
+local function create_preserved_spawn_entry(entry, sim, cache)
+	local se_obj = spawn_object_for_entry(entry, sim, cache)
+	if se_obj then
+		preserved_repair_live = preserved_repair_live + 1
+		return true
+	end
+	if not sim then
+		preserved_repair_failed = preserved_repair_failed + 1
+		return false
+	end
+
+	local ok_create, created = pcall(function()
+		return sim:create(entry.spawn_id)
+	end)
+	if ok_create and created then
+		preserved_repair_restored = preserved_repair_restored + 1
+		if cache and entry.name then
+			cache[entry.name] = created
+		end
+		return true
+	end
+
+	preserved_repair_failed = preserved_repair_failed + 1
+	log("repair preserved failed: %s spawn_id=%s section=%s", tostring(entry.name), tostring(entry.spawn_id), tostring(entry.section))
+	return false
+end
+
+local function forced_preserved_entry(name, spawn_id)
+	local entry = preserved_spawn_objects_by_name[name]
+	if entry then
+		return entry
+	end
+
+	return {
+		name = name,
+		spawn_id = spawn_id,
+		section = "space_restrictor",
+		tag = RESTRICTOR_SAFE_TAG,
+	}
+end
+
+local function repair_forced_preserved_spawn_objects()
+	local sim = get_sim()
+	if not sim then
+		report("forced preserved repair postponed: alife is not ready")
+		return false
+	end
+
+	local cache = build_live_name_cache(sim)
+	local checked = 0
+	local live = 0
+	local restored = 0
+	local failed = 0
+	for name, spawn_id in pairs(FORCED_PRESERVED_REPAIR_SPAWN_OBJECTS) do
+		local entry = forced_preserved_entry(name, spawn_id)
+		checked = checked + 1
+		if spawn_object_for_entry(entry, sim, cache) then
+			live = live + 1
+		else
+			local before_restored = preserved_repair_restored
+			local ok = create_preserved_spawn_entry(entry, sim, cache)
+			if ok and preserved_repair_restored > before_restored then
+				restored = restored + 1
+			elseif ok then
+				live = live + 1
+			else
+				failed = failed + 1
+			end
+		end
+	end
+
+	report(
+		"forced preserved repair: checked=%s live=%s restored=%s failed=%s",
+		tostring(checked),
+		tostring(live),
+		tostring(restored),
+		tostring(failed)
+	)
+	return failed == 0
+end
+
+local function finish_preserved_repair()
+	if type(RemoveTimeEvent) == "function" then
+		pcall(RemoveTimeEvent, EVENT_ID, ACTION_REPAIR_PRESERVED)
+	end
+
+	preserved_repair_running = false
+	preserved_repair_entries = nil
+	preserved_repair_cache = nil
+	state.preserved_repair_done = preserved_repair_failed == 0
+	state.preserved_repair_signature = state.preserved_repair_done and current_preserved_repair_signature() or nil
+	report(
+		"preserved repair finished: checked=%s live=%s restored=%s failed=%s",
+		tostring(preserved_repair_checked),
+		tostring(preserved_repair_live),
+		tostring(preserved_repair_restored),
+		tostring(preserved_repair_failed)
+	)
+	prune_preserved_mutable_spawn_entries()
+	prune_protected_story_ids()
+	return true
+end
+
+local function preserved_repair_chunk()
+	if not preserved_repair_running then
+		return true
+	end
+
+	local sim = get_sim()
+	if not sim then
+		report("preserved repair postponed: alife is not ready")
+		if type(ResetTimeEvent) == "function" then
+			pcall(ResetTimeEvent, EVENT_ID, ACTION_REPAIR_PRESERVED, settings.preserved_repair_interval)
+		end
+		return false
+	end
+	preserved_repair_cache = preserved_repair_cache or build_live_name_cache(sim)
+
+	local budget = settings.preserved_repair_batch
+	while budget > 0 and preserved_repair_entries and preserved_repair_index <= #preserved_repair_entries do
+		local entry = preserved_repair_entries[preserved_repair_index]
+		preserved_repair_index = preserved_repair_index + 1
+		preserved_repair_checked = preserved_repair_checked + 1
+		create_preserved_spawn_entry(entry, sim, preserved_repair_cache)
+		budget = budget - 1
+	end
+
+	if not preserved_repair_entries or preserved_repair_index > #preserved_repair_entries then
+		return finish_preserved_repair()
+	end
+
+	if type(ResetTimeEvent) == "function" then
+		pcall(ResetTimeEvent, EVENT_ID, ACTION_REPAIR_PRESERVED, settings.preserved_repair_interval)
+	end
+	return false
+end
+
+local function start_preserved_repair(force)
+	if not force and (not settings.restore_missing_preserved_spawn_objects or state.preserved_repair_done) then
+		return false
+	end
+	if preserved_repair_running then
+		return true
+	end
+	if not get_sim() then
+		report("preserved repair skipped: alife is not ready")
+		return false
+	end
+
+	preserved_repair_entries = collect_preserved_repair_entries()
+	preserved_repair_index = 1
+	preserved_repair_cache = nil
+	preserved_repair_checked = 0
+	preserved_repair_live = 0
+	preserved_repair_restored = 0
+	preserved_repair_failed = 0
+
+	if #preserved_repair_entries == 0 then
+		state.preserved_repair_done = true
+		state.preserved_repair_signature = current_preserved_repair_signature()
+		report("preserved repair skipped: no preserved spawn entries configured")
+		return false
+	end
+
+	preserved_repair_running = true
+	report("preserved repair started: entries=%s batch=%s", tostring(#preserved_repair_entries), tostring(settings.preserved_repair_batch))
+	if type(CreateTimeEvent) == "function" then
+		if type(RemoveTimeEvent) == "function" then
+			pcall(RemoveTimeEvent, EVENT_ID, ACTION_REPAIR_PRESERVED)
+		end
+		CreateTimeEvent(EVENT_ID, ACTION_REPAIR_PRESERVED, settings.preserved_repair_interval, preserved_repair_chunk)
+		return true
+	end
+
+	while preserved_repair_running do
+		preserved_repair_chunk()
+	end
+	return true
+end
+
+local function remember_spawn_position(entry, se_obj)
+	if entry and type(entry.origin_position) ~= "table" then
+		entry.origin_position = safe_position_snapshot(se_obj)
+	end
+end
+
+local function spawn_position_changed(entry, se_obj)
+	if not is_mutable_spawn_entry(entry) then
+		return false
+	end
+
+	local position = safe_position_snapshot(se_obj)
+	if not position then
+		return false
+	end
+	if type(entry.origin_position) ~= "table" then
+		entry.origin_position = position
+		return false
+	end
+
+	local dx = position.x - (tonumber(entry.origin_position.x) or position.x)
+	local dy = position.y - (tonumber(entry.origin_position.y) or position.y)
+	local dz = position.z - (tonumber(entry.origin_position.z) or position.z)
+	return dx * dx + dy * dy + dz * dz > settings.movement_epsilon * settings.movement_epsilon
+end
+
+local function should_retire_spawn_entry(entry, se_obj, expected_level_id, forget_missing)
+	if not entry or entry.retired then
+		return true, "already retired"
+	end
+	if not se_obj then
+		if forget_missing and is_mutable_spawn_entry(entry) then
+			return true, "object is no longer present"
+		end
+		return false
+	end
+	if safe_parent_id(se_obj) then
+		return true, "object has an inventory parent"
+	end
+
+	local level_id = object_level_id(se_obj)
+	if expected_level_id ~= nil and level_id ~= nil and level_id ~= expected_level_id then
+		return true, "object moved to another level"
+	end
+	if forget_missing and spawn_position_changed(entry, se_obj) then
+		return true, "object position changed"
+	end
+
+	return false
+end
+
+local function mapped_seen_key(story_key, spawn_id)
+	return tostring(story_key) .. "|" .. tostring(spawn_id)
+end
+
+local function spawn_seen_key(name, spawn_id)
+	return tostring(name) .. "|" .. tostring(spawn_id)
+end
+
+local function add_story_id(level_id, story_id)
+	if level_id == nil or not story_id or scan_seen_ids[story_id] then
+		return
+	end
+
+	local list = level_id_list(level_id)
+	if not list then
+		return
+	end
+
+	scan_seen_ids[story_id] = true
+	list[#list + 1] = story_id
+end
+
+local function add_mapped_object(level_id, story_key, spawn_id, section)
+	if level_id == nil or not (story_key and spawn_id) then
+		return
+	end
+
+	local seen_key = mapped_seen_key(story_key, spawn_id)
+	if scan_seen_objects[seen_key] then
+		return
+	end
+
+	local list = level_object_list(level_id)
+	if not list then
+		return
+	end
+
+	scan_seen_objects[seen_key] = true
+	list[#list + 1] = { key = story_key, spawn_id = spawn_id, section = section }
+end
+
+local function add_spawn_object(level_id, entry, se_obj)
+	if level_id == nil or not (entry and entry.name and entry.spawn_id) then
+		return
+	end
+
+	local seen_key = spawn_seen_key(entry.name, entry.spawn_id)
+	if scan_seen_spawn_names[seen_key] then
+		return
+	end
+
+	local list = level_spawn_list(level_id)
+	if not list then
+		return
+	end
+
+	scan_seen_spawn_names[seen_key] = true
+	list[#list + 1] = {
+		name = entry.name,
+		spawn_id = entry.spawn_id,
+		section = entry.section,
+		tag = entry.tag,
+		obj_id = safe_se_id(se_obj),
+		origin_position = safe_position_snapshot(se_obj),
+	}
+	index_spawn_entry(level_id, list[#list])
+end
+
+local function release_object(se_obj, sim)
+	if not se_obj then
+		return false
+	end
+
+	if type(alife_release) == "function" then
+		local ok, released = pcall(alife_release, se_obj, false)
+		return ok and released == true
+	end
+
+	sim = sim or get_sim()
+	if not sim then
+		return false
+	end
+
+	local ok_release = pcall(function()
+		sim:release(se_obj, true)
+	end)
+	return ok_release == true
+end
+
+local function release_tracked_object(se_obj, sim)
+	if release_object(se_obj, sim) then
+		stats.released = stats.released + 1
+		return true
+	end
+
+	stats.release_failed = stats.release_failed + 1
+	return false
+end
+
+local function release_story_id(story_id, sim)
+	local se_obj = story_object(story_id, sim)
+	if not se_obj then
+		return false
+	end
+	if is_protected_story_object(story_id, se_obj) then
+		return false
+	end
+
+	return release_tracked_object(se_obj, sim)
+end
+
+local function release_mapped_entry(entry, sim)
+	if is_protected_entry(entry) then
+		return false
+	end
+
+	local se_obj = entry and mapped_story_object(entry.key, sim)
+	if not se_obj then
+		return false
+	end
+
+	return release_tracked_object(se_obj, sim)
+end
+
+local function release_spawn_entry(entry, sim, cache, se_obj)
+	if is_protected_spawn_entry(entry) then
+		return false
+	end
+
+	se_obj = se_obj or spawn_object_for_entry(entry, sim, cache)
+	if not se_obj then
+		return false
+	end
+	if safe_parent_id(se_obj) then
+		return false
+	end
+
+	return release_tracked_object(se_obj, sim)
+end
+
+local function create_story_id(story_id, sim)
+	if story_object(story_id, sim) then
+		return true
+	end
+
+	sim = sim or get_sim()
+	if not sim then
+		return false
+	end
+
+	local ok_spawn, spawn_id = pcall(function()
+		return sim:spawn_id(story_id)
+	end)
+	if not (ok_spawn and type(spawn_id) == "number" and spawn_id ~= -1 and spawn_id ~= 65535) then
+		return false
+	end
+
+	local ok_create, se_obj = pcall(function()
+		return sim:create(spawn_id)
+	end)
+	return ok_create and se_obj ~= nil
+end
+
+local function create_mapped_entry(entry, sim, allow_protected)
+	if not (entry and type(entry.spawn_id) == "number") then
+		stats.invalid = stats.invalid + 1
+		return false
+	end
+	if is_protected_entry(entry) and not allow_protected then
+		return true
+	end
+
+	if mapped_story_object(entry.key, sim) then
+		return true
+	end
+
+	sim = sim or get_sim()
+	if not sim then
+		return false
+	end
+
+	stats.spawn_checked = stats.spawn_checked + 1
+	local ok_create, se_obj = pcall(function()
+		return sim:create(entry.spawn_id)
+	end)
+	if ok_create and se_obj then
+		stats.spawned = stats.spawned + 1
+		register_story_key(entry.key, se_obj)
+		return true
+	end
+
+	stats.spawn_failed = stats.spawn_failed + 1
+	return false
+end
+
+local function create_mapped_object(entry, sim)
+	if not (entry and type(entry.spawn_id) == "number") then
+		stats.invalid = stats.invalid + 1
+		return nil
+	end
+
+	sim = sim or get_sim()
+	if not sim then
+		return nil
+	end
+
+	stats.spawn_checked = stats.spawn_checked + 1
+	local ok_create, se_obj = pcall(function()
+		return sim:create(entry.spawn_id)
+	end)
+	if ok_create and se_obj then
+		stats.spawned = stats.spawned + 1
+		register_story_key(entry.key, se_obj)
+		return se_obj
+	end
+
+	stats.spawn_failed = stats.spawn_failed + 1
+	return nil
+end
+
+local function create_spawn_entry(entry, sim, cache, se_obj)
+	if not (entry and type(entry.spawn_id) == "number") then
+		stats.invalid = stats.invalid + 1
+		return false
+	end
+	local protected = is_protected_spawn_entry(entry)
+	-- Old saves can already contain smart covers in the cleaner rotation.
+	-- Restore a missing legacy entry once before treating the section as
+	-- permanently protected. Other protected sections retain the old fast path.
+	if protected and entry.section ~= "smart_cover" then
+		return true
+	end
+	if entry.retired then
+		return false
+	end
+
+	se_obj = se_obj or spawn_object_for_entry(entry, sim, cache)
+	if se_obj then
+		if safe_parent_id(se_obj) then
+			return false
+		end
+		entry.obj_id = safe_se_id(se_obj) or entry.obj_id
+		remember_spawn_position(entry, se_obj)
+		return true
+	end
+
+	sim = sim or get_sim()
+	if not sim then
+		return false
+	end
+
+	stats.spawn_checked = stats.spawn_checked + 1
+	local ok_create, se_obj = pcall(function()
+		return sim:create(entry.spawn_id)
+	end)
+	if ok_create and se_obj then
+		stats.spawned = stats.spawned + 1
+		entry.obj_id = safe_se_id(se_obj) or entry.obj_id
+		remember_spawn_position(entry, se_obj)
+		if cache and entry.name then
+			cache[entry.name] = se_obj
+		end
+		return true
+	end
+
+	stats.spawn_failed = stats.spawn_failed + 1
+	return false
+end
+
+local function next_scan_story_id()
+	if scan_exact_index <= #exact_story_ids then
+		local story_id = exact_story_ids[scan_exact_index]
+		scan_exact_index = scan_exact_index + 1
+		return story_id
+	end
+
+	while scan_range_index <= #ranges do
+		local range = ranges[scan_range_index]
+		if not scan_next_id then
+			scan_next_id = range.first
+		end
+
+		if scan_next_id <= range.last then
+			local story_id = scan_next_id
+			scan_next_id = scan_next_id + 1
+			return story_id
+		end
+
+		scan_range_index = scan_range_index + 1
+		scan_next_id = nil
+	end
+
+	return nil
+end
+
+local function inspect_story_id(story_id, sim, active_level_id)
+	stats.numeric_scanned = stats.numeric_scanned + 1
+
+	local se_obj = story_object(story_id, sim)
+	if not se_obj then
+		return
+	end
+	if is_protected_story_object(story_id, se_obj) then
+		log("skip protected numeric story id %s section=%s", tostring(story_id), tostring(safe_section_name(se_obj)))
+		return
+	end
+
+	local level_id = object_level_id(se_obj)
+	if level_id == nil then
+		stats.invalid = stats.invalid + 1
+		return
+	end
+
+	stats.numeric_found = stats.numeric_found + 1
+	add_story_id(level_id, story_id)
+	if settings.purge_all_configured_objects or (settings.cleanup_on_first_update and active_level_id ~= nil and level_id ~= active_level_id) then
+		release_tracked_object(se_obj, sim)
+	end
+end
+
+local function inspect_live_spawn_object(obj_id, sim, active_level_id)
+	local se_obj = safe_se_by_id(obj_id, sim)
+	if not se_obj then
+		return
+	end
+
+	local section = safe_section_name(se_obj) or "<unknown>"
+	if settings.report_live_audit then
+		live_objects_scanned = live_objects_scanned + 1
+		live_section_counts[section] = (live_section_counts[section] or 0) + 1
+	end
+
+	local name = safe_object_name(se_obj)
+	if not name then
+		return
+	end
+
+	local entry = spawn_objects_by_name[name]
+	if not entry then
+		return
+	end
+
+	if section ~= entry.section or is_protected_spawn_name(name, section, entry.tag) then
+		return
+	end
+	if settings.preserve_mutable_objects and is_mutable_spawn_entry(entry) then
+		stats.preserved_mutable = stats.preserved_mutable + 1
+		return
+	end
+	if safe_parent_id(se_obj) then
+		return
+	end
+
+	stats.spawn_configured = #spawn_objects
+	local level_id = object_level_id(se_obj)
+	if level_id == nil then
+		stats.invalid = stats.invalid + 1
+		return
+	end
+
+	stats.spawn_found = stats.spawn_found + 1
+	add_spawn_object(level_id, entry, se_obj)
+	if settings.purge_all_configured_objects or (settings.cleanup_on_first_update and active_level_id ~= nil and level_id ~= active_level_id) then
+		release_tracked_object(se_obj, sim)
+	end
+end
+
+local function live_scan_done()
+	return not settings.scan_live_objects or live_scan_next_id > 65534
+end
+
+local function inspect_mapped_objects(sim, active_level_id)
+	local cache = nil
+	for _, entry in ipairs(mapped_objects) do
+		if is_protected_entry(entry) then
+			log("skip protected story id %s section=%s", tostring(entry.key), tostring(entry.section))
+		else
+			stats.mapped_configured = stats.mapped_configured + 1
+
+			local se_obj = mapped_story_object(entry.key, sim)
+			if not se_obj and settings.repair_missing_mapped_objects and not settings.purge_all_configured_objects then
+				cache = cache or build_live_name_cache(sim)
+				local by_name = cache[entry.key]
+				if by_name and safe_section_name(by_name) == entry.section then
+					se_obj = by_name
+					register_story_key(entry.key, se_obj)
+				else
+					se_obj = create_mapped_object(entry, sim)
+					if se_obj and cache then
+						cache[entry.key] = se_obj
+					end
+				end
+			end
+
+			if se_obj then
+				local level_id = object_level_id(se_obj)
+				if level_id ~= nil then
+					stats.mapped_found = stats.mapped_found + 1
+					add_mapped_object(level_id, entry.key, entry.spawn_id, entry.section)
+					if settings.purge_all_configured_objects or (settings.cleanup_on_first_update and active_level_id ~= nil and level_id ~= active_level_id) then
+						release_tracked_object(se_obj, sim)
+					end
+				else
+					stats.invalid = stats.invalid + 1
+				end
+			end
+		end
+	end
+end
+
+local function spawn_level(level_id)
+	if settings.purge_all_configured_objects then
+		log("spawn level %s skipped: purge-all mode is enabled", tostring(level_id))
+		return
+	end
+
+	if not (settings.enabled and settings.spawn_on_first_update and state.initialized and level_id ~= nil) then
+		return
+	end
+
+	local sim = get_sim()
+	if not sim then
+		report("spawn level %s skipped: alife is not ready", tostring(level_id))
+		return
+	end
+
+	local before_spawned = stats.spawned
+	local before_failed = stats.spawn_failed
+	local before_retired = stats.retired
+	local cache = nil
+	local restore = state.restore_by_level and state.restore_by_level[level_id]
+	if restore then
+		cache = build_live_name_cache(sim)
+		for _, entry in ipairs(restore) do
+			create_mapped_entry(entry, sim, true)
+		end
+		state.restore_by_level[level_id] = nil
+		log("restore-once level %s checked %s old entries", tostring(level_id), tostring(#restore))
+	end
+
+	local ids = state.ids_by_level[level_id]
+	if ids then
+		local kept = {}
+		for _, story_id in ipairs(ids) do
+			if create_story_id(story_id, sim) then
+				kept[#kept + 1] = story_id
+			else
+				stats.spawn_failed = stats.spawn_failed + 1
+				kept[#kept + 1] = story_id
+				log("keep pending numeric story id %s on level %s", tostring(story_id), tostring(level_id))
+			end
+		end
+		state.ids_by_level[level_id] = kept
+	end
+
+	local objects = state.objects_by_level[level_id]
+	if objects then
+		local kept = {}
+		for _, entry in ipairs(objects) do
+			if create_mapped_entry(entry, sim) then
+				kept[#kept + 1] = entry
+			else
+				kept[#kept + 1] = entry
+				log("keep pending mapped story id %s on level %s", tostring(entry.key), tostring(level_id))
+			end
+		end
+		state.objects_by_level[level_id] = kept
+	end
+
+	local spawn_objects_on_level = state.spawn_by_level[level_id]
+	if spawn_objects_on_level then
+		cache = cache or build_live_name_cache(sim)
+		local kept = {}
+		for _, entry in ipairs(spawn_objects_on_level) do
+			local se_obj = spawn_object_for_entry(entry, sim, cache)
+			local retire, reason = should_retire_spawn_entry(entry, se_obj, level_id, false)
+			if retire then
+				retire_spawn_entry(entry, reason)
+			elseif create_spawn_entry(entry, sim, cache, se_obj) then
+				kept[#kept + 1] = entry
+			else
+				kept[#kept + 1] = entry
+				log("keep pending spawn object %s on level %s", tostring(entry.name), tostring(level_id))
+			end
+		end
+		state.spawn_by_level[level_id] = kept
+	end
+
+	report(
+		"spawn level %s checked numeric=%s mapped=%s spawn=%s spawned=%s failed=%s retired=%s",
+		tostring(level_id),
+		tostring(ids and #ids or 0),
+		tostring(objects and #objects or 0),
+		tostring(spawn_objects_on_level and #spawn_objects_on_level or 0),
+		tostring(stats.spawned - before_spawned),
+		tostring(stats.spawn_failed - before_failed),
+		tostring(stats.retired - before_retired)
+	)
+end
+
+local function release_level(level_id)
+	if not (settings.enabled and settings.release_on_level_changing and state.initialized and level_id ~= nil) then
+		return
+	end
+
+	local sim = get_sim()
+	if not sim then
+		report("release level %s skipped: alife is not ready", tostring(level_id))
+		return
+	end
+
+	local before_released = stats.released
+	local before_failed = stats.release_failed
+	local before_retired = stats.retired
+	local ids = state.ids_by_level[level_id]
+	if ids then
+		for _, story_id in ipairs(ids) do
+			release_story_id(story_id, sim)
+		end
+	end
+
+	local objects = state.objects_by_level[level_id]
+	if objects then
+		for _, entry in ipairs(objects) do
+			release_mapped_entry(entry, sim)
+		end
+	end
+
+	local spawn_objects_on_level = state.spawn_by_level[level_id]
+	if spawn_objects_on_level then
+		local cache = build_live_name_cache(sim)
+		local kept = {}
+		for _, entry in ipairs(spawn_objects_on_level) do
+			local se_obj = spawn_object_for_entry(entry, sim, cache)
+			local retire, reason = should_retire_spawn_entry(entry, se_obj, level_id, true)
+			if retire then
+				retire_spawn_entry(entry, reason)
+			else
+				release_spawn_entry(entry, sim, cache, se_obj)
+				kept[#kept + 1] = entry
+			end
+		end
+		state.spawn_by_level[level_id] = kept
+	end
+
+	report(
+		"release level %s checked numeric=%s mapped=%s spawn=%s released=%s failed=%s retired=%s",
+		tostring(level_id),
+		tostring(ids and #ids or 0),
+		tostring(objects and #objects or 0),
+		tostring(spawn_objects_on_level and #spawn_objects_on_level or 0),
+		tostring(stats.released - before_released),
+		tostring(stats.release_failed - before_failed),
+		tostring(stats.retired - before_retired)
+	)
+end
+
+local function count_levels(tbl)
+	local count = 0
+	for _, list in pairs(tbl or {}) do
+		if type(list) == "table" and #list > 0 then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+local function count_entries(tbl)
+	local count = 0
+	for _, list in pairs(tbl or {}) do
+		if type(list) == "table" then
+			count = count + #list
+		end
+	end
+	return count
+end
+
+local function seed_scan_seen_from_state()
+	rebuild_tracked_spawn_index()
+	for _, list in pairs(state.ids_by_level or {}) do
+		if type(list) == "table" then
+			for _, story_id in ipairs(list) do
+				scan_seen_ids[story_id] = true
+			end
+		end
+	end
+
+	for _, list in pairs(state.objects_by_level or {}) do
+		if type(list) == "table" then
+			for _, entry in ipairs(list) do
+				if entry and entry.key and entry.spawn_id then
+					scan_seen_objects[mapped_seen_key(entry.key, entry.spawn_id)] = true
+				end
+			end
+		end
+	end
+
+	for _, list in pairs(state.spawn_by_level or {}) do
+		if type(list) == "table" then
+			for _, entry in ipairs(list) do
+				if entry and entry.name and entry.spawn_id then
+					scan_seen_spawn_names[spawn_seen_key(entry.name, entry.spawn_id)] = true
+				end
+			end
+		end
+	end
+end
+
+local function print_live_audit()
+	if not settings.report_live_audit then
+		return
+	end
+
+	local sections = {}
+	for section, count in pairs(live_section_counts) do
+		sections[#sections + 1] = { section = section, count = count }
+	end
+	table.sort(sections, function(a, b)
+		if a.count == b.count then
+			return a.section < b.section
+		end
+		return a.count > b.count
+	end)
+
+	report("live audit: scanned=%s sections=%s top=%s", tostring(live_objects_scanned), tostring(#sections), tostring(settings.live_audit_top))
+	for index = 1, math.min(#sections, settings.live_audit_top) do
+		local entry = sections[index]
+		report("live audit #%s: %s = %s", tostring(index), tostring(entry.section), tostring(entry.count))
+	end
+end
+
+local function print_scan_report()
+	if not settings.report_on_scan then
+		return
+	end
+
+	report(
+		"scan finished: numeric %s/%s, mapped %s/%s, spawn %s/%s, released=%s, failed_release=%s, retired=%s, preserved_mutable=%s, levels numeric=%s mapped=%s spawn=%s restore=%s",
+		tostring(stats.numeric_found),
+		tostring(stats.numeric_scanned),
+		tostring(stats.mapped_found),
+		tostring(stats.mapped_configured),
+		tostring(stats.spawn_found),
+		tostring(stats.spawn_configured),
+		tostring(stats.released),
+		tostring(stats.release_failed),
+		tostring(stats.retired),
+		tostring(stats.preserved_mutable),
+		tostring(count_levels(state.ids_by_level)),
+		tostring(count_levels(state.objects_by_level)),
+		tostring(count_levels(state.spawn_by_level)),
+		tostring(count_levels(state.restore_by_level))
+	)
+end
+
+local function finish_scan()
+	scan_running = false
+	state.initialized = true
+
+	local level_id = current_level_id()
+	spawn_level(level_id)
+	print_scan_report()
+	print_live_audit()
+	return true
+end
+
+local function scan_chunk()
+	if not scan_running then
+		return true
+	end
+
+	local sim = get_sim()
+	if not sim then
+		scan_running = false
+		return true
+	end
+
+	local active_level_id = current_level_id(sim)
+	local budget = scan_numeric_done and settings.live_scan_batch or settings.scan_batch
+
+	while budget > 0 and not scan_numeric_done do
+		local story_id = next_scan_story_id()
+		if not story_id then
+			scan_numeric_done = true
+			break
+		end
+
+		if not scan_seen_ids[story_id] then
+			inspect_story_id(story_id, sim, active_level_id)
+		end
+		budget = budget - 1
+	end
+
+	if scan_numeric_done and settings.scan_live_objects then
+		if budget <= 0 then
+			budget = settings.live_scan_batch
+		end
+
+		while budget > 0 and live_scan_next_id <= 65534 do
+			inspect_live_spawn_object(live_scan_next_id, sim, active_level_id)
+			live_scan_next_id = live_scan_next_id + 1
+			budget = budget - 1
+		end
+	end
+
+	if scan_numeric_done and live_scan_done() then
+		return finish_scan()
+	end
+
+	if not scan_numeric_done or not live_scan_done() then
+		if type(CreateTimeEvent) == "function" then
+			if type(ResetTimeEvent) == "function" then
+				pcall(ResetTimeEvent, EVENT_ID, ACTION_SCAN, settings.scan_interval)
+			end
+			return false
+		else
+			while not scan_numeric_done do
+				local story_id = next_scan_story_id()
+				if not story_id then
+					scan_numeric_done = true
+					break
+				end
+				inspect_story_id(story_id, sim, active_level_id)
+			end
+
+			while settings.scan_live_objects and live_scan_next_id <= 65534 do
+				inspect_live_spawn_object(live_scan_next_id, sim, active_level_id)
+				live_scan_next_id = live_scan_next_id + 1
+			end
+
+			return finish_scan()
+		end
+	end
+
+	return true
+end
+
+local function start_scan()
+	if scan_running or state.initialized then
+		report("scan skipped: running=%s initialized=%s", tostring(scan_running), tostring(state.initialized))
+		return
+	end
+
+	local sim = get_sim()
+	if not sim then
+		report("scan postponed: alife is not ready")
+		return
+	end
+
+	state.ids_by_level = type(state.ids_by_level) == "table" and state.ids_by_level or {}
+	state.objects_by_level = type(state.objects_by_level) == "table" and state.objects_by_level or {}
+	state.spawn_by_level = type(state.spawn_by_level) == "table" and state.spawn_by_level or {}
+	start_preserved_repair(false)
+	prune_preserved_mutable_spawn_entries()
+	stats = empty_stats()
+	stats.numeric_found = count_entries(state.ids_by_level)
+	stats.mapped_found = count_entries(state.objects_by_level)
+	stats.spawn_found = count_entries(state.spawn_by_level)
+	stats.spawn_configured = #spawn_objects
+	scan_running = true
+	scan_range_index = 1
+	scan_next_id = nil
+	scan_exact_index = 1
+	scan_numeric_done = false
+	live_scan_next_id = 1
+	scan_seen_ids = {}
+	scan_seen_objects = {}
+	scan_seen_spawn_names = {}
+	live_section_counts = {}
+	live_objects_scanned = 0
+	seed_scan_seen_from_state()
+
+	if type(RemoveTimeEvent) == "function" then
+		pcall(RemoveTimeEvent, EVENT_ID, ACTION_SCAN)
+	end
+
+	report(
+		"scan started: mapped=%s spawn=%s ranges=%s exact=%s live_batch=%s interval=%s preserved numeric=%s mapped=%s spawn=%s",
+		tostring(#mapped_objects),
+		tostring(#spawn_objects),
+		tostring(#ranges),
+		tostring(#exact_story_ids),
+		tostring(settings.live_scan_batch),
+		tostring(settings.scan_interval),
+		tostring(stats.numeric_found),
+		tostring(stats.mapped_found),
+		tostring(stats.spawn_found)
+	)
+	inspect_mapped_objects(sim, current_level_id(sim))
+	if type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, ACTION_SCAN, settings.scan_interval, scan_chunk)
+	else
+		scan_chunk()
+	end
+end
+
+local function delayed_start_scan()
+	if not settings.enabled or state.initialized or scan_running then
+		return true
+	end
+
+	start_scan()
+	return state.initialized or scan_running
+end
+
+local function schedule_start_scan()
+	if type(CreateTimeEvent) == "function" then
+		if type(RemoveTimeEvent) == "function" then
+			pcall(RemoveTimeEvent, EVENT_ID, ACTION_START_SCAN)
+		end
+		CreateTimeEvent(EVENT_ID, ACTION_START_SCAN, 1, delayed_start_scan)
+		report("scan scheduled after on_game_load")
+		return
+	end
+
+	delayed_start_scan()
+end
+
+local function retire_actor_item_spawn_entry(item, reason)
+	local name = safe_object_name(item)
+	local tracked = name and tracked_spawn_by_name[name]
+	local entry = tracked and tracked.entry
+	if entry and entry.tag == AGGRESSIVE_SAFE_TAG then
+		retire_spawn_entry(entry, reason)
+	end
+end
+
+local function retire_actor_inventory_entries()
+	if not inventory_sweep_pending then
+		return
+	end
+
+	local actor = db and db.actor
+	if not (actor and type(actor.iterate_inventory) == "function") then
+		return
+	end
+
+	inventory_sweep_pending = false
+	local before_retired = stats.retired
+	local ok = pcall(function()
+		actor:iterate_inventory(function(_, item)
+			retire_actor_item_spawn_entry(item, "found in actor inventory")
+		end, nil)
+	end)
+	if not ok then
+		inventory_sweep_pending = true
+		return
+	end
+
+	local retired = stats.retired - before_retired
+	if retired > 0 then
+		report("retired %s tracked loose-loot entries already carried by actor", tostring(retired))
+	end
+end
+
+local function actor_on_first_update()
+	load_config()
+	report("actor_on_first_update: enabled=%s initialized=%s", tostring(settings.enabled), tostring(state.initialized))
+	if not settings.enabled then
+		return
+	end
+
+	repair_forced_preserved_spawn_objects()
+	start_preserved_repair(false)
+	prune_preserved_mutable_spawn_entries()
+	prune_protected_story_ids()
+	retire_actor_inventory_entries()
+	if not state.initialized then
+		start_scan()
+		return
+	end
+
+	spawn_level(current_level_id())
+end
+
+local function on_level_changing()
+	load_config()
+	report("on_level_changing: enabled=%s initialized=%s level=%s", tostring(settings.enabled), tostring(state.initialized), tostring(current_level_id()))
+	if not settings.enabled then
+		return
+	end
+
+	release_level(current_level_id())
+end
+
+local function on_game_load()
+	load_config()
+	report("on_game_load: initialized=%s", tostring(state.initialized))
+	if not state.initialized then
+		schedule_start_scan()
+	end
+end
+
+local function actor_on_item_take(item)
+	retire_actor_item_spawn_entry(item, "picked up by actor")
+end
+
+local function save_state(m_data)
+	local saved_initialized = state.initialized
+	if settings.report_on_save then
+		report(
+			"save_state: initialized=%s running=%s saved_initialized=%s tracked numeric=%s mapped=%s spawn=%s restore=%s last_released=%s last_spawned=%s retired=%s",
+			tostring(state.initialized),
+			tostring(scan_running),
+			tostring(saved_initialized),
+			tostring(count_entries(state.ids_by_level)),
+			tostring(count_entries(state.objects_by_level)),
+			tostring(count_entries(state.spawn_by_level)),
+			tostring(count_entries(state.restore_by_level)),
+			tostring(stats.released),
+			tostring(stats.spawned),
+			tostring(stats.retired)
+		)
+	end
+
+	m_data[STATE_KEY] = {
+		version = STATE_VERSION,
+		initialized = saved_initialized,
+		ids_by_level = state.ids_by_level,
+		objects_by_level = state.objects_by_level,
+		spawn_by_level = state.spawn_by_level,
+		restore_by_level = state.restore_by_level,
+		preserved_repair_done = state.preserved_repair_done == true,
+		preserved_repair_signature = state.preserved_repair_signature,
+	}
+end
+
+local function load_state(m_data)
+	tracked_spawn_by_name = {}
+	inventory_sweep_pending = true
+	local saved = m_data and m_data[STATE_KEY]
+	if type(saved) ~= "table" then
+		state = empty_state()
+		scan_running = false
+		return
+	end
+
+	local saved_version = tonumber(saved.version)
+	if saved_version == 2 then
+		state = empty_state()
+		state.restore_by_level = type(saved.objects_by_level) == "table" and saved.objects_by_level or {}
+		scan_running = false
+		return
+	end
+
+	if saved_version == 3 then
+		state = empty_state()
+		scan_running = false
+		return
+	end
+
+	if saved_version ~= STATE_VERSION then
+		state = empty_state()
+		scan_running = false
+		return
+	end
+
+	state = {
+		version = STATE_VERSION,
+		initialized = saved.initialized == true,
+		ids_by_level = type(saved.ids_by_level) == "table" and saved.ids_by_level or {},
+		objects_by_level = type(saved.objects_by_level) == "table" and saved.objects_by_level or {},
+		spawn_by_level = type(saved.spawn_by_level) == "table" and saved.spawn_by_level or {},
+		restore_by_level = type(saved.restore_by_level) == "table" and saved.restore_by_level or {},
+		preserved_repair_done = saved.preserved_repair_done == true and saved.preserved_repair_signature == current_preserved_repair_signature(),
+		preserved_repair_signature = saved.preserved_repair_signature,
+	}
+	rebuild_tracked_spawn_index()
+	scan_running = false
+end
+
+function reset()
+	load_config()
+	local restore_by_level = state.restore_by_level
+	state = empty_state()
+	state.restore_by_level = restore_by_level or {}
+	tracked_spawn_by_name = {}
+	inventory_sweep_pending = true
+	scan_running = false
+	start_scan()
+end
+
+function status()
+	report(
+		"status: initialized=%s, numeric_levels=%s, mapped_levels=%s, spawn_levels=%s, restore_levels=%s, preserved_repair_done=%s, preserved_repair_running=%s, last_released=%s, last_spawned=%s, retired=%s",
+		tostring(state.initialized),
+		tostring(count_levels(state.ids_by_level)),
+		tostring(count_levels(state.objects_by_level)),
+		tostring(count_levels(state.spawn_by_level)),
+		tostring(count_levels(state.restore_by_level)),
+		tostring(state.preserved_repair_done == true),
+		tostring(preserved_repair_running),
+		tostring(stats.released),
+		tostring(stats.spawned),
+		tostring(stats.retired)
+	)
+end
+
+function repair_preserved()
+	load_config()
+	state.preserved_repair_done = false
+	return start_preserved_repair(true)
+end
+
+function repair_level_prefix_space_restrictor()
+	load_config()
+	return repair_forced_preserved_spawn_objects()
+end
+
+function restore(name)
+	load_config()
+	local sim = get_sim()
+	if not sim then
+		report("restore failed: alife is not ready")
+		return false
+	end
+
+	local key = trim(name)
+	if key == "" then
+		report("restore failed: empty object name")
+		return false
+	end
+
+	for _, entry in ipairs(mapped_objects) do
+		if entry.key == key then
+			local ok = create_mapped_entry(entry, sim, true)
+			report("restore mapped %s: %s", key, tostring(ok))
+			return ok == true
+		end
+	end
+
+	local entry = spawn_objects_by_name[key]
+	if entry then
+		local ok = create_spawn_entry(entry, sim)
+		report("restore spawn %s: %s", key, tostring(ok))
+		return ok == true
+	end
+
+	entry = preserved_spawn_objects_by_name[key]
+	if entry then
+		local ok = create_preserved_spawn_entry(entry, sim, build_live_name_cache(sim))
+		report("restore preserved %s: %s", key, tostring(ok))
+		return ok == true
+	end
+
+	report("restore failed: %s is not configured", key)
+	return false
+end
+
+function on_game_start()
+	load_config()
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_level_changing", on_level_changing)
+	RegisterScriptCallback("actor_on_item_take", actor_on_item_take)
+	report("on_game_start: callbacks registered version=%s build=%s", tostring(STATE_VERSION), BUILD_VERSION)
+end

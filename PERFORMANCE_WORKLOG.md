@@ -3616,3 +3616,18 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The pre-v110 profile, active base scripts/configs, v108 addon and log are
   recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260824_v110_pre_cop_cinematic_sync`.
+## 2026-08-24 — v111 persistent smart-cover scene repair
+
+- Reviewed the two latest NVIDIA recordings and correlated them with the same
+  `xray_chenc.log` session.
+- Confirmed that `anthology_id_cleaner` restored 370 Pripyat spawn objects only
+  on `actor_on_first_update`, after `pri_a15` and `pri_a16` had already failed
+  to resolve their authored smart-cover jobs.
+- Protected `smart_cover` from level-change release while retaining a one-time
+  restore path for legacy saves that already contain removed covers.
+- Added a load-only rebinder that restores the stock `CALifeSmartTerrainTask`
+  for declared smart-cover jobs before the arrival cinematic starts.
+- Paused Spatial Audio Rework EFX probing only while the Jupiter descent and
+  Pripyat arrival global cameras use a viewpoint different from the actor.
+- Kept v110 camera, dialogue and door-sound changes intact; no renderer,
+  performance, A-Life radius or user configuration changes.

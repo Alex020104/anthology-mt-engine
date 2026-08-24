@@ -1,0 +1,62 @@
+-- Spatial Audio Rework derives ray origins from the actor and ray directions
+-- from device().cam_dir. During a global CoP cinematic those belong to two
+-- different viewpoints, which makes the global EFX preset pump with camera
+-- cuts. Freeze the last valid room preset only for the two affected scenes.
+
+local installed = false
+local original_actor_on_update
+local guarded_actor_on_update
+
+local function info(name)
+	if type(has_alife_info) ~= "function" then
+		return false
+	end
+	local ok, value = pcall(has_alife_info, name)
+	return ok and value == true
+end
+
+local function strict_cinematic_active()
+	local jupiter_descent = info("jup_b219_start_sound") and not info("jup_b219_destroy_actor")
+	local pripyat_arrival = info("pri_a15_cutscene_go") and not info("pri_a15_cutscene_end")
+	return jupiter_descent or pripyat_arrival
+end
+
+local function install_guard()
+	if installed then
+		return true
+	end
+	local sar = rawget(_G, "sar_main")
+	local current = sar and sar.actor_on_update
+	if type(current) ~= "function" then
+		return false
+	end
+
+	original_actor_on_update = current
+	guarded_actor_on_update = function(...)
+		if strict_cinematic_active() then
+			return
+		end
+		return original_actor_on_update(...)
+	end
+
+	if type(UnregisterScriptCallback) == "function" then
+		UnregisterScriptCallback("actor_on_update", original_actor_on_update)
+	end
+	RegisterScriptCallback("actor_on_update", guarded_actor_on_update)
+	installed = true
+	printf("%s", "* [anthology/cutscenes-v111] cinematic spatial-audio guard installed")
+	return true
+end
+
+local function delayed_install()
+	return install_guard()
+end
+
+function on_game_start()
+	if install_guard() then
+		return
+	end
+	if type(CreateTimeEvent) == "function" then
+		CreateTimeEvent("anthology_cutscenes_v111", "sar_guard_install", 0.05, delayed_install)
+	end
+end
