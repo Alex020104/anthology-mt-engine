@@ -176,6 +176,15 @@ void CHUDManager::OnFrame()
 }
 
 xrCriticalSection ui_lock;
+// mt_ui overlaps pUIGame::OnFrame with world rendering. The lock prevents an
+// update and a draw from touching the UI tree at the same time, but by itself
+// does not define which one wins: RenderUI could acquire the lock first and
+// draw the previous frame. Fast visibility-driven HUD scripts (Dot Marks in
+// particular) then visibly alternate between old and current state. Publish
+// the frame only after its worker update has completed and make RenderUI wait
+// for that publication. This preserves the useful renderer overlap without
+// allowing stale UI state to reach the screen.
+static xr_atomic_u32 ui_update_frame{u32(-1)};
 extern BOOL mt_TaskManager;
 void CHUDManager::OnFrameMT()
 {
@@ -188,13 +197,20 @@ void CHUDManager::OnFrameMT()
 		Level().GameTaskManager().UpdateTasks();
 
     if (!psHUD_Flags.is(HUD_DRAW_RT2))
+    {
+        if (mt_ui)
+            ui_update_frame.store(Device.dwFrame, std::memory_order_release);
         return;
+    }
 
     if (mt_ui)
     {
-        xrCriticalSectionGuard guard(&ui_lock);
-        if (pUIGame)
-            pUIGame->OnFrame();
+        {
+            xrCriticalSectionGuard guard(&ui_lock);
+            if (pUIGame)
+                pUIGame->OnFrame();
+        }
+        ui_update_frame.store(Device.dwFrame, std::memory_order_release);
     }
 }
 
@@ -317,6 +333,19 @@ void CHUDManager::RenderUI()
 		HitMarker.Render();
 		if (pUIGame)
 		{
+			if (mt_ui)
+			{
+				PROF_EVENT("Wait current MT UI frame");
+				u32 spin_count = 0;
+				while (mt_ui && b_online &&
+					ui_update_frame.load(std::memory_order_acquire) != Device.dwFrame)
+				{
+					if (++spin_count < 256)
+						_mm_pause();
+					else
+						SwitchToThread();
+				}
+			}
 			xrCriticalSectionGuard guard(&ui_lock);
 			pUIGame->Render();
 		}

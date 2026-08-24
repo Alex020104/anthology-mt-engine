@@ -3511,3 +3511,53 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260823_v108_pre_deferred_smartcover_and_profiler_fix`.
   Expected markers are `[anthology/alife-v108]`, including one load summary
   with `deferred_placed` and `unresolved` counts.
+
+## 2026-08-24 - v109 deterministic MT UI frame publication
+
+### Confirmed Dot Marks flicker cause
+
+- The active HARD profile uses `mt_ui 1` and `Anthology Performance v81 - Dot
+  Marks Low Churn`. Dot Marks itself updates prompt visibility, texture,
+  position and size from the normal actor frame callbacks.
+- The main frame completes `Device.seqFrame` before the render-overlapped
+  `GameThread` starts, so the remaining fault was not a simultaneous
+  `actor_on_update` callback. The existing `ui_lock` serialized
+  `pUIGame->OnFrame()` against `pUIGame->Render()`, but it did not guarantee
+  their order.
+- When `RenderUI()` acquired that lock before the worker, it drew the previous
+  UI state. When the worker won on the next frame, it drew the current state.
+  Fast visibility-driven markers therefore alternated between stale and fresh
+  states and appeared to blink despite the absence of a Lua error.
+- The old v90 protection covered simultaneous update/render and the
+  `CustomStatics` container only; it did not provide current-frame readiness.
+
+### v109 correction
+
+- The MT UI worker now publishes `Device.dwFrame` with release semantics only
+  after `pUIGame->OnFrame()` has completed.
+- `RenderUI()` waits specifically for that current-frame publication with an
+  acquire load before it draws the HUD. The short wait uses pause/yield and is
+  independent of the full secondary-task barrier.
+- `mt_ui` remains enabled and UI update still overlaps world rendering. The
+  fix does not move UI back to the main thread and does not wait for bones,
+  HOM, sound, GC or other secondary work.
+- A standalone `Anthology Performance v109 - MT UI Frame Sync` module enables
+  `mt_ui 1` and emits `[anthology/v109] MT UI current-frame synchronization
+  active`. Dot Marks, PiP, SSS, A-Life and save data are unchanged. A new game
+  and shader-cache purge are not required.
+
+### Validation, build, installation and rollback
+
+- The v109 Lua module passes the Lua 5.1 parser and `git diff --check` passes.
+  Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully. Build and
+  installed hashes match:
+  - DX11 EXE: `F95559D5CB645B494481F05592EC518DF8F758F05E04EFD7F053D9DB217DFACB`;
+  - DX11 PDB: `E8BAC855A86CDBC9749D4AAC3D43BC2D6A9C035E0B40D5FD4F20D57A5AA46561`;
+  - DX11-AVX EXE: `E50BD445513F22A443443B311CF2D7F85053E12BB3A90220AD38827009B7E42E`;
+  - DX11-AVX PDB: `1D85759B57848270213C15792D506C8D033B92290B06002B42E9493818F0AF04`.
+- The canonical addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned
+  into MO2 and enabled first in the HARD profile. MO2 was closed through its
+  normal main-window path before the profile edit. The game was not launched.
+- The pre-v109 engine binaries, profile, settings, log and `HUDManager.cpp` are
+  recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260824_v109_pre_mt_ui_frame_sync`.

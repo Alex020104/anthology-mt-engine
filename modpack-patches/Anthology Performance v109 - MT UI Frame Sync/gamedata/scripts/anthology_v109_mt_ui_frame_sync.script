@@ -1,0 +1,4 @@
+function on_game_start()
+	exec_console_cmd("mt_ui 1")
+	printf("* [anthology/v109] MT UI current-frame synchronization active")
+end
