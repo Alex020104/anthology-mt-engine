@@ -3807,3 +3807,62 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - v115 is addon-only. Engine binaries remain byte-for-byte v114, so no DX11 or
   DX11-AVX rebuild is required. The addon is intended to load above v114 while
   v110, v113 and v114 remain enabled.
+
+## 2026-08-25 - v116 original CoP root anchors
+
+### Confirmed root-motion parity defect
+
+- The latest Pripyat recording still shows continuous scripted NPC root travel,
+  including a model crossing the active camera plane. The latest Jupiter
+  descent recording also retains a smaller vertical offset and an incorrect
+  initial facing. These are not one-frame camera cuts or ragdoll physics.
+- The accepted v115 gate completes before the cinematic state transition. It
+  verifies the live pre-scene XFORM, but it cannot control the new animation
+  movement controller created for the authored cinematic chain.
+- Original Call of Pripyat starts the first animation carrying an authored
+  `animation_position` and `animation_direction` with
+  `local_animation = false`. Anthology's Anomaly `state_mgr_animation` uses
+  `true` in that exact branch. The local variant can multiply the previous
+  idle/walker root transform into the new cinematic start matrix, retaining a
+  position offset or the previous yaw.
+
+### v116 correction
+
+- A runtime wrapper restores the original CoP absolute first anchor only for
+  the exact `jup_b219` descent cast on Jupiter and the exact `pri_a15` arrival
+  cast in Pripyat. Both the NPC section and the authored animation prefix must
+  match before the correction is allowed.
+- Only the existing explicit-anchor branch is intercepted. The same authored
+  position, direction and yaw are retained; only the final five-argument
+  `add_animation` flag changes from local `true` to absolute `false`.
+- Every subsequent `moving=true` clip continues through the unmodified base
+  path with local root motion. Walker/remark actors without an explicit anchor,
+  all `pas_b400` gameplay logic and every unrelated NPC delegate directly to
+  the original function. The four `jup_b219` walker/remark actors instead use
+  a read-only launch gate: all stock `on_pos` markers must exist, their live
+  XFORM must be at the authored walk point, their body direction must match the
+  authored look point, and that state must remain stable for 300 ms.
+- The Jupiter gate starts its 30-second diagnosed fallback only after every
+  expected stock `on_pos` marker exists, so squad spawning and path travel do
+  not consume the timeout. Each of the eight possible squad variants also has
+  a 30-second LTX hard fallback to preserve legacy-save progress without
+  pre-empting a slow stock walker approach.
+- The patch does not clear animations, teleport or directly position NPCs and
+  does not modify camera effectors, grass/details, dialogue, sound or scene
+  animation lists. v115's live-XFORM readiness remains intact.
+
+### Validation, installation and rollback
+
+- Both addon scripts pass the Lua 5.1 parser. The dedicated v116 anchor smoke test
+  proves the Jupiter and Pripyat first anchors are absolute, the following
+  moving chain remains local, unrelated NPCs and Underpass gameplay walkers are
+  untouched, and repeated game-start callbacks cannot wrap `add_anim` twice.
+  A second v116 smoke test covers all six Jupiter cast members, a wrong-facing
+  walker, the timed settle window, delayed fallback start, all eight LTX scene
+  variants and hard fallbacks. The inherited v115 staging smoke test also passes.
+- v116 is addon-only; DX11 and DX11-AVX binaries remain byte-for-byte unchanged.
+  Source and installed addon hashes match. The canonical addon is stored under
+  `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and enabled first in the HARD
+  profile above v115.
+- The pre-v116 profile, v115 addon and latest log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260825_v116_pre_original_cop_root_anchors`.

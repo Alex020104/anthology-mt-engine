@@ -1,0 +1,790 @@
+-- Anthology Cutscenes v116
+-- Keep the v114 LTX protocol, but publish readiness only after the live NPC
+-- XFORM has reached and settled at the authored CoP staging point.
+-- This module is read-only with respect to NPC placement: it never teleports
+-- or directly moves an NPC.
+
+local READY_STABLE_UPDATES = 8
+local READY_STABLE_MS = 300
+local PRI_SOFT_FALLBACK_MS = 10000
+local PAS_SOFT_FALLBACK_MS = 20000
+local JUP_SOFT_FALLBACK_MS = 30000
+
+local PRI_XZ_TOLERANCE = 0.30
+local PRI_Y_TOLERANCE = 0.50
+local PAS_XZ_TOLERANCE = 0.65
+local PAS_Y_TOLERANCE = 0.75
+local JUP_XZ_TOLERANCE = 0.20
+local JUP_Y_TOLERANCE = 0.30
+local SETTLE_POSITION_RADIUS = 0.04
+local DIRECTION_DOT_MIN = 0.985
+local JUP_DIRECTION_DOT_MIN = 0.998
+local DETAIL_LOG_INTERVAL_MS = 1000
+
+-- These names intentionally remain v114-compatible because the accepted v114
+-- scene LTX files consume them. Only the readiness implementation is replaced.
+local PRI_READY_INFO = "anthology_v114_pri_a15_ready"
+local PRI_FALLBACK_INFO = "anthology_v114_pri_a15_fallback"
+local PAS_READY_INFO = "anthology_v114_pas_b400_ready"
+local PAS_FALLBACK_INFO = "anthology_v114_pas_b400_fallback"
+local JUP_READY_INFO = "anthology_v116_jup_b219_ready"
+local JUP_FALLBACK_INFO = "anthology_v116_jup_b219_fallback"
+
+local callbacks_registered = false
+
+local gates = {
+	pri = {
+		started_at = nil,
+		stable = 0,
+		stable_since = nil,
+		last_reason = nil,
+		last_detail = nil,
+		next_detail_log = 0,
+		settle_anchors = {},
+	},
+	pas = {
+		started_at = nil,
+		stable = 0,
+		stable_since = nil,
+		last_reason = nil,
+		last_detail = nil,
+		next_detail_log = 0,
+		settle_anchors = {},
+	},
+	jup = {
+		started_at = nil,
+		stable = 0,
+		stable_since = nil,
+		last_reason = nil,
+		last_detail = nil,
+		next_detail_log = 0,
+		settle_anchors = {},
+	},
+}
+
+local PRI_CAST = {
+	{ story = "pri_a15_actor",            cover = "pri_a15_animpoint_actor" },
+	{ story = "pri_a15_military_tarasov", cover = "pri_a15_animpoint_military_1" },
+	{ story = "pri_a15_military_2",       cover = "pri_a15_animpoint_military_2" },
+	{ story = "pri_a15_military_3",       cover = "pri_a15_animpoint_military_3" },
+	{ story = "pri_a15_military_4",       cover = "pri_a15_animpoint_military_4" },
+	{ story = "pri_a15_vano",             cover = "pri_a15_animpoint_vano",     out_info = "pri_a15_vano_out" },
+	{ story = "pri_a15_sokolov_scene",    cover = "pri_a15_animpoint_sokolov",  out_info = "pri_a15_sokolov_out" },
+	{ story = "pri_a15_zulus",            cover = "pri_a15_animpoint_zulus",    out_info = "pri_a15_zulus_out" },
+	{ story = "pri_a15_wanderer",         cover = "pri_a15_animpoint_wanderer", out_info = "pri_a15_wanderer_out" },
+}
+
+local PAS_CAST = {
+	{
+		story = "pas_b400_zulus",
+		section = "walker@zulus_elevator_1",
+		path = "pas_b400_elevator_zulus_1_walk",
+	},
+	{
+		story = "pas_b400_vano",
+		section = "walker@vano_elevator_1",
+		path = "pas_b400_elevator_vano_1_walk",
+		required_info = "jup_a10_vano_agree_go_und",
+	},
+	{
+		story = "pas_b400_sokolov",
+		section = "walker@sokolov_elevator_1",
+		path = "pas_b400_elevator_sokolov_1_walk",
+		required_info = "jup_b218_soldier_hired",
+	},
+	{
+		story = "pas_b400_wanderer",
+		section = "walker@wanderer_elevator_1",
+		path = "pas_b400_elevator_wanderer_1_walk",
+		required_info = "jup_b218_monolith_hired",
+	},
+}
+
+local JUP_CAST = {
+	{
+		story = "jup_b219_actor",
+		cover = "jup_b219_actor_smart_cover",
+	},
+	{
+		story = "jup_b219_stalker_tech_id",
+		cover = "jup_b219_azot_smart_cover",
+	},
+	{
+		story = "jup_b219_zulus_id",
+		section = "walker",
+		path = "jup_b219_zulus_walk",
+		look = "jup_b219_zulus_look",
+	},
+	{
+		story = "jup_b219_vano_id",
+		section = "walker",
+		path = "jup_b219_vano_walk",
+		look = "jup_b219_vano_look",
+		required_info = "jup_a10_vano_agree_go_und",
+	},
+	{
+		story = "jup_b219_soldier_id",
+		section = "walker",
+		path = "jup_b219_soldier_walk",
+		look = "jup_b219_soldier_look",
+		required_info = "jup_b218_soldier_hired",
+	},
+	{
+		story = "jup_b219_monolith_squad_leader_freedom_skin_id",
+		section = "walker",
+		path = "jup_b219_monolith_walk",
+		look = "jup_b219_monolith_look",
+		required_info = "jup_b218_monolith_hired",
+	},
+}
+
+local function logf(pattern, ...)
+	local ok, message = pcall(string.format, pattern, ...)
+	printf("%s", ok and message or tostring(pattern))
+end
+
+local function info(name)
+	if type(has_alife_info) ~= "function" then
+		return false
+	end
+	local ok, value = pcall(has_alife_info, name)
+	return ok and value == true
+end
+
+local function now_ms()
+	if type(time_global) == "function" then
+		local ok, value = pcall(time_global)
+		if ok and value then
+			return tonumber(value) or 0
+		end
+	end
+	return 0
+end
+
+local function current_level_name()
+	if not (level and type(level.name) == "function") then
+		return ""
+	end
+	local ok, name = pcall(level.name)
+	return ok and tostring(name or "") or ""
+end
+
+local function story_object(story_id)
+	if type(get_story_object) ~= "function" then
+		return nil
+	end
+	local ok, object = pcall(get_story_object, story_id)
+	return ok and object or nil
+end
+
+local function give_info(name)
+	if info(name) then
+		return true
+	end
+	if not (db and db.actor and db.actor.give_info_portion) then
+		return false
+	end
+	return pcall(db.actor.give_info_portion, db.actor, name)
+end
+
+local function object_position(object)
+	if not (object and object.position) then
+		return nil
+	end
+	local ok, value = pcall(object.position, object)
+	if not (ok and value) then
+		return nil
+	end
+	local copy_ok, copy = pcall(function()
+		return { x = value.x, y = value.y, z = value.z }
+	end)
+	return copy_ok and copy or nil
+end
+
+local function object_direction(object)
+	if not (object and object.direction) then
+		return nil
+	end
+	local ok, value = pcall(object.direction, object)
+	if not (ok and value) then
+		return nil
+	end
+	local copy_ok, copy = pcall(function()
+		return { x = value.x, y = value.y, z = value.z }
+	end)
+	return copy_ok and copy or nil
+end
+
+local function vector_delta(a, b)
+	if not (a and b) then
+		return nil, nil, nil
+	end
+	local ok, xz, y, total = pcall(function()
+		local dx = a.x - b.x
+		local dy = a.y - b.y
+		local dz = a.z - b.z
+		return math.sqrt(dx * dx + dz * dz), math.abs(dy), math.sqrt(dx * dx + dy * dy + dz * dz)
+	end)
+	if not ok then
+		return nil, nil, nil
+	end
+	return xz, y, total
+end
+
+local function vector_matches(a, b)
+	local xz, y = vector_delta(a, b)
+	return xz ~= nil and xz <= 0.10 and y <= 0.10
+end
+
+local function horizontal_direction_dot(a, b)
+	if not (a and b) then
+		return nil
+	end
+	local ok, dot = pcall(function()
+		local a_length = math.sqrt(a.x * a.x + a.z * a.z)
+		local b_length = math.sqrt(b.x * b.x + b.z * b.z)
+		if a_length <= 0.0001 or b_length <= 0.0001 then
+			return nil
+		end
+		return (a.x * b.x + a.z * b.z) / (a_length * b_length)
+	end)
+	return ok and dot or nil
+end
+
+local function target_position_ready(
+	gate,
+	story,
+	current,
+	target,
+	xz_tolerance,
+	y_tolerance,
+	current_direction,
+	target_direction,
+	direction_dot_min
+)
+	local xz, y = vector_delta(current, target)
+	if xz == nil then
+		gate.settle_anchors[story] = nil
+		return false, story .. ":xform-invalid", "unreadable position"
+	end
+	if xz > xz_tolerance or y > y_tolerance then
+		gate.settle_anchors[story] = nil
+		return false, story .. ":xform", string.format("xz=%.2f y=%.2f", xz, y)
+	end
+
+	if target_direction then
+		local dot = horizontal_direction_dot(current_direction, target_direction)
+		if not dot or dot < (direction_dot_min or DIRECTION_DOT_MIN) then
+			gate.settle_anchors[story] = nil
+			return false, story .. ":direction", string.format("dot=%s", dot and string.format("%.3f", dot) or "invalid")
+		end
+	end
+
+	local anchor = gate.settle_anchors[story]
+	if not anchor then
+		gate.settle_anchors[story] = current
+		return false, story .. ":settle-sample", "anchor created"
+	end
+	local _, _, drift = vector_delta(current, anchor)
+	if not drift or drift > SETTLE_POSITION_RADIUS then
+		gate.settle_anchors[story] = current
+		return false, story .. ":moving", string.format("window-drift=%s", drift and string.format("%.3f", drift) or "invalid")
+	end
+	return true, "ready", "settled"
+end
+
+local function animation_count(object)
+	if not (object and object.animation_count) then
+		return 0
+	end
+	local ok, count = pcall(object.animation_count, object)
+	return ok and tonumber(count) or 0
+end
+
+local function patrol_point(path_name)
+	if level and type(level.patrol_path_exists) == "function" then
+		local ok, exists = pcall(level.patrol_path_exists, path_name)
+		if not (ok and exists == true) then
+			return nil
+		end
+	end
+	if type(patrol) ~= "function" then
+		return nil
+	end
+	local ok_path, path = pcall(patrol, path_name)
+	if not (ok_path and path and path.point) then
+		return nil
+	end
+	local ok_point, point = pcall(path.point, path, 0)
+	if not (ok_point and point) then
+		return nil
+	end
+	local ok_copy, copy = pcall(function()
+		return { x = point.x, y = point.y, z = point.z }
+	end)
+	return ok_copy and copy or nil
+end
+
+local function pri_entry_expected(entry)
+	return not entry.out_info or not info(entry.out_info)
+end
+
+local function pri_entry_ready(entry, gate)
+	local object = story_object(entry.story)
+	if not object then
+		return false, entry.story .. ":offline"
+	end
+
+	local root = db and db.storage and db.storage[object:id()] or nil
+	if not root then
+		return false, entry.story .. ":storage"
+	end
+	if root.active_scheme ~= "animpoint" then
+		return false, entry.story .. ":scheme=" .. tostring(root.active_scheme)
+	end
+
+	local storage = root.animpoint
+	local controller = storage and storage.animpoint or nil
+	if not (storage and storage.cover_name == entry.cover) then
+		return false, entry.story .. ":cover=" .. tostring(storage and storage.cover_name)
+	end
+	if not (controller and controller.started == true and controller.current_action) then
+		return false, entry.story .. ":controller"
+	end
+	if controller.cover_name ~= entry.cover then
+		return false, entry.story .. ":controller-cover=" .. tostring(controller.cover_name)
+	end
+
+	local state_manager = root.state_mgr
+	if not state_manager then
+		return false, entry.story .. ":state-mgr"
+	end
+	if state_manager.target_state ~= controller.current_action then
+		return false, string.format(
+			"%s:state=%s/action=%s",
+			entry.story,
+			tostring(state_manager.target_state),
+			tostring(controller.current_action)
+		)
+	end
+	if state_manager.animation_direction_applied ~= true then
+		return false, entry.story .. ":transform"
+	end
+	if not vector_matches(state_manager.animation_position, controller.position) then
+		return false, entry.story .. ":root-target"
+	end
+
+	local count = animation_count(object)
+	if count <= 0 then
+		return false, entry.story .. ":animation-count=" .. tostring(count)
+	end
+
+	local current = object_position(object)
+	if not current then
+		return false, entry.story .. ":position"
+	end
+	local current_direction = object_direction(object)
+	if not current_direction then
+		return false, entry.story .. ":direction", "unreadable direction"
+	end
+	return target_position_ready(
+		gate,
+		entry.story,
+		current,
+		controller.position,
+		PRI_XZ_TOLERANCE,
+		PRI_Y_TOLERANCE,
+		current_direction,
+		controller.smart_direction
+	)
+end
+
+local function pri_cast_ready(gate)
+	local first_reason = nil
+	local first_detail = nil
+	for _, entry in ipairs(PRI_CAST) do
+		if pri_entry_expected(entry) then
+			local ready, reason, detail = pri_entry_ready(entry, gate)
+			if not ready and not first_reason then
+				first_reason = reason
+				first_detail = detail
+			end
+		end
+	end
+	return first_reason == nil, first_reason or "ready", first_detail or "settled"
+end
+
+local function pas_entry_expected(entry)
+	return not entry.required_info or info(entry.required_info)
+end
+
+local function pas_entry_ready(entry, gate)
+	local object = story_object(entry.story)
+	if not object then
+		return false, entry.story .. ":offline"
+	end
+
+	local root = db and db.storage and db.storage[object:id()] or nil
+	if not root then
+		return false, entry.story .. ":storage"
+	end
+	if root.active_scheme ~= "walker" or root.active_section ~= entry.section then
+		return false, string.format(
+			"%s:logic=%s/%s",
+			entry.story,
+			tostring(root.active_scheme),
+			tostring(root.active_section)
+		)
+	end
+
+	local mover = root.move_mgr
+	if not mover then
+		return false, entry.story .. ":move-mgr"
+	end
+	if mover.path_walk ~= entry.path then
+		return false, entry.story .. ":path=" .. tostring(mover.path_walk)
+	end
+
+	local target = patrol_point(entry.path)
+	if not target then
+		return false, entry.story .. ":path-point"
+	end
+	local current = object_position(object)
+	if not current then
+		return false, entry.story .. ":position"
+	end
+
+	-- The stock callback can remain nil when an online object is created exactly
+	-- on point 0. Physical arrival plus a stable XFORM is authoritative here.
+	return target_position_ready(
+		gate,
+		entry.story,
+		current,
+		target,
+		PAS_XZ_TOLERANCE,
+		PAS_Y_TOLERANCE
+	)
+end
+
+local function pas_cast_ready(gate)
+	local first_reason = nil
+	local first_detail = nil
+	for _, entry in ipairs(PAS_CAST) do
+		if pas_entry_expected(entry) then
+			local ready, reason, detail = pas_entry_ready(entry, gate)
+			if not ready and not first_reason then
+				first_reason = reason
+				first_detail = detail
+			end
+		end
+	end
+	return first_reason == nil, first_reason or "ready", first_detail or "settled"
+end
+
+local function jup_entry_expected(entry)
+	return not entry.required_info or info(entry.required_info)
+end
+
+local function jup_animpoint_ready(entry, gate, object, root)
+	if root.active_scheme ~= "animpoint" then
+		return false, entry.story .. ":scheme=" .. tostring(root.active_scheme)
+	end
+
+	local storage = root.animpoint
+	local controller = storage and storage.animpoint or nil
+	if not (storage and storage.cover_name == entry.cover) then
+		return false, entry.story .. ":cover=" .. tostring(storage and storage.cover_name)
+	end
+	if not (controller and controller.started == true and controller.current_action) then
+		return false, entry.story .. ":controller"
+	end
+	if controller.cover_name ~= entry.cover then
+		return false, entry.story .. ":controller-cover=" .. tostring(controller.cover_name)
+	end
+
+	local state_manager = root.state_mgr
+	if not state_manager then
+		return false, entry.story .. ":state-mgr"
+	end
+	if state_manager.target_state ~= controller.current_action then
+		return false, string.format(
+			"%s:state=%s/action=%s",
+			entry.story,
+			tostring(state_manager.target_state),
+			tostring(controller.current_action)
+		)
+	end
+	if state_manager.animation_direction_applied ~= true then
+		return false, entry.story .. ":transform"
+	end
+	if not vector_matches(state_manager.animation_position, controller.position) then
+		return false, entry.story .. ":root-target"
+	end
+	if animation_count(object) <= 0 then
+		return false, entry.story .. ":animation-count=0"
+	end
+
+	local current = object_position(object)
+	local current_direction = object_direction(object)
+	if not current then
+		return false, entry.story .. ":position"
+	end
+	if not current_direction then
+		return false, entry.story .. ":direction", "unreadable direction"
+	end
+	return target_position_ready(
+		gate,
+		entry.story,
+		current,
+		controller.position,
+		JUP_XZ_TOLERANCE,
+		JUP_Y_TOLERANCE,
+		current_direction,
+		controller.smart_direction,
+		JUP_DIRECTION_DOT_MIN
+	)
+end
+
+local function jup_walker_ready(entry, gate, object, root)
+	if root.active_scheme ~= "walker" or root.active_section ~= entry.section then
+		return false, string.format(
+			"%s:logic=%s/%s",
+			entry.story,
+			tostring(root.active_scheme),
+			tostring(root.active_section)
+		)
+	end
+
+	local mover = root.move_mgr
+	if not mover or mover.path_walk ~= entry.path then
+		return false, entry.story .. ":path=" .. tostring(mover and mover.path_walk)
+	end
+
+	local target = patrol_point(entry.path)
+	local look = patrol_point(entry.look)
+	if not (target and look) then
+		return false, entry.story .. ":path-point"
+	end
+	local target_direction = {
+		x = look.x - target.x,
+		y = look.y - target.y,
+		z = look.z - target.z,
+	}
+	local current = object_position(object)
+	local current_direction = object_direction(object)
+	if not current then
+		return false, entry.story .. ":position"
+	end
+	if not current_direction then
+		return false, entry.story .. ":direction", "unreadable direction"
+	end
+	return target_position_ready(
+		gate,
+		entry.story,
+		current,
+		target,
+		JUP_XZ_TOLERANCE,
+		JUP_Y_TOLERANCE,
+		current_direction,
+		target_direction,
+		JUP_DIRECTION_DOT_MIN
+	)
+end
+
+local function jup_entry_ready(entry, gate)
+	local object = story_object(entry.story)
+	if not object then
+		return false, entry.story .. ":offline"
+	end
+	local root = db and db.storage and db.storage[object:id()] or nil
+	if not root then
+		return false, entry.story .. ":storage"
+	end
+	if entry.cover then
+		return jup_animpoint_ready(entry, gate, object, root)
+	end
+	return jup_walker_ready(entry, gate, object, root)
+end
+
+local function jup_cast_ready(gate)
+	local first_reason = nil
+	local first_detail = nil
+	for _, entry in ipairs(JUP_CAST) do
+		if jup_entry_expected(entry) then
+			local ready, reason, detail = jup_entry_ready(entry, gate)
+			if not ready and not first_reason then
+				first_reason = reason
+				first_detail = detail
+			end
+		end
+	end
+	return first_reason == nil, first_reason or "ready", first_detail or "settled"
+end
+
+local JUP_START_INFOS = {
+	"jup_b219_start_one",
+	"jup_b219_start_one_vano",
+	"jup_b219_start_one_monolith",
+	"jup_b219_start_one_soldier",
+	"jup_b219_start_all",
+	"jup_b219_start_soldier_vano",
+	"jup_b219_start_soldier_monolith",
+	"jup_b219_start_vano_monolith",
+}
+
+local function jup_scene_started()
+	for _, info_name in ipairs(JUP_START_INFOS) do
+		if info(info_name) then
+			return true
+		end
+	end
+	return false
+end
+
+local function jup_position_infos_ready()
+	if not (info("jup_b219_actor_on_pos") and info("jup_b219_azot_on_pos") and info("jup_b219_zulus_on_pos")) then
+		return false
+	end
+	if info("jup_a10_vano_agree_go_und") and not info("jup_b219_vano_on_pos") then
+		return false
+	end
+	if info("jup_b218_soldier_hired") and not info("jup_b219_soldier_on_pos") then
+		return false
+	end
+	if info("jup_b218_monolith_hired") and not info("jup_b219_monolith_on_pos") then
+		return false
+	end
+	return true
+end
+
+local function reset_gate(gate)
+	gate.started_at = nil
+	gate.stable = 0
+	gate.stable_since = nil
+	gate.last_reason = nil
+	gate.last_detail = nil
+	gate.next_detail_log = 0
+	gate.settle_anchors = {}
+end
+
+local function update_gate(gate, label, ready_info, fallback_info, fallback_ms, checker)
+	if info(ready_info) then
+		return
+	end
+
+	local now = now_ms()
+	if not gate.started_at then
+		gate.started_at = now
+		gate.last_reason = nil
+		logf("* [anthology/cutscenes-v116] %s NPC settle wait started", label)
+	end
+
+	local ready, reason, detail = checker(gate)
+	if ready then
+		if gate.stable == 0 then
+			gate.stable_since = now
+		end
+		gate.stable = gate.stable + 1
+	else
+		gate.stable = 0
+		gate.stable_since = nil
+	end
+
+	if reason ~= gate.last_reason then
+		gate.last_reason = reason
+		gate.last_detail = detail
+		gate.next_detail_log = now + DETAIL_LOG_INTERVAL_MS
+		logf(
+			"* [anthology/cutscenes-v116] %s settle ready=%s stable=%s reason=%s detail=%s",
+			label,
+			tostring(ready),
+			tostring(gate.stable),
+			tostring(reason),
+			tostring(detail)
+		)
+	elseif not ready and now >= gate.next_detail_log then
+		gate.last_detail = detail
+		gate.next_detail_log = now + DETAIL_LOG_INTERVAL_MS
+		logf(
+			"* [anthology/cutscenes-v116] %s settle pending reason=%s detail=%s",
+			label,
+			tostring(reason),
+			tostring(detail)
+		)
+	end
+
+	local stable_ms = gate.stable_since and (now - gate.stable_since) or 0
+	if gate.stable >= READY_STABLE_UPDATES and stable_ms >= READY_STABLE_MS then
+		give_info(ready_info)
+		logf(
+			"* [anthology/cutscenes-v116] %s NPC XFORM settled (%s updates, %s ms)",
+			label,
+			tostring(gate.stable),
+			tostring(stable_ms)
+		)
+		return
+	end
+
+	if now - gate.started_at >= fallback_ms then
+		give_info(fallback_info)
+		give_info(ready_info)
+		logf(
+			"! [anthology/cutscenes-v116] %s settle fallback after %s ms reason=%s detail=%s",
+			label,
+			tostring(fallback_ms),
+			tostring(gate.last_reason),
+			tostring(gate.last_detail)
+		)
+	end
+end
+
+local function actor_update()
+	if not (db and db.actor) then
+		return
+	end
+
+	local level_name = current_level_name()
+	local pri_active = level_name == "pripyat"
+		and info("cop_start")
+		and not info("pri_a15_cutscene_go")
+		and not info("pri_a15_cutscene_end")
+	if pri_active then
+		update_gate(gates.pri, "PRI", PRI_READY_INFO, PRI_FALLBACK_INFO, PRI_SOFT_FALLBACK_MS, pri_cast_ready)
+	else
+		reset_gate(gates.pri)
+	end
+
+	local pas_active = level_name == "jupiter_underground"
+		and info("cop_start")
+		and not info("pas_b400_task_given")
+	if pas_active then
+		update_gate(gates.pas, "PAS", PAS_READY_INFO, PAS_FALLBACK_INFO, PAS_SOFT_FALLBACK_MS, pas_cast_ready)
+	else
+		reset_gate(gates.pas)
+	end
+
+	local jup_active = level_name == "jupiter"
+		and info("jup_b218_gather_squad_complete")
+		and jup_position_infos_ready()
+		and not jup_scene_started()
+		and not info("jup_b219_entering_underpass")
+	if jup_active then
+		update_gate(gates.jup, "JUP", JUP_READY_INFO, JUP_FALLBACK_INFO, JUP_SOFT_FALLBACK_MS, jup_cast_ready)
+	else
+		reset_gate(gates.jup)
+	end
+end
+
+function on_game_start()
+	if callbacks_registered and type(UnregisterScriptCallback) == "function" then
+		UnregisterScriptCallback("actor_on_update", actor_update)
+	end
+	if type(RegisterScriptCallback) == "function" then
+		RegisterScriptCallback("actor_on_update", actor_update)
+		callbacks_registered = true
+	end
+	reset_gate(gates.pri)
+	reset_gate(gates.pas)
+	reset_gate(gates.jup)
+	logf("* [anthology/cutscenes-v116] settled CoP NPC staging active")
+end

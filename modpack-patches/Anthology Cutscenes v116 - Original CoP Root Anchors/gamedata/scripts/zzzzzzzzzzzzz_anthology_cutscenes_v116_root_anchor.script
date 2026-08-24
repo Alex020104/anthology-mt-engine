@@ -1,0 +1,156 @@
+-- Anthology Cutscenes v116
+-- Restore the original Call of Pripyat absolute transform for the first
+-- animation rooted at an authored animpoint. Anomaly changed the final
+-- add_animation argument to local_animation=true, which can inherit the
+-- preceding idle/walker root transform and start a cinematic with an offset
+-- or the wrong yaw.
+--
+-- Scope is deliberately limited to the two affected CoP cinematics. All
+-- subsequent moving clips keep the normal local root-motion chain.
+
+local EVENT_ID = "anthology_cutscenes_v116_root_anchor"
+
+local PRI_SECTIONS = {
+	pri_a15_actor = true,
+	pri_a15_vano = true,
+	pri_a15_sokolov_scene = true,
+	pri_a15_zulus = true,
+	pri_a15_wanderer = true,
+	pri_a15_military_tarasov = true,
+	pri_a15_military_2 = true,
+	pri_a15_military_3 = true,
+	pri_a15_military_4 = true,
+}
+
+local JUP_SECTIONS = {
+	jup_b219_actor = true,
+	jup_b219_stalker_tech = true,
+	jup_b219_zulus = true,
+	jup_b219_vano = true,
+	jup_b219_soldier = true,
+	jup_b219_monolith_squad_leader_freedom_skin = true,
+}
+
+local logged_npcs = {}
+local installed = false
+
+local function starts_with(value, prefix)
+	return type(value) == "string" and string.sub(value, 1, string.len(prefix)) == prefix
+end
+
+local function current_level_name()
+	if not (level and type(level.name) == "function") then
+		return ""
+	end
+	local ok, value = pcall(level.name)
+	return ok and tostring(value or "") or ""
+end
+
+local function npc_section(npc)
+	if not (npc and npc.section) then
+		return nil
+	end
+	local ok, value = pcall(npc.section, npc)
+	return ok and tostring(value or "") or nil
+end
+
+local function use_original_cop_anchor(npc, animation_name)
+	local section = npc_section(npc)
+	if not section then
+		return false, nil
+	end
+
+	local level_name = current_level_name()
+	if level_name == "pripyat" and PRI_SECTIONS[section] and starts_with(animation_name, "pri_a15_") then
+		return true, section
+	end
+
+	if level_name == "jupiter" and JUP_SECTIONS[section]
+		and (starts_with(animation_name, "jup_b219_") or starts_with(animation_name, "pri_a15_idle_"))
+	then
+		return true, section
+	end
+
+	return false, section
+end
+
+
+local function animation_class()
+	local module = rawget(_G, "state_mgr_animation")
+	if module and module.animation then
+		return module.animation
+	end
+	return nil
+end
+
+local function install_patch()
+	local class = animation_class()
+	if not (class and class.add_anim) then
+		return false
+	end
+
+	if class.anthology_v116_absolute_anchor_wrapped then
+		installed = true
+		return true
+	end
+
+	local original_add_anim = class.add_anim
+	function class:add_anim(animation_name, state)
+		local manager = self.mgr
+		local explicit_anchor = manager
+			and manager.animation_position
+			and manager.animation_direction
+			and not manager.animation_direction_applied
+			and state
+			and state.prop
+			and state.prop.moving == true
+
+		if explicit_anchor then
+			local scoped, section = use_original_cop_anchor(self.npc, animation_name)
+			if not scoped then
+				return original_add_anim(self, animation_name, state)
+			end
+
+			manager.animation_direction_applied = true
+			local direction = manager.animation_direction
+			local rotation_y = -math.deg(math.atan2(direction.x, direction.z))
+			self.npc:add_animation(
+				animation_name,
+				true,
+				manager.animation_position,
+				vector():set(0, rotation_y, 0),
+				false
+			)
+
+			local id = self.npc:id()
+			if not logged_npcs[id] then
+				logged_npcs[id] = true
+				printf(
+					"* [anthology/cutscenes-v116] original CoP root anchor npc=%s section=%s animation=%s",
+					tostring(self.npc:name()),
+					tostring(section),
+					tostring(animation_name)
+				)
+			end
+			return
+		end
+
+		return original_add_anim(self, animation_name, state)
+	end
+
+	class.anthology_v116_absolute_anchor_wrapped = true
+	installed = true
+	printf("* [anthology/cutscenes-v116] original CoP root anchor patch active")
+	return true
+end
+
+local function delayed_install()
+	return install_patch()
+end
+
+function on_game_start()
+	logged_npcs = {}
+	if not installed and not install_patch() and type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, "install_retry", 0.25, delayed_install)
+	end
+end
