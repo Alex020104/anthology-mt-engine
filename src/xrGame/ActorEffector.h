@@ -91,10 +91,10 @@ class CAnimatorCamEffectorScriptCB : public CAnimatorCamEffector
 protected:
 	typedef CAnimatorCamEffector inherited;
 private:
-
 	shared_str cb_name;
 public:
 	CAnimatorCamEffectorScriptCB(LPCSTR _cb) { cb_name = _cb; };
+	void Start(LPCSTR fn);
 	virtual BOOL Valid();
 	virtual BOOL AllowProcessingIfInvalid() { return m_bAbsolutePositioning; }
 	virtual void ProcessIfInvalid(SCamEffectorInfo& info);

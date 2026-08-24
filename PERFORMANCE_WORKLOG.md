@@ -3699,3 +3699,58 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   v110 remains enabled. The game was not launched.
 - The pre-v113 engine binaries and profile are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260824_v113_stock_cop_readiness`.
+
+## 2026-08-25 - v114 seamless CoP camera and authored staging
+
+### Confirmed remaining scene faults
+
+- Frame-by-frame inspection of both new recordings found a single non-scene
+  frame at every `.anm` boundary. `CObjectAnimator::SetActiveMotion` resets its
+  transform to identity, while the first camera update previously consumed
+  that identity transform before evaluating motion frame zero. The apparent
+  grass/detail flash occurs on the same fallback viewpoint and is not a
+  separate grass-render failure with the active `r__fast_details_update off`.
+- The v113 Underpass gate reached its three-second fallback before the stock
+  walkers reported arrival. Pripyat considered `animpoint.started` sufficient,
+  although that flag precedes application of the authored animation root
+  transform and active animation.
+- Anthology removed the stock `spawn_point` entries for the Pripyat actor
+  double and military squad. `sim_squad_scripted` therefore created those
+  actors at the smart-terrain centre and let them visibly walk to the scene.
+
+### v114 correction
+
+- Only absolute script camera effectors are primed after `Start()`. Their
+  frame-zero transform is ready before the first deferred render; relative
+  camera effects, normal actor view, PiP and the existing terminal-frame path
+  are unchanged.
+- Restored the original CoP server-side spawn points for Underpass Zulus, the
+  Pripyat actor double and Tarasov's military squad. No client/server teleport
+  or recurring NPC position write is used.
+- Underpass readiness now requires the stock walker section and
+  `move_mgr:arrived_to_first_waypoint()`. Pripyat readiness requires the exact
+  authored animpoint/cover, controller action, applied root position/direction
+  and a live animation. Readiness must remain true for five actor updates.
+- A diagnosed ten-second soft fallback and a twenty-second LTX emergency
+  fallback prevent damaged legacy saves from remaining on `Zone waits`.
+  v113 sound-listener discontinuity handling and v110 sound deduplication are
+  preserved without modification.
+
+### Validation, installation and rollback
+
+- Lua 5.1 smoke tests for v110, v113 and v114 pass. The v114 regression covers
+  both five-update readiness gates, exact stock spawn points, diagnosed
+  fallback timing and absence of direct NPC movement. `git diff --check`
+  passes.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully. Build and
+  installed SHA-256 values match:
+  - DX11 EXE: `F8583A291235F729881F634B3F5AED22F38C82CC1D85CF0AAA057AED025A45E7`;
+  - DX11 PDB: `B9EF774A70659F049A2741110E6BB60C0D3503149174D834192705309DA66E52`;
+  - DX11-AVX EXE: `9B536428A893D7E435DE0A2AD6BEA83AFD728FB76FA4F3C15E151A841E99A577`;
+  - DX11-AVX PDB: `B5F303B1FB597787F67DE24726F4E15CC8C036A339E12F7D51BC9EE4D3E754B9`.
+- The addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned into MO2 and
+  enabled above v113 in the HARD profile. v110 and v113 remain enabled; v111
+  and v112 remain disabled. MO2 was closed through its normal window before
+  editing the profile, and the game was not launched.
+- The pre-v114 binaries, profile and latest log are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260825_v114_pre_seamless_cop_staging`.

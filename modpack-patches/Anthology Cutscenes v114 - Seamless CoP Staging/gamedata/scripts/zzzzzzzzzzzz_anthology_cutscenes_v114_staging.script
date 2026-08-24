@@ -1,0 +1,330 @@
+-- Anthology Cutscenes v114
+-- Wait for the stock CoP controllers to submit their authored transforms.
+-- This module never teleports or directly moves an NPC.
+
+local READY_STABLE_UPDATES = 5
+local SOFT_FALLBACK_MS = 10000
+
+local PRI_READY_INFO = "anthology_v114_pri_a15_ready"
+local PRI_FALLBACK_INFO = "anthology_v114_pri_a15_fallback"
+local PAS_READY_INFO = "anthology_v114_pas_b400_ready"
+local PAS_FALLBACK_INFO = "anthology_v114_pas_b400_fallback"
+
+local callbacks_registered = false
+
+local gates = {
+	pri = { started_at = nil, stable = 0, last_reason = nil },
+	pas = { started_at = nil, stable = 0, last_reason = nil },
+}
+
+local PRI_CAST = {
+	{ story = "pri_a15_actor",            cover = "pri_a15_animpoint_actor" },
+	{ story = "pri_a15_military_tarasov", cover = "pri_a15_animpoint_military_1" },
+	{ story = "pri_a15_military_2",       cover = "pri_a15_animpoint_military_2" },
+	{ story = "pri_a15_military_3",       cover = "pri_a15_animpoint_military_3" },
+	{ story = "pri_a15_military_4",       cover = "pri_a15_animpoint_military_4" },
+	{ story = "pri_a15_vano",             cover = "pri_a15_animpoint_vano",     out_info = "pri_a15_vano_out" },
+	{ story = "pri_a15_sokolov_scene",    cover = "pri_a15_animpoint_sokolov",  out_info = "pri_a15_sokolov_out" },
+	{ story = "pri_a15_zulus",            cover = "pri_a15_animpoint_zulus",    out_info = "pri_a15_zulus_out" },
+	{ story = "pri_a15_wanderer",         cover = "pri_a15_animpoint_wanderer", out_info = "pri_a15_wanderer_out" },
+}
+
+local PAS_CAST = {
+	{
+		story = "pas_b400_zulus",
+		section = "walker@zulus_elevator_1",
+		path = "pas_b400_elevator_zulus_1_walk",
+	},
+	{
+		story = "pas_b400_vano",
+		section = "walker@vano_elevator_1",
+		path = "pas_b400_elevator_vano_1_walk",
+		required_info = "jup_a10_vano_agree_go_und",
+	},
+	{
+		story = "pas_b400_sokolov",
+		section = "walker@sokolov_elevator_1",
+		path = "pas_b400_elevator_sokolov_1_walk",
+		required_info = "jup_b218_soldier_hired",
+	},
+	{
+		story = "pas_b400_wanderer",
+		section = "walker@wanderer_elevator_1",
+		path = "pas_b400_elevator_wanderer_1_walk",
+		required_info = "jup_b218_monolith_hired",
+	},
+}
+
+local function info(name)
+	if type(has_alife_info) ~= "function" then
+		return false
+	end
+	local ok, value = pcall(has_alife_info, name)
+	return ok and value == true
+end
+
+local function now_ms()
+	if type(time_global) == "function" then
+		local ok, value = pcall(time_global)
+		if ok and value then
+			return tonumber(value) or 0
+		end
+	end
+	return 0
+end
+
+local function current_level_name()
+	if not (level and type(level.name) == "function") then
+		return ""
+	end
+	local ok, name = pcall(level.name)
+	return ok and tostring(name or "") or ""
+end
+
+local function story_object(story_id)
+	if type(get_story_object) ~= "function" then
+		return nil
+	end
+	local ok, object = pcall(get_story_object, story_id)
+	return ok and object or nil
+end
+
+local function give_info(name)
+	if info(name) then
+		return true
+	end
+	if not (db and db.actor and db.actor.give_info_portion) then
+		return false
+	end
+	return pcall(db.actor.give_info_portion, db.actor, name)
+end
+
+local function vector_matches(a, b)
+	if not (a and b) then
+		return false
+	end
+	local ok, matches = pcall(function()
+		local dx = a.x - b.x
+		local dy = a.y - b.y
+		local dz = a.z - b.z
+		return dx * dx + dy * dy + dz * dz <= 0.01
+	end)
+	return ok and matches == true
+end
+
+local function animation_count(object)
+	if not (object and object.animation_count) then
+		return 0
+	end
+	local ok, count = pcall(object.animation_count, object)
+	return ok and tonumber(count) or 0
+end
+
+local function pri_entry_expected(entry)
+	return not entry.out_info or not info(entry.out_info)
+end
+
+local function pri_entry_ready(entry)
+	local object = story_object(entry.story)
+	if not object then
+		return false, entry.story .. ":offline"
+	end
+
+	local root = db and db.storage and db.storage[object:id()] or nil
+	if not root then
+		return false, entry.story .. ":storage"
+	end
+	if root.active_scheme ~= "animpoint" then
+		return false, entry.story .. ":scheme=" .. tostring(root.active_scheme)
+	end
+
+	local storage = root.animpoint
+	local controller = storage and storage.animpoint or nil
+	if not (storage and storage.cover_name == entry.cover) then
+		return false, entry.story .. ":cover=" .. tostring(storage and storage.cover_name)
+	end
+	if not (controller and controller.started == true and controller.current_action) then
+		return false, entry.story .. ":controller"
+	end
+	if controller.cover_name ~= entry.cover then
+		return false, entry.story .. ":controller-cover=" .. tostring(controller.cover_name)
+	end
+
+	local state_manager = root.state_mgr
+	if not state_manager then
+		return false, entry.story .. ":state-mgr"
+	end
+	if state_manager.target_state ~= controller.current_action then
+		return false, string.format(
+			"%s:state=%s/action=%s",
+			entry.story,
+			tostring(state_manager.target_state),
+			tostring(controller.current_action)
+		)
+	end
+	if state_manager.animation_direction_applied ~= true then
+		return false, entry.story .. ":transform"
+	end
+	if not vector_matches(state_manager.animation_position, controller.position) then
+		return false, entry.story .. ":root-position"
+	end
+
+	local count = animation_count(object)
+	if count <= 0 then
+		return false, entry.story .. ":animation-count=" .. tostring(count)
+	end
+	return true, "ready"
+end
+
+local function pri_cast_ready()
+	for _, entry in ipairs(PRI_CAST) do
+		if pri_entry_expected(entry) then
+			local ready, reason = pri_entry_ready(entry)
+			if not ready then
+				return false, reason
+			end
+		end
+	end
+	return true, "ready"
+end
+
+local function pas_entry_expected(entry)
+	return not entry.required_info or info(entry.required_info)
+end
+
+local function pas_entry_ready(entry)
+	local object = story_object(entry.story)
+	if not object then
+		return false, entry.story .. ":offline"
+	end
+
+	local root = db and db.storage and db.storage[object:id()] or nil
+	if not root then
+		return false, entry.story .. ":storage"
+	end
+	if root.active_scheme ~= "walker" or root.active_section ~= entry.section then
+		return false, string.format(
+			"%s:logic=%s/%s",
+			entry.story,
+			tostring(root.active_scheme),
+			tostring(root.active_section)
+		)
+	end
+
+	local mover = root.move_mgr
+	if not mover then
+		return false, entry.story .. ":move-mgr"
+	end
+	if mover.path_walk ~= entry.path then
+		return false, entry.story .. ":path=" .. tostring(mover.path_walk)
+	end
+	local arrived = mover.last_index ~= nil
+	if type(mover.arrived_to_first_waypoint) == "function" then
+		local ok, value = pcall(mover.arrived_to_first_waypoint, mover)
+		arrived = ok and value == true
+	end
+	if not arrived then
+		return false, entry.story .. ":waypoint(last=" .. tostring(mover.last_index) .. ")"
+	end
+	return true, "ready"
+end
+
+local function pas_cast_ready()
+	for _, entry in ipairs(PAS_CAST) do
+		if pas_entry_expected(entry) then
+			local ready, reason = pas_entry_ready(entry)
+			if not ready then
+				return false, reason
+			end
+		end
+	end
+	return true, "ready"
+end
+
+local function reset_gate(gate)
+	gate.started_at = nil
+	gate.stable = 0
+	gate.last_reason = nil
+end
+
+local function update_gate(gate, label, ready_info, fallback_info, checker)
+	if info(ready_info) then
+		return
+	end
+
+	local now = now_ms()
+	if not gate.started_at then
+		gate.started_at = now
+		gate.last_reason = nil
+		printf("* [anthology/cutscenes-v114] %s staging wait started", label)
+	end
+
+	local ready, reason = checker()
+	gate.stable = ready and (gate.stable + 1) or 0
+	if reason ~= gate.last_reason then
+		gate.last_reason = reason
+		printf(
+			"* [anthology/cutscenes-v114] %s staging ready=%s stable=%d reason=%s",
+			label,
+			tostring(ready),
+			gate.stable,
+			tostring(reason)
+		)
+	end
+
+	if gate.stable >= READY_STABLE_UPDATES then
+		give_info(ready_info)
+		printf("* [anthology/cutscenes-v114] %s authored staging ready", label)
+		return
+	end
+
+	if now - gate.started_at >= SOFT_FALLBACK_MS then
+		give_info(fallback_info)
+		give_info(ready_info)
+		printf(
+			"! [anthology/cutscenes-v114] %s staging fallback after %d ms reason=%s",
+			label,
+			SOFT_FALLBACK_MS,
+			tostring(gate.last_reason)
+		)
+	end
+end
+
+local function actor_update()
+	if not (db and db.actor) then
+		return
+	end
+
+	local level_name = current_level_name()
+	local pri_active = level_name == "pripyat"
+		and info("cop_start")
+		and not info("pri_a15_cutscene_go")
+		and not info("pri_a15_cutscene_end")
+	if pri_active then
+		update_gate(gates.pri, "PRI", PRI_READY_INFO, PRI_FALLBACK_INFO, pri_cast_ready)
+	else
+		reset_gate(gates.pri)
+	end
+
+	local pas_active = level_name == "jupiter_underground"
+		and info("cop_start")
+		and not info("pas_b400_task_given")
+	if pas_active then
+		update_gate(gates.pas, "PAS", PAS_READY_INFO, PAS_FALLBACK_INFO, pas_cast_ready)
+	else
+		reset_gate(gates.pas)
+	end
+end
+
+function on_game_start()
+	if callbacks_registered and type(UnregisterScriptCallback) == "function" then
+		UnregisterScriptCallback("actor_on_update", actor_update)
+	end
+	if type(RegisterScriptCallback) == "function" then
+		RegisterScriptCallback("actor_on_update", actor_update)
+		callbacks_registered = true
+	end
+	reset_gate(gates.pri)
+	reset_gate(gates.pas)
+	printf("* [anthology/cutscenes-v114] seamless CoP staging active")
+end
