@@ -1,0 +1,9 @@
+[logic]
+active = sr_idle@wait
+
+[sr_idle@wait]
+; The animated hermetic door already owns this exact start_snd. Playing the
+; same OGG again from a restrictor one second later caused doubling/phasing.
+on_info = {+jup_b219_opening} sr_idle@nil
+
+[sr_idle@nil]

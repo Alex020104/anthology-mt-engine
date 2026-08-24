@@ -3561,3 +3561,58 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The pre-v109 engine binaries, profile, settings, log and `HUDManager.cpp` are
   recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260824_v109_pre_mt_ui_frame_sync`.
+
+## 2026-08-24 - v110 CoP Underpass cinematic synchronization
+
+### Confirmed scene conflicts
+
+- The active pre-Underpass logic played
+  `ambient\\jupiter\\jup_b219_underpass_opening` from the animated hermetic
+  door and started the same sound theme again from a separate restrictor one
+  second later. This produced two spatial copies of the same OGG and audible
+  doubling/phasing.
+- `npc_dialog_sound_kill_fix.script` globally replaced scripted `npc_sound`
+  playback with a free `sound_object`. Its position was refreshed only when a
+  logic condition queried `is_playing`, so authored speech could stop following
+  a moving cinematic NPC and no longer used stock `sound_end` timing.
+- `zz_cutscene_smooth_bridge.script` globally inserted camera holds/easing and
+  a teleport override between every `sr_cutscene` segment. The CoP compound
+  sets `jup_b219_descent_camera` and `pri_a15_cameffector` already contain their
+  own authored transitions, so the extra bridge changed their timing.
+- A-Life v108 wrapped every online stalker spawn and applied an active
+  walker/animpoint target. The temporary `jup_b219`, `pas_b400` and `pri_a15`
+  actors already have exact scene logic, making that additional placement a
+  plausible source of visible jumps between camera frames.
+- `pri_a15_sr_cutscene.ltx` contained two `on_info2` entries with mutually
+  incompatible fallback actions. The effective result depended on duplicate
+  key handling.
+
+### v110 correction
+
+- `Anthology Cutscenes v110 - CoP Cinematic Sync` removes only the duplicate
+  restrictor copy of the hermetic-door sound; the sound owned by the animated
+  door remains intact.
+- Scripted themes prefixed `jup_b219_`, `pas_b400_` and `pri_a15_` use stock
+  `npc_sound` playback. The managed death-cleanup path remains active for all
+  ordinary dialogue.
+- The smooth-camera bridge is bypassed only for the two original compound CoP
+  camera sets. All other Anthology cutscenes retain the existing smoothing.
+- A-Life v108 remains active, but does not reposition actors belonging to the
+  three authored CoP cinematic smarts/prefixes. No persistent A-Life data or
+  save format is changed.
+- The duplicated Pripyat-arrival fallback is replaced by one deterministic
+  branch that repairs `pas_b400_done` and enters the normal scene path.
+
+### Validation, installation and rollback
+
+- All four addon scripts pass the Lua 5.1 parser. The dedicated v110 smoke test
+  verifies the three cinematic sound prefixes and both strict camera sets; the
+  full v108 deferred smart-cover smoke test still passes. The two overridden
+  LTX files contain no duplicate keys and `git diff --check` passes.
+- The standalone addon is stored under `D:/ANTHOLOGY_DEV/addons`, junctioned
+  into MO2 and enabled first in the HARD profile. v109, v108, PiP, SSS, spatial
+  audio and engine binaries are otherwise unchanged. A new game and shader
+  cache purge are not required; the game was not launched.
+- The pre-v110 profile, active base scripts/configs, v108 addon and log are
+  recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260824_v110_pre_cop_cinematic_sync`.

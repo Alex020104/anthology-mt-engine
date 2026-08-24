@@ -1,0 +1,663 @@
+local original_setup_logic = nil
+local original_net_spawn = nil
+local wrappers_installed = false
+local callbacks_registered = false
+local error_reported = false
+
+local spawn_context = {}
+local final_targets = {}
+local pending_by_cover = {}
+local pending_by_npc = {}
+local observed_covers = {}
+local placed_ids = {}
+local logged_npcs = {}
+local logged_misses = {}
+local logged_arrivals = {}
+local diagnostic_budget = 60
+local miss_budget = 30
+local arrival_budget = 12
+
+local stats = {}
+
+local INVALID_SMART_ID = 65535
+local INVALID_LEVEL_VERTEX = 4294967295
+local ARRIVED_DISTANCE_SQR = 30 * 30
+
+local function reset_stats()
+	stats = {
+		seen = 0,
+		placed = 0,
+		finalized = 0,
+		deferred = 0,
+		deferred_placed = 0,
+		covers = 0,
+		near_arrival = 0,
+		far_arrival = 0,
+		missed = 0,
+		failed = 0,
+	}
+end
+
+local function valid_vertex(level_vertex)
+	return type(level_vertex) == "number"
+		and level_vertex >= 0
+		and level_vertex ~= INVALID_LEVEL_VERTEX
+end
+
+local function safe_name(object)
+	if not (object and object.name) then
+		return "?"
+	end
+	local ok, name = pcall(object.name, object)
+	return ok and tostring(name) or "?"
+end
+
+local function safe_section_name(object)
+	if not (object and object.section_name) then
+		return "?"
+	end
+	local ok, name = pcall(object.section_name, object)
+	return ok and tostring(name) or "?"
+end
+
+local function starts_with(value, prefix)
+	return type(value) == "string"
+		and string.sub(value, 1, #prefix) == prefix
+end
+
+-- v108 is intentionally global, but CoP cinematics already own exact spawn,
+-- walker and animpoint placement. Re-applying a smart target from net_spawn
+-- can visibly throw those actors between authored camera frames.
+local function is_authored_cop_cinematic(npc, smart, se_obj)
+	local smart_name = safe_name(smart)
+	if smart_name == "jup_b219" or smart_name == "pas_b400" or smart_name == "pri_a15" then
+		return true
+	end
+
+	local names = {
+		safe_name(npc),
+		safe_name(se_obj),
+		safe_section_name(se_obj),
+	}
+	for _, name in ipairs(names) do
+		if starts_with(name, "jup_b219_")
+		or starts_with(name, "pas_b400_")
+		or starts_with(name, "pri_a15_") then
+			return true
+		end
+	end
+	return false
+end
+
+local function copy_position(position)
+	if not position then
+		return nil
+	end
+	local ok, result = pcall(function()
+		return vector():set(position)
+	end)
+	return ok and result or position
+end
+
+local function safe_set_position(npc, position)
+	if not (npc and position and npc.set_npc_position) then
+		return false
+	end
+	return pcall(npc.set_npc_position, npc, copy_position(position))
+end
+
+local function vertex_for_position(position)
+	if not (position and level and level.vertex_id) then
+		return nil
+	end
+	local ok, level_vertex = pcall(level.vertex_id, copy_position(position))
+	return ok and valid_vertex(level_vertex) and level_vertex or nil
+end
+
+local function is_origin_placeholder(position)
+	if not position then
+		return true
+	end
+	local ok, is_origin = pcall(function()
+		return math.abs(position.x or 0) < 0.001
+			and math.abs(position.y or 0) < 0.001
+			and math.abs(position.z or 0) < 0.001
+	end)
+	return ok and is_origin or false
+end
+
+local function smart_for(se_obj)
+	if not se_obj then
+		return nil, nil
+	end
+	local smart_id = se_obj.m_smart_terrain_id
+	if not (smart_id and smart_id ~= INVALID_SMART_ID) then
+		return nil, nil
+	end
+	local simulation = alife and alife()
+	return simulation and simulation:object(smart_id), smart_id
+end
+
+local function truly_arriving(se_obj, smart, npc_id)
+	if not (smart and smart.arriving_npc and smart.arriving_npc[npc_id]) then
+		return false, false
+	end
+	local source = se_obj and se_obj.position
+	local destination = smart.position
+	if source and destination then
+		local ok, distance_sqr = pcall(source.distance_to_sqr, source, destination)
+		if ok and type(distance_sqr) == "number" and distance_sqr <= ARRIVED_DISTANCE_SQR then
+			return false, true
+		end
+	end
+	return true, false
+end
+
+local function read_ini_value(ini, section, key)
+	if not (ini and section and key and ini.r_string_ex) then
+		return nil
+	end
+	local ok, value = pcall(ini.r_string_ex, ini, section, key)
+	return ok and value or nil
+end
+
+local function make_target(position, level_vertex, source, scheme, section, cover_name)
+	if not position then
+		return nil
+	end
+	if not valid_vertex(level_vertex) then
+		level_vertex = vertex_for_position(position)
+	end
+	return {
+		position = copy_position(position),
+		level_vertex = level_vertex,
+		source = source,
+		scheme = scheme,
+		section = section,
+		cover_name = cover_name,
+	}
+end
+
+local function target_from_desired(desired, source, scheme, section)
+	if type(desired) ~= "table" then
+		return nil
+	end
+	if desired.active_section and section and tostring(desired.active_section) ~= tostring(section) then
+		return nil
+	end
+	return make_target(
+		desired.animpoint or desired.position,
+		desired.level_vertex_id,
+		source,
+		scheme,
+		section
+	)
+end
+
+local function target_from_beh(npc, root, scheme, section)
+	local beh = root and root.beh
+	if not beh then
+		return nil
+	end
+	local existing = target_from_desired(beh.desired_target, "beh_desired", scheme, section)
+	if existing then
+		return existing
+	end
+	local pt1 = read_ini_value(root.ini, section, "pt1")
+	if not (type(pt1) == "string" and
+		(string.find(pt1, "animpoint:", 1, true) or string.find(pt1, "pos:", 1, true))) then
+		return nil
+	end
+	if not (xr_logic_ex and type(xr_logic_ex.load_animpoint) == "function") then
+		return nil
+	end
+	local ok, desired = pcall(xr_logic_ex.load_animpoint, npc, 1)
+	if not ok then
+		return nil
+	end
+	return target_from_desired(desired, "beh_pt1", scheme, section)
+end
+
+local function smart_cover_name(se_obj)
+	if not se_obj then
+		return nil
+	end
+	if type(se_obj.dynamic_name) == "string" and se_obj.dynamic_name ~= "" then
+		return se_obj.dynamic_name
+	end
+	local name = safe_name(se_obj)
+	return name ~= "?" and name or nil
+end
+
+local function target_from_cover_name(cover_name, scheme, section)
+	if not cover_name then
+		return nil
+	end
+	local registry = se_smart_cover and se_smart_cover.registered_smartcovers
+	local cover = registry and registry[cover_name] or observed_covers[cover_name]
+	local position = cover and cover.position
+	if is_origin_placeholder(position) then
+		return nil
+	end
+	return make_target(position, nil, "animpoint_cover", scheme, section, cover_name)
+end
+
+local function target_from_path(path_name, source, scheme, section)
+	if not (path_name and patrol) then
+		return nil
+	end
+	if level and type(level.patrol_path_exists) == "function" then
+		local exists_ok, exists = pcall(level.patrol_path_exists, path_name)
+		if exists_ok and not exists then
+			return nil
+		end
+	end
+	local ok, path = pcall(patrol, path_name)
+	if not (ok and path) then
+		return nil
+	end
+	local count_ok, count = pcall(path.count, path)
+	if count_ok and type(count) == "number" and count <= 0 then
+		return nil
+	end
+	local point_ok, position = pcall(path.point, path, 0)
+	if not (point_ok and position) then
+		return nil
+	end
+	local vertex_ok, level_vertex = pcall(path.level_vertex_id, path, 0)
+	if not vertex_ok then
+		level_vertex = nil
+	end
+	return make_target(position, level_vertex, source, scheme, section)
+end
+
+local function resolve_active_scheme_target(npc)
+	local npc_id = npc and npc:id()
+	local root = npc_id and db and db.storage and db.storage[npc_id]
+	if not root then
+		return nil, nil, nil, nil
+	end
+	local scheme = root.active_scheme and tostring(root.active_scheme) or "?"
+	local section = root.active_section and tostring(root.active_section) or "?"
+	local storage = root[scheme]
+
+	if scheme == "beh" then
+		return target_from_beh(npc, root, scheme, section), scheme, section, nil
+	end
+	if scheme == "animpoint" then
+		local cover_name = storage and storage.cover_name
+		return target_from_cover_name(cover_name, scheme, section), scheme, section, cover_name
+	end
+	if scheme == "walker" or scheme == "camper" then
+		return target_from_path(storage and storage.path_walk, scheme .. "_path", scheme, section),
+			scheme, section, nil
+	end
+
+	-- Deliberately do not fall back to arbitrary storage.path_walk or storage.position.
+	-- That old fallback also moved mob_walker monsters and could use zero placeholders.
+	return nil, scheme, section, nil
+end
+
+local function job_section(smart, npc_id)
+	local info = smart and smart.npc_info and smart.npc_info[npc_id]
+	return info and info.job and info.job.section or "?"
+end
+
+local function seed_stock_redirect(npc_id, target)
+	if target.level_vertex and db and db.spawned_vertex_by_id then
+		db.spawned_vertex_by_id[npc_id] = target.level_vertex
+	end
+end
+
+local function position_text(position)
+	local ok, result = pcall(function()
+		return string.format("%.2f,%.2f,%.2f", position.x, position.y, position.z)
+	end)
+	return ok and result or "?"
+end
+
+local function log_target(npc, smart, npc_id, target, stage, was_near_arrival)
+	if logged_npcs[npc_id] or diagnostic_budget <= 0 then
+		return
+	end
+	logged_npcs[npc_id] = true
+	diagnostic_budget = diagnostic_budget - 1
+	printf("%s", string.format(
+		"* [anthology/alife-v108] npc=%s id=%s smart=%s job=%s scheme=%s section=%s source=%s cover=%s vertex=%s pos=%s stage=%s near_arrival=%s",
+		safe_name(npc), tostring(npc_id), safe_name(smart), tostring(job_section(smart, npc_id)),
+		tostring(target.scheme or "?"), tostring(target.section or "?"), tostring(target.source or "?"),
+		tostring(target.cover_name or "?"), tostring(target.level_vertex or "?"),
+		position_text(target.position), tostring(stage), tostring(was_near_arrival)
+	))
+end
+
+local function log_miss(npc, smart, npc_id, scheme, section, cover_name)
+	if logged_misses[npc_id] or miss_budget <= 0 then
+		return
+	end
+	logged_misses[npc_id] = true
+	miss_budget = miss_budget - 1
+	printf("%s", string.format(
+		"* [anthology/alife-v108] pending/missing target npc=%s id=%s smart=%s job=%s scheme=%s section=%s cover=%s",
+		safe_name(npc), tostring(npc_id), safe_name(smart), tostring(job_section(smart, npc_id)),
+		tostring(scheme or "?"), tostring(section or "?"), tostring(cover_name or "?")
+	))
+end
+
+local function log_far_arrival(npc, smart, npc_id)
+	if logged_arrivals[npc_id] or arrival_budget <= 0 then
+		return
+	end
+	logged_arrivals[npc_id] = true
+	arrival_budget = arrival_budget - 1
+	printf("%s", string.format(
+		"* [anthology/alife-v108] keep real arrival npc=%s id=%s smart=%s",
+		safe_name(npc), tostring(npc_id), safe_name(smart)
+	))
+end
+
+local function report_error(stage, err)
+	stats.failed = stats.failed + 1
+	if error_reported then
+		return
+	end
+	error_reported = true
+	printf("%s", "! [anthology/alife-v108] " .. tostring(stage) .. " skipped safely: " .. tostring(err))
+end
+
+local function remove_pending(npc_id)
+	local entry = pending_by_npc[npc_id]
+	if not entry then
+		return
+	end
+	local bucket = pending_by_cover[entry.cover_name]
+	if bucket then
+		bucket[npc_id] = nil
+		if next(bucket) == nil then
+			pending_by_cover[entry.cover_name] = nil
+		end
+	end
+	pending_by_npc[npc_id] = nil
+end
+
+local function queue_pending_cover(npc_id, cover_name, section, smart_id)
+	if not (npc_id and cover_name) then
+		return
+	end
+	local old = pending_by_npc[npc_id]
+	if old and old.cover_name == cover_name and old.section == section then
+		return
+	end
+	remove_pending(npc_id)
+	local entry = {
+		npc_id = npc_id,
+		cover_name = cover_name,
+		section = section,
+		smart_id = smart_id,
+	}
+	pending_by_npc[npc_id] = entry
+	pending_by_cover[cover_name] = pending_by_cover[cover_name] or {}
+	pending_by_cover[cover_name][npc_id] = entry
+	stats.deferred = stats.deferred + 1
+end
+
+local function apply_active_target(npc, smart, se_obj, stage, report_missing)
+	local npc_id = se_obj and se_obj.id or (npc and npc:id())
+	if not npc_id then
+		return false
+	end
+	if is_authored_cop_cinematic(npc, smart, se_obj) then
+		remove_pending(npc_id)
+		return false
+	end
+	local is_arriving, was_near_arrival = truly_arriving(se_obj, smart, npc_id)
+	if is_arriving then
+		if not logged_arrivals[npc_id] then
+			stats.far_arrival = stats.far_arrival + 1
+		end
+		remove_pending(npc_id)
+		log_far_arrival(npc, smart, npc_id)
+		return false
+	end
+
+	local target, scheme, section, waiting_cover = resolve_active_scheme_target(npc)
+	if not target then
+		if waiting_cover then
+			local smart_id = se_obj and se_obj.m_smart_terrain_id or nil
+			queue_pending_cover(npc_id, waiting_cover, section, smart_id)
+		end
+		if report_missing then
+			stats.missed = stats.missed + 1
+			log_miss(npc, smart, npc_id, scheme, section, waiting_cover)
+		end
+		return false
+	end
+
+	remove_pending(npc_id)
+	if not safe_set_position(npc, target.position) then
+		stats.failed = stats.failed + 1
+		return false
+	end
+	if stage ~= "after_net_spawn" then
+		seed_stock_redirect(npc_id, target)
+	end
+	final_targets[npc_id] = target
+	if not placed_ids[npc_id] then
+		placed_ids[npc_id] = true
+		stats.placed = stats.placed + 1
+		if was_near_arrival then
+			stats.near_arrival = stats.near_arrival + 1
+		end
+	end
+	log_target(npc, smart, npc_id, target, stage, was_near_arrival)
+	return true
+end
+
+local function record_smart_cover(se_obj, type_name)
+	if tostring(type_name or "") ~= "se_smart_cover" then
+		return
+	end
+	local cover_name = smart_cover_name(se_obj)
+	local position = se_obj and se_obj.position
+	if not (cover_name and not is_origin_placeholder(position)) then
+		return
+	end
+	if not observed_covers[cover_name] then
+		stats.covers = stats.covers + 1
+	end
+	observed_covers[cover_name] = {
+		position = copy_position(position),
+	}
+end
+
+local function forget_smart_cover(se_obj, type_name)
+	if tostring(type_name or "") ~= "se_smart_cover" then
+		return
+	end
+	local cover_name = smart_cover_name(se_obj)
+	if cover_name then
+		observed_covers[cover_name] = nil
+	end
+end
+
+local function pending_status(entry)
+	local root = db and db.storage and db.storage[entry.npc_id]
+	if not root then
+		return "wait"
+	end
+	if tostring(root.active_scheme or "") ~= "animpoint" then
+		return "stale"
+	end
+	local storage = root.animpoint
+	if not (storage and tostring(storage.cover_name or "") == tostring(entry.cover_name)) then
+		return "stale"
+	end
+	if entry.section and root.active_section and tostring(root.active_section) ~= tostring(entry.section) then
+		return "stale"
+	end
+	local target = target_from_cover_name(entry.cover_name, "animpoint", tostring(root.active_section or "?"))
+	if not target then
+		return "wait"
+	end
+	local npc = level and level.object_by_id and level.object_by_id(entry.npc_id)
+	if not npc then
+		return "wait"
+	end
+	if not safe_set_position(npc, target.position) then
+		stats.failed = stats.failed + 1
+		return "wait"
+	end
+	local simulation = alife and alife()
+	local smart = simulation and entry.smart_id and simulation:object(entry.smart_id) or nil
+	stats.deferred_placed = stats.deferred_placed + 1
+	if not placed_ids[entry.npc_id] then
+		placed_ids[entry.npc_id] = true
+		stats.placed = stats.placed + 1
+	end
+	log_target(npc, smart, entry.npc_id, target, "actor_first_update", false)
+	return "placed"
+end
+
+local function actor_first_update()
+	local pending_snapshot = {}
+	for npc_id, entry in pairs(pending_by_npc) do
+		pending_snapshot[#pending_snapshot + 1] = { npc_id = npc_id, entry = entry }
+	end
+	for _, item in ipairs(pending_snapshot) do
+		local ok, status = pcall(pending_status, item.entry)
+		if not ok then
+			report_error("deferred_cover", status)
+		elseif status == "placed" or status == "stale" then
+			remove_pending(item.npc_id)
+		end
+	end
+	local unresolved = 0
+	for _ in pairs(pending_by_npc) do
+		unresolved = unresolved + 1
+	end
+	printf("%s", string.format(
+		"* [anthology/alife-v108] load summary seen=%d placed=%d finalized=%d deferred=%d deferred_placed=%d unresolved=%d covers=%d near_arrival=%d far_arrival=%d missed=%d failed=%d",
+		stats.seen, stats.placed, stats.finalized, stats.deferred, stats.deferred_placed, unresolved,
+		stats.covers, stats.near_arrival, stats.far_arrival, stats.missed, stats.failed
+	))
+end
+
+local function install_setup_logic_wrapper()
+	local smart_class = smart_terrain and smart_terrain.se_smart_terrain
+	local current = smart_class and smart_class.setup_logic
+	if not current then
+		return false
+	end
+	original_setup_logic = current
+	smart_class.setup_logic = function(self, npc, ...)
+		local result = original_setup_logic(self, npc, ...)
+		local npc_id = npc and npc:id()
+		local context = npc_id and spawn_context[npc_id]
+		if context then
+			local ok, err = pcall(apply_active_target, npc, self, context.se_obj, "after_setup_logic", false)
+			if not ok then
+				report_error("setup_logic", err)
+			end
+		end
+		return result
+	end
+	return true
+end
+
+local function install_net_spawn_wrapper()
+	local binder = xr_motivator and xr_motivator.motivator_binder
+	local current = binder and binder.net_spawn
+	if not current then
+		return false
+	end
+	original_net_spawn = current
+	binder.net_spawn = function(self, se_abstract)
+		local npc = self and self.object
+		local npc_id = npc and npc:id()
+		if npc_id then
+			stats.seen = stats.seen + 1
+			final_targets[npc_id] = nil
+			spawn_context[npc_id] = { se_obj = se_abstract }
+		end
+
+		local result = original_net_spawn(self, se_abstract)
+		if npc_id then
+			spawn_context[npc_id] = nil
+		end
+		if result == false then
+			if npc_id then
+				final_targets[npc_id] = nil
+				remove_pending(npc_id)
+			end
+			return result
+		end
+
+		local smart = smart_for(se_abstract)
+		if npc_id and not final_targets[npc_id] then
+			local ok, err = pcall(apply_active_target, npc, smart, se_abstract, "after_net_spawn", true)
+			if not ok then
+				report_error("net_spawn_target", err)
+			end
+		end
+		local target = npc_id and final_targets[npc_id]
+		if target and safe_set_position(npc, target.position) then
+			stats.finalized = stats.finalized + 1
+		end
+		if npc_id then
+			final_targets[npc_id] = nil
+		end
+		return result
+	end
+	return true
+end
+
+local function install_wrappers()
+	if wrappers_installed then
+		return
+	end
+	local setup_logic_ok = install_setup_logic_wrapper()
+	local net_spawn_ok = install_net_spawn_wrapper()
+	wrappers_installed = setup_logic_ok and net_spawn_ok
+	printf("%s", string.format(
+		"* [anthology/alife-v108] deferred smart-cover placement: setup_logic=%s net_spawn=%s",
+		tostring(setup_logic_ok), tostring(net_spawn_ok)
+	))
+end
+
+local function register_callbacks()
+	if callbacks_registered and type(UnregisterScriptCallback) == "function" then
+		UnregisterScriptCallback("server_entity_on_register", record_smart_cover)
+		UnregisterScriptCallback("server_entity_on_unregister", forget_smart_cover)
+		UnregisterScriptCallback("actor_on_first_update", actor_first_update)
+	end
+	if type(RegisterScriptCallback) ~= "function" then
+		return false
+	end
+	RegisterScriptCallback("server_entity_on_register", record_smart_cover)
+	RegisterScriptCallback("server_entity_on_unregister", forget_smart_cover)
+	RegisterScriptCallback("actor_on_first_update", actor_first_update)
+	callbacks_registered = true
+	return true
+end
+
+function on_game_start()
+	spawn_context = {}
+	final_targets = {}
+	pending_by_cover = {}
+	pending_by_npc = {}
+	observed_covers = {}
+	placed_ids = {}
+	logged_npcs = {}
+	logged_misses = {}
+	logged_arrivals = {}
+	diagnostic_budget = 60
+	miss_budget = 30
+	arrival_budget = 12
+	error_reported = false
+	reset_stats()
+	install_wrappers()
+	local callbacks_ok = register_callbacks()
+	printf("%s", "* [anthology/alife-v108] callbacks registered=" .. tostring(callbacks_ok))
+end
+
+reset_stats()

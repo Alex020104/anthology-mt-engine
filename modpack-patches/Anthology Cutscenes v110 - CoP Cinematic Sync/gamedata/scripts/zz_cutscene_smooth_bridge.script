@@ -1,0 +1,278 @@
+-- Cutscene Smooth Bridge
+-- Small runtime patch for sr_cutscene camera starts/stops.
+
+local cfg = {
+	cam_effector_id = 210408,
+	hold_seconds = 0.08,
+	release_seconds = 0.32,
+	release_smoothing = 8,
+	skip_teleport_distance_sqr = 0.04,
+	log = false,
+}
+
+local patched = false
+local original = {}
+local bridge_event_id = "cutscene_smooth_bridge"
+
+-- These compound camera sets are authored as tightly timed CoP sequences.
+-- Adding a hold/ease between their segments changes camera/sound timing and
+-- can leave the actor or scene NPCs visible between the original motions.
+local strict_cop_camera_sets = {
+	jup_b219_descent_camera = true,
+	pri_a15_cameffector = true,
+}
+
+local function is_strict_cop_scene(st)
+	local effects = st and st.cam_effector
+	if type(effects) == "string" then
+		return strict_cop_camera_sets[effects] == true
+	end
+	if type(effects) ~= "table" then
+		return false
+	end
+	for _, effect in ipairs(effects) do
+		if strict_cop_camera_sets[effect] then
+			return true
+		end
+	end
+	return false
+end
+
+local function dbg(msg)
+	if cfg.log then
+		printf("[cutscene_smooth_bridge] %s", tostring(msg))
+	end
+end
+
+local function safe_call(fn, ...)
+	if not fn then
+		return false
+	end
+
+	local ok = pcall(fn, ...)
+	if not ok then
+		dbg("safe_call failed")
+	end
+	return ok
+end
+
+local function copy_vector(v)
+	return v and vector():set(v) or nil
+end
+
+local function hpb_from_dir(dir)
+	if not dir then
+		return vector():set(0, 0, 0)
+	end
+	return vector():set(dir:getH(), dir:getP(), 0)
+end
+
+local function hpb_from_cutscene_look(st)
+	if not (st and st.point and st.look and st.point ~= "none" and st.look ~= "none") then
+		return nil
+	end
+
+	local point = patrol(st.point)
+	local look = patrol(st.look)
+	if not (point and look) then
+		return nil
+	end
+
+	local dir = vector():set(look:point(0))
+	dir:sub(point:point(0))
+	return vector():set(-dir:getH(), 0, 0)
+end
+
+local function actor_eye_position()
+	if not (db and db.actor) then
+		return copy_vector(device().cam_pos)
+	end
+
+	local pos = vector():set(db.actor:position())
+	pos.y = pos.y + 1.55
+	return pos
+end
+
+local function remove_bridge()
+	safe_call(level.remove_cam_custom_position_direction)
+	return true
+end
+
+local function schedule_bridge_remove(delay)
+	RemoveTimeEvent(bridge_event_id, "remove")
+	CreateTimeEvent(bridge_event_id, "remove", delay or cfg.hold_seconds, remove_bridge)
+end
+
+local function hold_camera_now(delay)
+	if not (level.set_cam_custom_position_direction and device) then
+		return
+	end
+
+	local dev = device()
+	local pos = copy_vector(dev.cam_pos)
+	local hpb = hpb_from_dir(dev.cam_dir)
+	if not (pos and hpb) then
+		return
+	end
+
+	safe_call(level.set_cam_custom_position_direction, pos, hpb, 1, false, false)
+	schedule_bridge_remove(delay or cfg.hold_seconds)
+end
+
+local function ease_bridge_to_actor(st)
+	if not level.set_cam_custom_position_direction then
+		return
+	end
+
+	local pos = actor_eye_position()
+	local hpb = hpb_from_cutscene_look(st) or hpb_from_dir(device().cam_dir)
+	if not (pos and hpb) then
+		return
+	end
+
+	safe_call(level.set_cam_custom_position_direction, pos, hpb, cfg.release_smoothing, false, false)
+	schedule_bridge_remove(cfg.release_seconds)
+end
+
+local function stop_active_cutscene_effector()
+	if level.remove_cam_effector then
+		safe_call(level.remove_cam_effector, cfg.cam_effector_id)
+	end
+end
+
+local function actor_is_already_at(point_name)
+	if not (db and db.actor and point_name and point_name ~= "none") then
+		return false
+	end
+
+	local point = patrol(point_name)
+	if not point then
+		return false
+	end
+
+	return db.actor:position():distance_to_sqr(point:point(0)) <= cfg.skip_teleport_distance_sqr
+end
+
+local function set_actor_look(point_name, look_name)
+	if not (db and db.actor and point_name and look_name and point_name ~= "none" and look_name ~= "none") then
+		return
+	end
+
+	local point = patrol(point_name)
+	local look = patrol(look_name)
+	if not (point and look) then
+		return
+	end
+
+	db.actor:set_actor_direction(-look:point(0):sub(point:point(0)):getH())
+end
+
+local function sr_cutscene_classes()
+	local sr = rawget(_G, "sr_cutscene")
+	local cam_class = rawget(_G, "cam_effector_set") or (sr and sr.cam_effector_set)
+	local action_class = rawget(_G, "action_cutscene") or (sr and sr.action_cutscene)
+	return cam_class, action_class
+end
+
+local function install_patch()
+	if patched then
+		return true
+	end
+
+	local cam_class, action_class = sr_cutscene_classes()
+	if not (cam_class and cam_class.start_effect and cam_class.stop_effect) then
+		return false
+	end
+	if not (action_class and action_class.zone_enter and action_class.cutscene_callback) then
+		return false
+	end
+
+	original.start_effect = cam_class.start_effect
+	original.stop_effect = cam_class.stop_effect
+	original.zone_enter = action_class.zone_enter
+	original.cutscene_callback = action_class.cutscene_callback
+
+	function cam_class:start_effect(eff)
+		if is_strict_cop_scene(self.st) then
+			return original.start_effect(self, eff)
+		end
+		if eff and eff.global_cameffect then
+			hold_camera_now(cfg.hold_seconds)
+		end
+		return original.start_effect(self, eff)
+	end
+
+	function cam_class:stop_effect()
+		if is_strict_cop_scene(self.st) then
+			return original.stop_effect(self)
+		end
+		hold_camera_now(cfg.release_seconds)
+		local result = original.stop_effect(self)
+		ease_bridge_to_actor(self.st)
+		return result
+	end
+
+	function action_class:zone_enter()
+		if is_strict_cop_scene(self.st) then
+			return original.zone_enter(self)
+		end
+		hold_camera_now(cfg.hold_seconds)
+		stop_active_cutscene_effector()
+
+		local old_teleport = xr_effects and xr_effects.teleport_actor
+		if old_teleport then
+			xr_effects.teleport_actor = function(actor, npc, p)
+				if p and actor_is_already_at(p[1]) then
+					set_actor_look(p[1], p[2])
+					return
+				end
+				return old_teleport(actor, npc, p)
+			end
+		end
+
+		local ok, result = pcall(original.zone_enter, self)
+
+		if old_teleport then
+			xr_effects.teleport_actor = old_teleport
+		end
+
+		if not ok then
+			error(result)
+		end
+		return result
+	end
+
+	function action_class:cutscene_callback()
+		if is_strict_cop_scene(self.st) then
+			return original.cutscene_callback(self)
+		end
+		hold_camera_now(cfg.hold_seconds)
+
+		local before_motion = self.motion
+		local result = original.cutscene_callback(self)
+
+		if before_motion and self.motion == nil then
+			ease_bridge_to_actor(self.st)
+		end
+
+		return result
+	end
+
+	patched = true
+	dbg("installed")
+	return true
+end
+
+local function delayed_install()
+	if install_patch() then
+		return true
+	end
+
+	return false
+end
+
+function on_game_start()
+	if not install_patch() then
+		CreateTimeEvent(bridge_event_id, "install_retry", 0.5, delayed_install)
+	end
+end

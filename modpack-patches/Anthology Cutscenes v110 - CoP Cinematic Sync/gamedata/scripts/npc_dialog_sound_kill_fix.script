@@ -1,0 +1,371 @@
+-- Stops scripted NPC dialog sounds when the speaker dies.
+-- Vanilla npc:play_sound cannot be stopped safely after death, so logic
+-- effect sounds are played through managed sound_object handles instead.
+
+local active_sounds = {}
+local managed_play_depth = 0
+local update_next = 0
+local update_period = 250
+
+local original_xr_effects_play_sound
+local original_xr_sound_stop_sounds_by_id
+local original_npc_sound_play
+local original_npc_sound_stop
+local original_npc_sound_reset
+local original_npc_sound_is_playing
+
+local math_floor = math.floor
+local string_gsub = string.gsub
+local string_sub = string.sub
+local tonumber = tonumber
+
+-- CoP story scenes depend on the stock npc_sound object staying attached to
+-- the animated NPC and on its native sound_end timing. The managed free
+-- sound_object path is useful for ordinary dialogue death cleanup, but it
+-- breaks those two assumptions during the Underpass cinematic chain.
+local cinematic_theme_prefixes = {
+	"jup_b219_",
+	"pas_b400_",
+	"pri_a15_",
+}
+
+local function is_cop_cinematic_theme(theme_name)
+	if type(theme_name) ~= "string" then
+		return false
+	end
+	for _, prefix in ipairs(cinematic_theme_prefixes) do
+		if string_sub(theme_name, 1, #prefix) == prefix then
+			return true
+		end
+	end
+	return false
+end
+
+local function get_npc(npc_id)
+	local st = db and db.storage and db.storage[npc_id]
+	if st and st.object then
+		return st.object
+	end
+
+	if level and level.object_by_id then
+		return level.object_by_id(npc_id)
+	end
+end
+
+local function object_alive(obj)
+	if not obj then
+		return false
+	end
+
+	local ok, alive = pcall(function()
+		return obj:alive()
+	end)
+	return ok and alive
+end
+
+local function sound_position(obj)
+	local pos = obj:position()
+	pos.y = pos.y + 1.6
+	return pos
+end
+
+local function stop_pda_sound(theme)
+	if theme and theme.pda_snd_obj and theme.pda_snd_obj:playing() then
+		theme.pda_snd_obj:stop()
+	end
+	if theme then
+		theme.pda_snd_obj = nil
+	end
+end
+
+local function stop_active_sound(npc_id)
+	local rec = active_sounds[npc_id]
+	if rec then
+		if rec.snd_obj and rec.snd_obj:playing() then
+			rec.snd_obj:stop()
+		end
+		stop_pda_sound(rec.theme)
+		active_sounds[npc_id] = nil
+	end
+end
+
+local function stop_active_sound_for_obj(obj)
+	if obj then
+		stop_active_sound(obj:id())
+	end
+end
+
+local function managed_npc_sound_play(theme, npc_id, faction, point)
+	if managed_play_depth <= 0 or theme.is_combat_sound then
+		return original_npc_sound_play(theme, npc_id, faction, point)
+	end
+
+	local npc = get_npc(npc_id)
+	if not npc then
+		return false
+	end
+
+	local npc_data = theme.npc and theme.npc[npc_id]
+	if not npc_data then
+		return false
+	end
+
+	if theme.group_snd then
+		if theme.can_play_group_sound == false then
+			return false
+		end
+	elseif can_play_sound and can_play_sound[npc_id] == false then
+		return false
+	end
+
+	if theme.played_time ~= nil and time_global() - theme.played_time < theme.idle_time then
+		return false
+	end
+	theme.played_time = nil
+
+	theme.played_id = theme:select_next_sound(npc_id)
+	if theme.played_id == -1 then
+		return false
+	end
+
+	local table_id = theme.played_id + 1
+	local npc_paths = theme.sound_path and theme.sound_path[npc_id]
+	local snd = npc_paths and npc_paths[table_id]
+	if not snd then
+		return false
+	end
+
+	stop_active_sound(npc_id)
+	stop_pda_sound(theme)
+
+	local snd_obj = sound_object(snd)
+	local delay = tonumber(theme.delay_sound) or 0
+	snd_obj:play_at_pos(npc, sound_position(npc), delay, sound_object.s3d)
+
+	local now = time_global()
+	local delay_ms = math_floor(delay * 1000)
+	active_sounds[npc_id] = {
+		theme = theme,
+		snd_obj = snd_obj,
+		start_time = now + delay_ms,
+		grace_time = now + delay_ms + 250
+	}
+
+	if db and db.actor and npc:position():distance_to_sqr(db.actor:position()) >= 100 and getFS():exist("$game_sounds$", snd .. "_pda.ogg") ~= nil then
+		theme.pda_snd_obj = sound_object(snd .. "_pda")
+		theme.pda_snd_obj:play_at_pos(db.actor, VEC_ZERO, delay, sound_object.s2d)
+		theme.pda_snd_obj.volume = 0.8
+	end
+
+	local snd_st = string_gsub(snd, "\\", "_")
+	local caption_handled = closecaption and closecaption.sound and closecaption.sound(snd, snd_obj:length(), npc, faction, point, delay)
+	if not caption_handled and news_manager and news_manager.send_sound then
+		if game.translate_string(snd_st) ~= snd_st then
+			faction = faction or character_community(npc)
+			if not point then
+				point = npc:profile_name() .. "_name"
+				if game.translate_string(point) == point then
+					point = nil
+				end
+			end
+			news_manager.send_sound(npc, faction, point, snd, snd_st, delay)
+		else
+			news_manager.send_sound(npc, faction, point, snd, nil, delay)
+		end
+	end
+
+	if theme.group_snd then
+		theme.can_play_group_sound = false
+	end
+	if can_play_sound then
+		can_play_sound[npc_id] = false
+	end
+
+	return true
+end
+
+local function managed_npc_sound_is_playing(theme, npc_id)
+	local rec = active_sounds[npc_id]
+	if rec then
+		local npc = get_npc(npc_id)
+		local now = time_global()
+
+		if rec.snd_obj and (rec.snd_obj:playing() or now < rec.grace_time) then
+			if npc then
+				rec.snd_obj:set_position(sound_position(npc))
+			end
+			return true
+		end
+
+		active_sounds[npc_id] = nil
+	end
+
+	return original_npc_sound_is_playing(theme, npc_id)
+end
+
+local function managed_npc_sound_stop(theme, npc_id)
+	stop_active_sound(npc_id)
+	return original_npc_sound_stop(theme, npc_id)
+end
+
+local function managed_npc_sound_reset(theme, npc_id)
+	stop_active_sound(npc_id)
+	return original_npc_sound_reset(theme, npc_id)
+end
+
+local function patch_sound_theme()
+	if not (npc_sound and npc_sound.play and npc_sound.stop and npc_sound.reset and npc_sound.is_playing) then
+		return false
+	end
+	if original_npc_sound_play then
+		return true
+	end
+
+	original_npc_sound_play = npc_sound.play
+	original_npc_sound_stop = npc_sound.stop
+	original_npc_sound_reset = npc_sound.reset
+	original_npc_sound_is_playing = npc_sound.is_playing
+
+	function npc_sound:play(npc_id, faction, point)
+		return managed_npc_sound_play(self, npc_id, faction, point)
+	end
+
+	function npc_sound:is_playing(npc_id)
+		return managed_npc_sound_is_playing(self, npc_id)
+	end
+
+	function npc_sound:stop(npc_id)
+		return managed_npc_sound_stop(self, npc_id)
+	end
+
+	function npc_sound:reset(npc_id)
+		return managed_npc_sound_reset(self, npc_id)
+	end
+
+	return true
+end
+
+local function patch_xr_effects()
+	if not (xr_effects and xr_effects.play_sound) then
+		return false
+	end
+	if original_xr_effects_play_sound then
+		return true
+	end
+
+	original_xr_effects_play_sound = xr_effects.play_sound
+
+	function xr_effects.play_sound(actor, obj, p)
+		-- Preserve the original CoP playback path for authored cinematic speech.
+		-- This keeps the voice anchored to a moving NPC and lets stock sound_end
+		-- signals drive the scene without the managed sound_object substitute.
+		if p and is_cop_cinematic_theme(p[1]) then
+			return original_xr_effects_play_sound(actor, obj, p)
+		end
+
+		managed_play_depth = managed_play_depth + 1
+		local ok, result = pcall(original_xr_effects_play_sound, actor, obj, p)
+		managed_play_depth = managed_play_depth - 1
+		if not ok then
+			error(result)
+		end
+		return result
+	end
+
+	return true
+end
+
+local function patch_xr_sound()
+	if not (xr_sound and xr_sound.stop_sounds_by_id) then
+		return false
+	end
+	if original_xr_sound_stop_sounds_by_id then
+		return true
+	end
+
+	original_xr_sound_stop_sounds_by_id = xr_sound.stop_sounds_by_id
+
+	function xr_sound.stop_sounds_by_id(obj_id)
+		local result = original_xr_sound_stop_sounds_by_id(obj_id)
+		stop_active_sound(obj_id)
+		return result
+	end
+
+	return true
+end
+
+local function install_patch()
+	patch_sound_theme()
+	patch_xr_effects()
+	patch_xr_sound()
+end
+
+local function clear_active_sounds()
+	for npc_id in pairs(active_sounds) do
+		stop_active_sound(npc_id)
+	end
+end
+
+local function actor_on_update()
+	local now = time_global()
+	if now < update_next then
+		return
+	end
+	update_next = now + update_period
+
+	for npc_id in pairs(active_sounds) do
+		local npc = get_npc(npc_id)
+		if not object_alive(npc) then
+			stop_active_sound(npc_id)
+		end
+	end
+end
+
+local function actor_on_first_update()
+	install_patch()
+end
+
+local function stop_talk_if_needed(npc)
+	if not (db and db.actor and npc) then
+		return
+	end
+
+	local actor_talking = false
+	local npc_talking = false
+
+	pcall(function()
+		actor_talking = db.actor:is_talking()
+	end)
+	pcall(function()
+		npc_talking = npc:is_talking()
+	end)
+
+	if actor_talking and npc_talking then
+		db.actor:stop_talk()
+		npc:stop_talk()
+	end
+end
+
+local function npc_on_death_callback(npc)
+	stop_active_sound_for_obj(npc)
+	stop_talk_if_needed(npc)
+end
+
+local function npc_on_net_destroy(npc)
+	stop_active_sound_for_obj(npc)
+end
+
+function on_game_load()
+	clear_active_sounds()
+	install_patch()
+end
+
+function on_game_start()
+	install_patch()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+	RegisterScriptCallback("npc_on_net_destroy", npc_on_net_destroy)
+	RegisterScriptCallback("on_before_level_changing", clear_active_sounds)
+	RegisterScriptCallback("on_level_changing", clear_active_sounds)
+end
