@@ -3754,3 +3754,56 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   editing the profile, and the game was not launched.
 - The pre-v114 binaries, profile and latest log are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260825_v114_pre_seamless_cop_staging`.
+
+## 2026-08-25 - v115 settled CoP NPC staging
+
+### Confirmed remaining NPC fault
+
+- Frame-by-frame review of both accepted-v114 recordings shows continuous
+  world-space NPC travel rather than camera jumps: `00:18.456-00:26.718` in
+  the Underpass recording and `01:02.5-01:20.4` in the Pripyat recording.
+- v114's Pripyat readiness compared `state_mgr.animation_position` with the
+  animpoint controller's `position`. Both are authored targets. It did not
+  compare the live `object:position()`, while the C++ animation movement
+  controller was still blending the model XFORM toward that target.
+- All nine stock `pri_a15` animpoints use `reach_distance = 50`; therefore the
+  animpoint action can legally start well before the live model reaches its
+  cover. The v114 five-update gate could consequently remove black during the
+  blend.
+- Underpass never published its v114 ready marker in the recorded session.
+  Its four actors were still reaching their first walker points when the world
+  became visible. The log also contains invalid-destination messages near the
+  elevator, but no Lua failure in the scene scripts.
+
+### v115 correction
+
+- A separate addon overrides only the v114 staging module while retaining the
+  accepted v114 scene LTX protocol. Camera priming, grass/details, dialogue,
+  sound, ID Cleaner and stock scene logic are unchanged.
+- Pripyat now requires each expected actor's live XFORM to be within 0.30 m
+  horizontally and 0.50 m vertically of its authored animpoint, aligned to the
+  authored direction and contained within a 0.04 m settle-window anchor.
+- Underpass uses the same read-only check against patrol point zero (0.65 m
+  horizontal and 0.75 m vertical tolerance). Physical arrival is accepted
+  even when `move_mgr.last_index` was not emitted for an actor created directly
+  on the waypoint.
+- The Underpass LTX emergency fallback now uses 30 seconds of live game ticks.
+  Its former real-time 20-second timer could expire entirely during level I/O
+  and bypass readiness before the first online NPC controller update.
+- The complete cast must remain ready for at least eight actor updates and 300
+  ms before v114 removes black. No NPC position setter, server transform write,
+  teleport, `reach_distance` override or level-graph change is used.
+- Logging is preformatted before `printf`, so it now records the real blocking
+  story ID and measured XFORM delta instead of v114's literal `%d` field.
+  Repeated numeric details are throttled to one line per second. Diagnosed
+  fallbacks preserve progress for damaged legacy saves.
+
+### Validation and packaging
+
+- The staging module passes the Lua 5.1 parser. The v115 smoke test proves that
+  matching target-state data alone cannot open Pripyat, validates both timed
+  live-XFORM gates, exercises physical Underpass arrival with a missing walker
+  callback and verifies fallback timing. `git diff --check` passes.
+- v115 is addon-only. Engine binaries remain byte-for-byte v114, so no DX11 or
+  DX11-AVX rebuild is required. The addon is intended to load above v114 while
+  v110, v113 and v114 remain enabled.
