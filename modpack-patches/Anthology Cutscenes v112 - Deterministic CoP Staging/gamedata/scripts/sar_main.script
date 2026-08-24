@@ -1,0 +1,457 @@
+local last_tick = 0
+current_score = 0
+current_size = 0
+local target_score = 0
+local target_size = 0
+local current_size_index = 0
+local current_score_index = 0
+
+local score_list = {}
+local size_list = {}
+
+----{pitch,yaw,length,priority} in degree, length priority == 0 mean no contribute to lengths calculation
+-- local size_ray_dir_configs = {
+--  ----------------- length ray ---------------
+-- 	{0,		5,		180,1},
+-- 	{20, 	5,		180,1},
+-- 	{-20, 	5,		180,1},
+-- 	{45, 	5,		180,1},
+-- 	{-45, 	5,		180,1},
+-- 	{160, 	5,		180,1},
+-- 	{-160, 	5,		180,1},
+-- 	{180, 	5,		180,1},
+-- }
+
+local score_ray_dir_configs = {
+	{0,		60,		120,1},
+	{0,		90,		80,	1.5},
+	{90,	60,		120,1},
+	{-90,	60,		120,1},
+	{180,	60,		120,1},
+}
+
+local per_bouce_ray_dir_config = {
+	{0,90,50}
+}
+
+local material_black_list = {
+	"water",
+	"bush",
+	"tree",
+}
+
+local lengthMultPerBouce = {1,0.75,0.6,0.5,0.5}
+
+local underground_levels = {"jupiter_underground", "l03u_agr_underground", "l08u_brainlab", "labx8", "l12u_sarcofag", "l10u_bunker", "l04u_labx18"}
+
+mcm_settings = {
+	enable = {true, "check",nil,nil,nil,order = 1},
+	volume = {1, "track",0,5,0.1,order = 2},
+	ray_per_frame_mult = {2, "track",1,3,1,order = 4},
+	interpolation_interval = {900, "track",100,2000,100,order = 5},
+	size_interpolation_interval = {500, "track",100,2000,100,order = 6},
+
+	div_npc = {nil,"line", order = 8},
+	desc_npc = {nil,"desc", order = 9},
+
+	enable_npc = {true, "check",nil,nil,nil,order = 9.25},
+	npc_tick_interval = {1250, "track", 500,3000,50, order = 9.5},
+	npc_ray_bounce_count = {2, "track",1,3,1, order = 10},
+
+	div_ray = {nil,"line", order = 11},
+	desc_ray = {nil,"desc", order = 12},
+
+	ray_bounce_count = {3, "track",2,5,1,order = 13},
+	ray_length_mult = {1.5, "track",0.25,5,0.05,order = 15},
+
+	div_threshold = {nil,"line", order = 48},
+	desc_threshold = {nil,"desc", order = 49},
+
+	cus_snd_threshold = {0.4,"track",0,1,0.05, order = 50},
+	upper_threshold = {0.75,"track",0,1,0.05, order = 50.5},
+	lower_threshold = {0.4,"track",0,1,0.05, order = 51},
+
+	div_preset = {nil,"line", order = 69},
+	desc_preset = {nil,"desc", order = 70},
+
+	very_small_preset = {"FACTORY_SMALLROOM","input",0,nil,nil, order = 70.2},
+	very_small_strength = {1,"track",0,1,0.025, order = 70.5},
+	very_small_size = {4.5,"track",2,8,0.5, order = 70.7},
+
+	small_preset = {"FACTORY_SMALLROOM","input",0,nil,nil, order = 71},
+	small_strength = {0.8,"track",0,1,0.025, order = 71.5},
+	small_size = {8,"track",3,12,0.5, order = 72},
+
+	mid_preset = {"FACTORY_MEDIUMROOM","input",0,nil,nil, order = 73},
+	mid_strength = {0.9,"track",0,1,0.025, order = 73.5},
+	mid_size = {14,"track",5,16,0.5, order = 74},
+
+	large_preset = {"FACTORY_LARGEROOM","input",0,nil,nil, order = 75},
+	large_strength = {0.9,"track",0,1,0.025, order = 75.5},
+	large_size = {20,"track",10,24,0.5, order = 76},
+
+	outdoor_preset = {"NO_REVERB","input",0,nil,nil, order = 77},
+
+	div_dbug = {nil,"line", order = 88},
+	desc_dbug = {nil,"desc", order = 89},
+
+	dbug = {false, "check",nil,nil,nil,order = 99},
+	ray_dbug = {false, "check",nil,nil,nil,order = 100},
+	show_replaced_sound = {false, "check",nil,nil,nil,order = 101}
+}
+
+local dp = kute_common
+
+local function print(...)
+	if not mcm_settings.dbug[1] then return end
+	dp.print(...)
+end
+local getActorPos = dp.getCharPos
+
+local function cinematic_camera_active()
+	if type(has_alife_info) ~= "function" then
+		return false
+	end
+	local function info(name)
+		local ok, value = pcall(has_alife_info, name)
+		return ok and value == true
+	end
+	local jupiter_descent = info("jup_b219_start_sound") and not info("jup_b219_destroy_actor")
+	local pripyat_arrival = info("pri_a15_cutscene_go") and not info("pri_a15_cutscene_end")
+	return jupiter_descent or pripyat_arrival
+end
+
+-- SAR already derives ray direction from the active camera. During global
+-- CoP camera effects the old actor origin mixed two different viewpoints and
+-- made reverb jump on every cut. Use the camera origin only for those scenes.
+local function getCharPos()
+	if cinematic_camera_active() and device then
+		local ok, position = pcall(function()
+			return vector():set(device().cam_pos)
+		end)
+		if ok and position then
+			return position
+		end
+	end
+	return getActorPos()
+end
+local toRad = dp.toRad
+local lerp = dp.lerp
+local nextTick = dp.nextTick
+local clamp = dp.clamp
+local concat = dp.concat
+local compact = dp.compact
+local getSummation = dp.getSummation
+
+function isBlackListedMaterial(m)
+	for i = 1,#material_black_list do
+		if string.find(m,material_black_list[i]) then
+			return true
+		end
+	end
+	return false
+end
+
+function getSummationForLength(n)
+	local s = 0
+	for i = 1,n do
+		s = s+lengthMultPerBouce[i]
+	end
+	return s
+end
+
+function TrimTableForLength(t, trimPercent)
+	if #t<4 then return t end
+    local data = {}
+    for i = 1, #t do
+        data[i] = t[i]
+    end
+	table.sort(data,function (a,b)
+		if a and a[1] and b and b[1] then
+			return a[1]<b[1]
+		end
+	end)
+
+	local n = #data
+	local trimCount = math.floor(n * trimPercent)
+
+	local final = {}
+
+	for i = trimCount + 1, n - trimCount do
+		final[i] = data[i]
+	end
+
+	return final
+end
+
+--------------------------
+function actor_on_first_update(wpn,gun)
+	exec_console_cmd("snd_efx " .. 1)
+	exec_console_cmd("snd_efx_reverb_overwrite " .. 1)
+	last_tick = time_global()
+	score = 0
+end
+
+function on_option_change(mcm)
+	if mcm then
+		score_list = {}
+		size_list = {}
+		current_score_index = 0
+		current_size_index = 0
+	end
+end
+
+function getPreset(input)
+	if type(input) == "table" then
+		return input
+	elseif type(input) == "string" then
+		local preset = sar_reverb_preset.ReverbPresets[input]
+		if not preset then
+			printf("! PRESET "..input.." NOT FOUND, PLEASE TYPE THE PRESET NAME CORRECTLY, SWTICHED TO GENERIC PRESET INSTEAD")
+			return getPreset("GENERIC")
+		else
+			return preset
+		end
+	end
+end
+
+function loadReverb(preset)
+	for i,v in pairs(getPreset(preset)) do
+		exec_console_cmd("snd_efx_reverb_overwrite_" .. i .. " " .. v)
+	end
+end
+
+function lerpReverb(preset1,preset2,alpha)
+	preset1 = getPreset(preset1)
+	preset2 = getPreset(preset2)
+	local lerped_preset = {}
+	for i,v in pairs(preset1) do
+		lerped_preset[i] = lerp(preset1[i],preset2[i],alpha)
+	end
+	return lerped_preset
+end
+
+function raycast(dir,length,fire_pos)
+	local pos = fire_pos or getCharPos()
+	local ray_args = {
+		ray_range = length,
+		contact_range = length-0.1,
+		flags = 2,
+		ignore_object = db.actor,
+		visualize = mcm_settings.ray_dbug[1]
+	}
+	local ray = demonized_geometry_ray.geometry_ray(ray_args)
+	local result = ray:get(vector():set(pos), dir)
+
+	-- This loop checks if the contact surface is a bush, and re-casts the ray just inside it if it is -- By Ujtan
+	-- while result.in_contact and result.result.material_name and isBlackListedMaterial(result.result.material_name) do
+	-- 	ray_args.ray_range = ray_args.ray_range - result.distance
+	-- 	ray_args.contact_range = ray_args.contact_range - result.distance
+	-- 	ray = demonized_geometry_ray.geometry_ray(ray_args)
+	-- 	local new_pos = vector():set(result.position):add(vector():set(dir):mul(0.5))
+	-- 	result = ray:get(new_pos, dir)
+	-- end
+	if result.in_contact and result.result.material_name and isBlackListedMaterial(result.result.material_name) then
+		result.in_contact = false
+	end
+	return result
+end
+
+function RayForDetection(dir,length,max_bounce,fire_pos)
+	local pos = fire_pos or getCharPos()
+	local point = 0
+	local bounced = 0
+	for bounce = 1,max_bounce do
+		local result = raycast(dir,length*lengthMultPerBouce[bounce]*mcm_settings.ray_length_mult[1],pos)
+		if result.in_contact then
+			-- check if ray hit position is indoor (fire a ray upward to see if it hit anything)
+			local check_result = raycast(vector():set(0,1,0),70,vector():sub(result.position,vector():set(0,0.5,0)):add(vector():set(dir):mul(-0.5)))
+			if not check_result.in_contact then break end
+			point = point+bounce
+			bounced = bounced + 1
+			local surface_normal = demonized_geometry_ray.get_surface_normal(pos,dir,nil,nil,result)
+			if surface_normal then
+				dir = vector():reflect(dir, surface_normal)
+			else break end
+			pos = result.position
+		else
+			break
+		end
+	end
+	return point/getSummation(max_bounce)
+end
+
+function getScore()
+	local dir = device().cam_dir:normalize()
+	local horz = dir:getH() -- Range 0 2pi
+
+	for i = 1,mcm_settings.ray_per_frame_mult[1] do
+		current_score_index = (current_score_index % #score_ray_dir_configs) + 1
+
+		local config = score_ray_dir_configs[current_score_index]
+		local new_dir = vector():setHP(horz + toRad(config[1]), toRad(config[2]))
+
+		local point = RayForDetection(new_dir:normalize(),config[3],mcm_settings.ray_bounce_count[1])
+
+		score_list[current_score_index] = {point*config[4],config[4]}
+	end
+
+	local scoreSum = 0
+	local scoreMultSum = 0
+	for i = 1,#score_list do
+		scoreSum = scoreSum+score_list[i][1]
+		scoreMultSum = scoreMultSum+score_list[i][2]
+	end
+
+	------ process score ---------
+	local raw_score = scoreSum/scoreMultSum
+
+	if raw_score>mcm_settings.lower_threshold[1] then
+		target_score = (raw_score-mcm_settings.lower_threshold[1])/(1-mcm_settings.lower_threshold[1])
+		if target_score>mcm_settings.upper_threshold[1] then
+			target_score = 1
+		end
+	else
+		target_score = 0
+	end
+end
+
+function RayForSizeCal(dir,length,max_bounce,fire_pos,dont_check)
+	local pos = fire_pos or getCharPos()
+	local total_length = 0
+	local bounced = 0
+	local point = 0
+	for bounce = 1,max_bounce do
+		local result = raycast(dir,length*lengthMultPerBouce[bounce],pos)
+		if result.in_contact then
+			-- check if ray hit position is indoor (fire a ray upward to see if it hit anything)
+			local check_result = raycast(vector():set(0,1,0),70,vector():sub(result.position,vector():set(0,0.5,0)):add(vector():set(dir):mul(-0.5)))
+			if not check_result.in_contact then break end
+			----
+			total_length = total_length+result.position:distance_to(getCharPos())*lengthMultPerBouce[bounce]
+			bounced = bounced + 1
+			point = point+bounce
+			local surface_normal = demonized_geometry_ray.get_surface_normal(pos,dir,nil,nil,result)
+			if surface_normal then
+				dir = vector():reflect(dir, surface_normal)
+			else break end
+			pos = result.position
+		else break end
+	end
+	return point/getSummation(max_bounce),(bounced == 0 and length) or total_length/getSummationForLength(bounced)
+end
+
+function getRoomSize()
+	if target_score==0 then target_size = 0 return end
+
+	local dir = device().cam_dir:normalize()
+	local horz = dir:getH() -- Range 0 2pi
+
+	local room_size_ray_count = 20
+	for i = 1,mcm_settings.ray_per_frame_mult[1] do
+		current_size_index = (current_size_index % room_size_ray_count) + 1
+		local new_dir = vector():setHP(math.pi*2*(current_size_index/room_size_ray_count), toRad(5))
+		local point,length = RayForSizeCal(new_dir:normalize(),180,mcm_settings.ray_bounce_count[1])
+
+		-- Room-size rays have their own 20-slot ring.  Using the score index here
+		-- made this table grow and churn according to the unrelated score sweep.
+		size_list[current_size_index] = {length,point}
+	end
+	local lengthSum = 0
+	local lengthMultSum = 0
+
+	local trimmed_size_list = TrimTableForLength(size_list,0.1)
+	for i = 1,#trimmed_size_list do
+		if trimmed_size_list[i] then
+			lengthSum = lengthSum+trimmed_size_list[i][1]*trimmed_size_list[i][2]
+			lengthMultSum = lengthMultSum+trimmed_size_list[i][2]
+		end
+	end
+	if lengthMultSum ~= 0 then
+		target_size = lengthSum/lengthMultSum
+	else
+		target_size = 0
+	end
+end
+
+local preset_order = {"very_small","small","mid","large"}
+local detection_interval = 50
+local reverb_apply_interval = 50
+local reverb_phase_offset = 25
+local next_detection_tick
+local next_reverb_apply_tick
+
+function actor_on_update(_,delta)
+	if not mcm_settings.enable[1] or ui_mcm.get("spatial_audio/sar_editor/enable_editor") then return end
+	local tick = time_global()
+	if not next_detection_tick then
+		next_detection_tick = tick
+		next_reverb_apply_tick = tick + reverb_phase_offset
+	end
+
+	-- Keep the configured ray count and bounce quality, but do not repeat the
+	-- complete acoustic probe faster than a human-audible room transition.  At
+	-- high FPS the old every-other-frame path scaled ray cost with render FPS.
+	if tick >= next_detection_tick then
+		next_detection_tick = tick + detection_interval
+		getScore()
+		getRoomSize()
+	end
+
+	-- dectection interpolation --------------- every frame
+	if (target_score-current_score)<0 and current_score<0.25 then
+		current_score = 0
+	elseif (target_score-current_score)>0 and current_score>0.9 then
+		current_score = 1
+	else
+		current_score = current_score+(target_score-current_score)*0.98*(delta/mcm_settings.interpolation_interval[1])
+	end
+
+	current_size = current_size+(target_size-current_size)*0.98*(delta/mcm_settings.size_interpolation_interval[1])
+
+	-- Applying every EFX field is a set of console commands.  Interpolation is
+	-- still calculated each frame, while the OpenAL state is committed at 20 Hz.
+	-- The phase offset keeps ray probes and EFX console updates off the same frame.
+	if not mcm_settings.ray_dbug[1]
+	and tick >= next_reverb_apply_tick
+	then
+		next_reverb_apply_tick = tick + reverb_apply_interval
+		for i = 0,#preset_order do
+			local type = (i == 0 and preset_order[1]) or preset_order[i]
+			local next_type = (i<#preset_order and preset_order[i+1]) or preset_order[#preset_order]
+			-- fucking hell
+			if current_size < mcm_settings[next_type.."_size"][1] then
+				local reverb = lerpReverb("NO_REVERB",mcm_settings[type.."_preset"][1],mcm_settings[type.."_strength"][1])
+				local next_reverb = lerpReverb("NO_REVERB",mcm_settings[next_type.."_preset"][1],mcm_settings[next_type.."_strength"][1])
+
+				local size_delta = (type == next_type and 1) or (current_size-mcm_settings[type.."_size"][1])/(mcm_settings[next_type.."_size"][1]-mcm_settings[type.."_size"][1])
+
+				local final_reverb = lerpReverb(reverb,next_reverb,size_delta)
+
+				loadReverb(lerpReverb(mcm_settings.outdoor_preset[1],final_reverb,current_score))
+
+				break
+			end
+		end
+	end
+end
+
+-- ray debug -------------------
+function actor_on_weapon_before_fire()
+	if not mcm_settings.enable[1] then return end
+	if not mcm_settings.ray_dbug[1] then return end
+	--------------------
+	getScore()
+	getRoomSize()
+	print("score: "..tostring(target_score))
+	print(target_size)
+	--------------------
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
+	RegisterScriptCallback("actor_on_update",actor_on_update)
+	RegisterScriptCallback("actor_on_weapon_before_fire",actor_on_weapon_before_fire)
+	RegisterScriptCallback("on_option_change",on_option_change)
+	on_option_change(true)
+end

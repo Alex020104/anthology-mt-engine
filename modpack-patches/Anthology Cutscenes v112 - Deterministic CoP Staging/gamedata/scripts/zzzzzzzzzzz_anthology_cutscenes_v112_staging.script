@@ -1,0 +1,398 @@
+-- Anthology Cutscenes v112
+-- Deterministic compatibility for legacy saves where ID Cleaner restores
+-- smart-cover objects after smart-terrain jobs have already been loaded.
+
+local EVENT_ID = "anthology_cutscenes_v112"
+local EVENT_ACTION = "postrestore_retry"
+local RETRY_INTERVAL = 0.05
+local RETRY_LIMIT = 40
+
+local retry_level_id = nil
+local retries_left = 0
+local effects_installed = false
+local last_summary = nil
+
+local PRI_A15_STAGE = {
+	{ "pri_a15_actor",            "pri_a15_animpoint_actor" },
+	{ "pri_a15_vano",             "pri_a15_animpoint_vano" },
+	{ "pri_a15_sokolov_scene",    "pri_a15_animpoint_sokolov" },
+	{ "pri_a15_zulus",            "pri_a15_animpoint_zulus" },
+	{ "pri_a15_wanderer",         "pri_a15_animpoint_wanderer" },
+	{ "pri_a15_military_tarasov", "pri_a15_animpoint_military_1" },
+	{ "pri_a15_military_2",       "pri_a15_animpoint_military_2" },
+	{ "pri_a15_military_3",       "pri_a15_animpoint_military_3" },
+	{ "pri_a15_military_4",       "pri_a15_animpoint_military_4" },
+}
+
+local PAS_B400_STAGE = {
+	{ "pas_b400_zulus",    "pas_b400_elevator_zulus_1_walk" },
+	{ "pas_b400_vano",     "pas_b400_elevator_vano_1_walk" },
+	{ "pas_b400_sokolov",  "pas_b400_elevator_sokolov_1_walk" },
+	{ "pas_b400_wanderer", "pas_b400_elevator_wanderer_1_walk" },
+}
+
+local function copy_position(position)
+	if not position then
+		return nil
+	end
+	local ok, result = pcall(function()
+		return vector():set(position)
+	end)
+	return ok and result or position
+end
+
+local function current_level_name()
+	if not (level and type(level.name) == "function") then
+		return ""
+	end
+	local ok, name = pcall(level.name)
+	return ok and tostring(name or "") or ""
+end
+
+local function smart_name(smart)
+	if not (smart and smart.name) then
+		return "<nil>"
+	end
+	local ok, name = pcall(smart.name, smart)
+	return ok and tostring(name) or "<unknown>"
+end
+
+local function starts_with(value, prefix)
+	return type(value) == "string" and string.sub(value, 1, #prefix) == prefix
+end
+
+local function get_registry()
+	return se_smart_cover and se_smart_cover.registered_smartcovers or nil
+end
+
+local function read_cover_name(smart, job)
+	if not (smart and job and gulag_general) then
+		return nil, "skip"
+	end
+	if gulag_general.get_job_type(job) ~= "smartcover_job" then
+		return nil, "skip"
+	end
+
+	local ltx = job.ltx or smart.ltx
+	local section = job.section
+	if not (ltx and section and ltx.line_exist and ltx:line_exist(section, "active")) then
+		return nil, "invalid"
+	end
+	local active_section = ltx:r_string_ex(section, "active")
+	if not active_section then
+		return nil, "invalid"
+	end
+	local cover_name = ltx:r_string_ex(active_section, "cover_name")
+	return cover_name, cover_name and "ok" or "invalid"
+end
+
+local function rebind_job(smart, job, graph)
+	local cover_name, status = read_cover_name(smart, job)
+	if status ~= "ok" then
+		return status
+	end
+
+	local registry = get_registry()
+	local cover = registry and registry[cover_name] or nil
+	if not cover then
+		return "missing", cover_name
+	end
+
+	local ok_task, task = pcall(
+		CALifeSmartTerrainTask,
+		cover.m_game_vertex_id,
+		cover.m_level_vertex_id
+	)
+	if not (ok_task and task) then
+		return "invalid", cover_name
+	end
+
+	local ok_fill = pcall(function()
+		job.alife_task = task
+		job.game_vertex_id = task:game_vertex_id()
+		job.level_id = graph:vertex(job.game_vertex_id):level_id()
+		job.position = task:position()
+		job.anthology_v112_cover_name = cover_name
+	end)
+	return ok_fill and "rebound" or "invalid", cover_name
+end
+
+local function repair_loaded_jobs()
+	local board = rawget(_G, "SIMBOARD")
+	local smarts = board and board.smarts
+	if not (smarts and game_graph and CALifeSmartTerrainTask) then
+		return 0, 0, 0, false, { "SIMBOARD" }
+	end
+
+	local graph = game_graph()
+	local rebound, missing, invalid = 0, 0, 0
+	local samples = {}
+	for _, smart in pairs(smarts) do
+		if smart and smart.is_on_actor_level and not smart.disabled then
+			local job_tables = { smart.stalker_jobs, smart.monster_jobs, smart.heli_jobs }
+			for index = 1, 3 do
+				for _, job in ipairs(job_tables[index] or {}) do
+					local ok, status, cover_name = pcall(rebind_job, smart, job, graph)
+					if not ok or status == "invalid" then
+						invalid = invalid + 1
+					elseif status == "missing" then
+						missing = missing + 1
+						if #samples < 6 then
+							samples[#samples + 1] = smart_name(smart) .. ":" .. tostring(cover_name)
+						end
+					elseif status == "rebound" then
+						rebound = rebound + 1
+					end
+				end
+			end
+		end
+	end
+	return rebound, missing, invalid, true, samples
+end
+
+local function story_object_id(story_id)
+	if type(get_story_object_id) ~= "function" then
+		return nil
+	end
+	local ok, object_id = pcall(get_story_object_id, story_id)
+	return ok and object_id or nil
+end
+
+local function client_story_object(story_id, object_id)
+	if type(get_story_object) == "function" then
+		local ok, object = pcall(get_story_object, story_id)
+		if ok and object then
+			return object
+		end
+	end
+	if object_id and level and level.object_by_id then
+		local ok, object = pcall(level.object_by_id, object_id)
+		return ok and object or nil
+	end
+	return nil
+end
+
+local function move_story_object(story_id, position, level_vertex_id, game_vertex_id)
+	if not position then
+		return "target_missing"
+	end
+	local object_id = story_object_id(story_id)
+	if not object_id then
+		return "story_missing"
+	end
+
+	local client = client_story_object(story_id, object_id)
+	if client and client.set_npc_position then
+		local ok = pcall(client.set_npc_position, client, copy_position(position))
+		if ok then
+			if db and db.spawned_vertex_by_id and level_vertex_id then
+				db.spawned_vertex_by_id[object_id] = level_vertex_id
+			end
+			return "client"
+		end
+	end
+
+	local server = type(alife_object) == "function" and alife_object(object_id) or nil
+	if not server then
+		return "object_missing"
+	end
+	local ok = pcall(function()
+		server.position = copy_position(position)
+		if level_vertex_id then
+			server.m_level_vertex_id = level_vertex_id
+		end
+		if game_vertex_id then
+			server.m_game_vertex_id = game_vertex_id
+		end
+	end)
+	return ok and "server" or "failed"
+end
+
+local function move_story_to_cover(story_id, cover_name)
+	local registry = get_registry()
+	local cover = registry and registry[cover_name] or nil
+	if not cover then
+		return "cover_missing"
+	end
+	return move_story_object(
+		story_id,
+		cover.position,
+		cover.m_level_vertex_id,
+		cover.m_game_vertex_id
+	)
+end
+
+local function move_story_to_path(story_id, path_name)
+	if level and level.patrol_path_exists then
+		local ok_exists, exists = pcall(level.patrol_path_exists, path_name)
+		if ok_exists and not exists then
+			return "path_missing"
+		end
+	end
+	local ok_path, path = pcall(patrol, path_name)
+	if not (ok_path and path) then
+		return "path_missing"
+	end
+	local ok_target, position, level_vertex_id, game_vertex_id = pcall(function()
+		return path:point(0), path:level_vertex_id(0), path:game_vertex_id(0)
+	end)
+	if not ok_target then
+		return "path_invalid"
+	end
+	return move_story_object(story_id, position, level_vertex_id, game_vertex_id)
+end
+
+local function stage_named_entries(entries, mover)
+	local moved, missing, failed = 0, 0, 0
+	local samples = {}
+	for _, entry in ipairs(entries) do
+		local status = mover(entry[1], entry[2])
+		if status == "client" or status == "server" then
+			moved = moved + 1
+		elseif status == "story_missing" or status == "object_missing" then
+			missing = missing + 1
+		else
+			failed = failed + 1
+		end
+		if status ~= "client" and status ~= "server" and #samples < 5 then
+			samples[#samples + 1] = entry[1] .. ":" .. tostring(status)
+		end
+	end
+	return moved, missing, failed, samples
+end
+
+local function stage_online_pri_a16_animpoints()
+	local registry = get_registry()
+	if not (registry and db and db.storage and level and level.object_by_id) then
+		return 0
+	end
+	local moved = 0
+	for object_id, root in pairs(db.storage) do
+		local storage = root and root.active_scheme == "animpoint" and root.animpoint or nil
+		local cover_name = storage and storage.cover_name or nil
+		local cover = cover_name and starts_with(cover_name, "pri_a16_") and registry[cover_name] or nil
+		if cover then
+			local ok_object, object = pcall(level.object_by_id, object_id)
+			if ok_object and object and object.set_npc_position then
+				local ok_move = pcall(object.set_npc_position, object, copy_position(cover.position))
+				if ok_move then
+					moved = moved + 1
+					if db.spawned_vertex_by_id then
+						db.spawned_vertex_by_id[object_id] = cover.m_level_vertex_id
+					end
+				end
+			end
+		end
+	end
+	return moved
+end
+
+local function critical_pri_a15_missing()
+	local registry = get_registry()
+	local missing = {}
+	for _, entry in ipairs(PRI_A15_STAGE) do
+		if not (registry and registry[entry[2]]) then
+			missing[#missing + 1] = entry[2]
+		end
+	end
+	return missing
+end
+
+local function give_ready_info()
+	if db and db.actor and db.actor.give_info_portion then
+		pcall(db.actor.give_info_portion, db.actor, "anthology_v112_pri_stage_ready")
+	end
+end
+
+local function postrestore_repair(level_id)
+	local rebound, missing, invalid, board_ready, samples = repair_loaded_jobs()
+	local scene_missing = {}
+	local staged_pri_a16 = 0
+	if current_level_name() == "pripyat" then
+		scene_missing = critical_pri_a15_missing()
+		if #scene_missing == 0 then
+			staged_pri_a16 = stage_online_pri_a16_animpoints()
+			give_ready_info()
+		end
+	end
+
+	local summary = string.format(
+		"level=%s rebound=%d missing=%d invalid=%d critical_missing=%d pri_a16_staged=%d samples=%s",
+		tostring(level_id), rebound, missing, invalid, #scene_missing, staged_pri_a16,
+		#samples > 0 and table.concat(samples, ",") or "none"
+	)
+	if summary ~= last_summary then
+		last_summary = summary
+		printf("%s", "* [anthology/cutscenes-v112] post-restore " .. summary)
+	end
+	return board_ready and #scene_missing == 0
+end
+
+local function retry_postrestore()
+	local ready = postrestore_repair(retry_level_id)
+	if ready then
+		return true
+	end
+	retries_left = retries_left - 1
+	return retries_left <= 0
+end
+
+local function after_id_cleaner_spawn(level_id)
+	retry_level_id = level_id
+	retries_left = RETRY_LIMIT
+	if postrestore_repair(level_id) then
+		return
+	end
+	if type(RemoveTimeEvent) == "function" then
+		RemoveTimeEvent(EVENT_ID, EVENT_ACTION)
+	end
+	if type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, EVENT_ACTION, RETRY_INTERVAL, retry_postrestore)
+	end
+end
+
+local function stage_pri_a15()
+	repair_loaded_jobs()
+	local moved, missing, failed, samples = stage_named_entries(PRI_A15_STAGE, move_story_to_cover)
+	printf("%s", string.format(
+		"* [anthology/cutscenes-v112] pri_a15 staged=%d missing=%d failed=%d samples=%s",
+		moved, missing, failed, #samples > 0 and table.concat(samples, ",") or "none"
+	))
+end
+
+local function stage_pas_b400()
+	local moved, missing, failed, samples = stage_named_entries(PAS_B400_STAGE, move_story_to_path)
+	printf("%s", string.format(
+		"* [anthology/cutscenes-v112] pas_b400 staged=%d missing=%d failed=%d samples=%s",
+		moved, missing, failed, #samples > 0 and table.concat(samples, ",") or "none"
+	))
+end
+
+local function install_effects()
+	if effects_installed then
+		return true
+	end
+	local effects = rawget(_G, "xr_effects")
+	if type(effects) ~= "table" then
+		return false
+	end
+	effects.anthology_v112_stage_pri_a15 = stage_pri_a15
+	effects.anthology_v112_stage_pas_b400 = stage_pas_b400
+	effects_installed = true
+	return true
+end
+
+-- Exported at module load time so anthology_id_cleaner can call it directly
+-- from the exact main-thread point after spawn_level has restored covers.
+_G.anthology_cutscenes_v112_after_id_cleaner_spawn = after_id_cleaner_spawn
+
+local function delayed_install()
+	return install_effects()
+end
+
+function on_game_start()
+	if not install_effects() and type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, "install_effects", 0.05, delayed_install)
+	end
+	printf("%s", "* [anthology/cutscenes-v112] deterministic CoP staging active")
+end

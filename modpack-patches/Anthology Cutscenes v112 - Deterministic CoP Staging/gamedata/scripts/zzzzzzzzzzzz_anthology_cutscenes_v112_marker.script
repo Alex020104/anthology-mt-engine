@@ -1,0 +1,3 @@
+function on_game_start()
+	printf("%s", "* [anthology/cutscenes-v112] deterministic CoP scene fix loaded")
+end
