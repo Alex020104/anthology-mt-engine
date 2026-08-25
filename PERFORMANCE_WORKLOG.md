@@ -4173,3 +4173,17 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   junctioned into MO2 and enabled above v119 in the HARD profile. The pre-v120
   v119 addon, profile and live log are backed up under
   `E:/ANTHOLOGY_BACKUPS/20260825_v120_pre_retail_cop_action_lifecycle`.
+
+### Deployment correction after the first reported v120 test
+
+- The first user test did not execute v120. The active HARD profile contained
+  `-Anthology Cutscenes v120 - Retail CoP Action Lifecycle`; consequently the
+  live log contained zero v120 activation, initialize, reach, finalize or
+  motion-enqueue records while v118/v119 continued to load normally.
+- No new gameplay recording was created after the v120 package timestamp, so
+  the available videos also cannot represent v120 behaviour.
+- Mod Organizer was closed gracefully, the disabled profile state was backed
+  up as `modlist_v120_disabled_by_mo2.txt`, and v120 was enabled above v119.
+  A controlled Mod Organizer restart retained the `+v120` entry, proving that
+  the active profile now persists the corrected state. The next scene run is
+  the first valid v120 acceptance test.
