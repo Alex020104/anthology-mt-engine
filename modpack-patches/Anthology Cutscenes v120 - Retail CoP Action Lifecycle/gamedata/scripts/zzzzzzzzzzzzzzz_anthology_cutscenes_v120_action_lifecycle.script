@@ -1,0 +1,323 @@
+-- Anthology Cutscenes v120
+--
+-- Restore the original Call of Pripyat animpoint action lifecycle for the two
+-- stock CoP cinematic groups affected by the Anomaly/CoC rewrite.
+--
+-- Retail CoP starts action_animpoint directly. Anomaly first forces the NPC
+-- into "idle", which clears the authored animation position/direction and may
+-- create a second absolute root-motion epoch after an action hand-off. Retail
+-- CoP also gives action_reach_animpoint the smart-cover direction explicitly;
+-- that call is commented out in Anomaly.
+--
+-- This patch is transition-only and deliberately narrow. It does not alter
+-- models, OMF motions, camera tracks, XFORM, path points, physics or timing.
+
+local EVENT_ID = "anthology_cutscenes_v120_action_lifecycle"
+local MAX_MOTION_LOGS_PER_NPC = 48
+
+local PRI_COVERS = {
+	pri_a15_actor = "pri_a15_animpoint_actor",
+	pri_a15_vano = "pri_a15_animpoint_vano",
+	pri_a15_sokolov_scene = "pri_a15_animpoint_sokolov",
+	pri_a15_zulus = "pri_a15_animpoint_zulus",
+	pri_a15_wanderer = "pri_a15_animpoint_wanderer",
+	pri_a15_military_tarasov = "pri_a15_animpoint_military_1",
+	pri_a15_military_2 = "pri_a15_animpoint_military_2",
+	pri_a15_military_3 = "pri_a15_animpoint_military_3",
+	pri_a15_military_4 = "pri_a15_animpoint_military_4",
+}
+
+local JUP_COVERS = {
+	jup_b219_actor = "jup_b219_actor_smart_cover",
+	jup_b219_stalker_tech = "jup_b219_azot_smart_cover",
+}
+
+local installed = false
+local initialize_counts = {}
+local reach_logged = {}
+local motion_counts = {}
+local motion_log_counts = {}
+
+local function current_level_name()
+	if not (level and type(level.name) == "function") then
+		return ""
+	end
+	local ok, value = pcall(level.name)
+	return ok and tostring(value or "") or ""
+end
+
+local function npc_section(npc)
+	if not (npc and npc.section) then
+		return nil
+	end
+	local ok, value = pcall(npc.section, npc)
+	return ok and tostring(value or "") or nil
+end
+
+local function npc_name(npc)
+	if not (npc and npc.name) then
+		return "unknown"
+	end
+	local ok, value = pcall(npc.name, npc)
+	return ok and tostring(value or "unknown") or "unknown"
+end
+
+local function npc_id(npc)
+	if not (npc and npc.id) then
+		return "unknown"
+	end
+	local ok, value = pcall(npc.id, npc)
+	return ok and tostring(value) or "unknown"
+end
+
+local function animation_count(npc)
+	if not (npc and npc.animation_count) then
+		return "n/a"
+	end
+	local ok, value = pcall(npc.animation_count, npc)
+	return ok and tostring(value) or "error"
+end
+
+local function action_cover(action)
+	local storage = action and action.st
+	if not storage then
+		return nil
+	end
+	return storage.cover_name
+		or (storage.animpoint and storage.animpoint.st and storage.animpoint.st.cover_name)
+		or (storage.animpoint and storage.animpoint.cover_name)
+end
+
+local function scoped_pair(level_name, section, cover)
+	if not (section and cover) then
+		return false
+	end
+	if level_name == "pripyat" then
+		return PRI_COVERS[section] == cover
+	end
+	if level_name == "jupiter" then
+		return JUP_COVERS[section] == cover
+	end
+	return false
+end
+
+local function scoped_action(action)
+	local npc = action and action.object
+	local level_name = current_level_name()
+	local section = npc_section(npc)
+	local cover = action_cover(action)
+	return scoped_pair(level_name, section, cover), npc, section, cover, level_name
+end
+
+local function scoped_motion(npc, target_state)
+	local section = npc_section(npc)
+	local level_name = current_level_name()
+	local target = tostring(target_state or "")
+	if level_name == "pripyat" and PRI_COVERS[section] then
+		return string.sub(target, 1, 8) == "pri_a15_", section, level_name
+	end
+	if level_name == "jupiter" and JUP_COVERS[section] then
+		return string.sub(target, 1, 8) == "pri_a15_"
+			or string.sub(target, 1, 9) == "jup_b219_", section, level_name
+	end
+	return false, section, level_name
+end
+
+local function class_from(module_name, class_name)
+	local module = rawget(_G, module_name)
+	if module and module[class_name] then
+		return module[class_name]
+	end
+	return rawget(_G, class_name)
+end
+
+local function install_animpoint_action_patch()
+	local class = class_from("xr_animpoint", "action_animpoint")
+	if not (class and class.initialize and class.finalize) then
+		return false
+	end
+	if class.anthology_v120_retail_lifecycle_wrapped then
+		return true
+	end
+
+	local original_initialize = class.initialize
+	local original_finalize = class.finalize
+
+	function class:initialize()
+		local scoped, npc, section, cover, level_name = scoped_action(self)
+		if not scoped then
+			return original_initialize(self)
+		end
+
+		local base = rawget(_G, "action_base")
+		if not (base and base.initialize and self.st and self.st.animpoint) then
+			printf("! [anthology/cutscenes-v120] retail initialize fallback npc=%s", npc_name(npc))
+			return original_initialize(self)
+		end
+
+		-- Exact retail CoP body. In particular, there is no intermediate
+		-- state_mgr.set_state(self.object, "idle") here.
+		base.initialize(self)
+		self.st.animpoint:start()
+
+		local id = npc_id(npc)
+		initialize_counts[id] = (initialize_counts[id] or 0) + 1
+		printf(
+			"* [anthology/cutscenes-v120] retail initialize npc=%s section=%s level=%s cover=%s epoch=%s action=%s animations=%s",
+			npc_name(npc),
+			tostring(section),
+			tostring(level_name),
+			tostring(cover),
+			tostring(initialize_counts[id]),
+			tostring(self.st.animpoint.current_action),
+			animation_count(npc)
+		)
+	end
+
+	function class:finalize()
+		local scoped, npc, section, cover, level_name = scoped_action(self)
+		if scoped then
+			printf(
+				"* [anthology/cutscenes-v120] retail finalize npc=%s section=%s level=%s cover=%s epoch=%s action=%s animations=%s",
+				npc_name(npc),
+				tostring(section),
+				tostring(level_name),
+				tostring(cover),
+				tostring(initialize_counts[npc_id(npc)] or 0),
+				tostring(self.st and self.st.animpoint and self.st.animpoint.current_action),
+				animation_count(npc)
+			)
+		end
+		return original_finalize(self)
+	end
+
+	class.anthology_v120_retail_lifecycle_wrapped = true
+	return true
+end
+
+local function install_reach_action_patch()
+	local class = class_from("xr_animpoint", "action_reach_animpoint")
+	if not (class and class.execute) then
+		return false
+	end
+	if class.anthology_v120_retail_heading_wrapped then
+		return true
+	end
+
+	local original_execute = class.execute
+	function class:execute()
+		local scoped, npc, section, cover, level_name = scoped_action(self)
+		if not scoped then
+			return original_execute(self)
+		end
+
+		local base = rawget(_G, "action_base")
+		local point = self.st and self.st.animpoint
+		if not (base and base.execute and point) then
+			return original_execute(self)
+		end
+
+		-- Exact retail CoP reach body, including the authored facing that was
+		-- commented out in Anomaly.
+		base.execute(self)
+		if not point.position_vertex then
+			return
+		end
+		self.object:set_dest_level_vertex_id(point.position_vertex)
+		self.object:set_desired_direction(point.smart_direction)
+		self.object:set_path_type(game_object.level_path)
+
+		local reach_movement = xr_logic.pick_section_from_condlist(db.actor, nil, self.st.reach_movement)
+		if self.object:position():distance_to_sqr(point.vertex_position) <= self.st.reach_distance then
+			state_mgr.set_state(self.object, reach_movement, nil, nil, { look_position = point.look_position })
+		else
+			state_mgr.set_state(self.object, reach_movement)
+		end
+
+		local key = npc_id(npc) .. ":" .. tostring(cover)
+		if not reach_logged[key] then
+			reach_logged[key] = true
+			printf(
+				"* [anthology/cutscenes-v120] retail reach heading npc=%s section=%s level=%s cover=%s",
+				npc_name(npc),
+				tostring(section),
+				tostring(level_name),
+				tostring(cover)
+			)
+		end
+	end
+
+	class.anthology_v120_retail_heading_wrapped = true
+	return true
+end
+
+local function install_motion_diagnostics()
+	local class = class_from("state_mgr_animation", "animation")
+	if not (class and class.add_anim) then
+		return false
+	end
+	if class.anthology_v120_motion_diagnostics_wrapped then
+		return true
+	end
+
+	local original_add_anim = class.add_anim
+	function class:add_anim(animation_name, state)
+		local manager = self.mgr
+		local scoped, section, level_name = scoped_motion(self.npc, manager and manager.target_state)
+		if not scoped then
+			return original_add_anim(self, animation_name, state)
+		end
+
+		local id = npc_id(self.npc)
+		local motion = tostring(animation_name)
+		motion_counts[id] = motion_counts[id] or {}
+		motion_counts[id][motion] = (motion_counts[id][motion] or 0) + 1
+		motion_log_counts[id] = (motion_log_counts[id] or 0) + 1
+		local before = animation_count(self.npc)
+		local result = original_add_anim(self, animation_name, state)
+
+		if motion_log_counts[id] <= MAX_MOTION_LOGS_PER_NPC then
+			printf(
+				"* [anthology/cutscenes-v120] motion enqueue npc=%s section=%s level=%s motion=%s count=%s target=%s marker=%s animations=%s->%s",
+				npc_name(self.npc),
+				tostring(section),
+				tostring(level_name),
+				motion,
+				tostring(motion_counts[id][motion]),
+				tostring(manager and manager.target_state),
+				tostring(self.states and self.states.anim_marker),
+				before,
+				animation_count(self.npc)
+			)
+		end
+		return result
+	end
+
+	class.anthology_v120_motion_diagnostics_wrapped = true
+	return true
+end
+
+local function install_patch()
+	local lifecycle = install_animpoint_action_patch()
+	local reach = install_reach_action_patch()
+	local diagnostics = install_motion_diagnostics()
+	installed = lifecycle and reach and diagnostics
+	if installed then
+		printf("* [anthology/cutscenes-v120] retail CoP action lifecycle active")
+	end
+	return installed
+end
+
+local function delayed_install()
+	return install_patch()
+end
+
+function on_game_start()
+	initialize_counts = {}
+	reach_logged = {}
+	motion_counts = {}
+	motion_log_counts = {}
+	if not installed and not install_patch() and type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, "install_retry", 0.25, delayed_install)
+	end
+end

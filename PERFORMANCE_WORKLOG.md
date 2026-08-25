@@ -4107,3 +4107,69 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   canonical and installed hashes match. The pre-v119 addon/profile/log backup
   remains under
   `E:/ANTHOLOGY_BACKUPS/20260825_v119_pre_retail_cop_animpoint_ownership`.
+
+## 2026-08-25 - v120 retail CoP action lifecycle
+
+### v119 live result and narrowed cause
+
+- The two newest Anthology recordings were synchronized with the retail CoP
+  references at the `pri_a15_igrok_cam13` segment. Both play the same 166-frame
+  motion for 5.533 seconds with matching pose cadence and body turns. The
+  retail actor travels roughly 85 screen pixels, while the Anthology actor
+  travels roughly 380-410 pixels; divergence grows after about 2.5-3.0 seconds
+  without a clip restart or accelerated skeletal time.
+- `pri_a15_cam_13.anm` is byte-identical to retail CoP (SHA-256
+  `54AE153F0DB06CBAFEA0515215E3BB5A52E90C6B2ACE3179FCE5838E6A96B533`).
+  The relevant OMF motion is also identical and its authored root travels only
+  1.814 metres. Models, camera FOV, motion duration and animation assets are
+  therefore excluded from the corrective path.
+- Current `animation_movement_controller::{OnFrame,NewBlend}` and
+  `CStalkerAnimationManager::play_script_impl` were compared with the retail
+  CoP/OpenXRay path. Both apply the absolute start matrix and local root chain
+  with the same multiplication semantics. No C++ scale or physics correction
+  is justified.
+- The remaining concrete divergence is in `xr_animpoint`. Retail CoP
+  `action_animpoint:initialize()` calls only `action_base.initialize()` and
+  `animpoint:start()`. Anomaly inserts `state_mgr.set_state(npc, "idle")`
+  between them, clearing the authored animation position/direction state.
+  The v118 live log proves the consequence: Zulus received an initial absolute
+  anchor on `chest_0_idle_0` and a later second absolute anchor on
+  `pri_a15_zulus_cam1`.
+- Retail CoP also calls `set_desired_direction(smart_direction)` while the NPC
+  physically reaches the animpoint. That exact line is commented out in the
+  Anomaly version, explaining an incorrect initial heading during a hand-off.
+
+### v120 correction and isolation
+
+- v120 restores the retail initialize body without the intermediate `idle`,
+  but only for exact `pri_a15` and the two actual `jup_b219` animpoint
+  section/cover pairs. All ordinary animpoints delegate unchanged.
+- The scoped reach action now reproduces the retail execute order, including
+  the authored smart-cover direction. NPCs still reach the point through
+  normal level-path movement; no position or direction is teleported.
+- v119 action ownership and v118 first-absolute/following-local motion binding
+  remain cumulative. Models, OMF, camera, XFORM, movement-controller code,
+  smart-cover coordinates, patrol paths, sound, grass/details and scene timing
+  are untouched.
+- PAS/Underpass is intentionally outside this animpoint lifecycle wrapper:
+  those participants use walker/path schemes and require their own evidence if
+  a movement defect remains there.
+- Transition-only diagnostics record initialize/finalize epochs, the restored
+  reach heading and bounded motion enqueue counts. There is no per-frame hook.
+  Live acceptance requires one `pri_a15_igrok_cam13` enqueue and one continuous
+  action epoch; if that invariant holds while translation is still excessive,
+  the log will exclude another Lua lifecycle restart rather than hiding it.
+
+### Validation and deployment
+
+- The v120 script and all inherited scripts pass `luac 5.1 -p`. The dedicated
+  smoke test proves exact PRI/JUP scoping, the retail base/start sequence with
+  no forced idle, restored desired heading, observational motion diagnostics,
+  double-install protection and transparent delegation for PAS, wrong levels,
+  wrong sections and wrong covers. The inherited v119 smoke test also passes
+  against the cumulative v120 package.
+- The canonical addon is stored at
+  `D:/ANTHOLOGY_DEV/addons/Anthology Cutscenes v120 - Retail CoP Action Lifecycle`,
+  junctioned into MO2 and enabled above v119 in the HARD profile. The pre-v120
+  v119 addon, profile and live log are backed up under
+  `E:/ANTHOLOGY_BACKUPS/20260825_v120_pre_retail_cop_action_lifecycle`.
