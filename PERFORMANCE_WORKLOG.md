@@ -3866,3 +3866,64 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   profile above v115.
 - The pre-v116 profile, v115 addon and latest log are recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260825_v116_pre_original_cop_root_anchors`.
+
+## 2026-08-25 - v117 grounded CoP root motion
+
+### Four-video comparison and live proof
+
+- The two original-CoP reference recordings are
+  `Desktop 2026.08.25 - 03.16.31.10.mp4` (`jup_b219`) and
+  `Desktop 2026.08.25 - 03.17.33.11.mp4` (`pri_a15`). In the Jupiter scene the
+  full cast is already on authored anchors at the first group cut; Zulus turns
+  at about 20.7-22.8 seconds around a planted foot without an XZ slide or Y
+  lift. In the Pripyat scene the group first appears at 47.117 seconds already
+  positioned and facing correctly. The visible sequence contains planted
+  idles, gestures and body turns, not NPCs chasing their marks.
+- In the matching Anthology Pripyat recording
+  `Anomaly-1.5.3-Anthology 2.1 2026.08.25 - 03.11.45.09.mp4`, several NPCs move
+  into the camera before the group cut. Sokolov then travels sideways/backward
+  at about 50.2-53.8 and again from about 60.9-69.3 while his pose and facing do
+  not match the travel vector. This is continuous root/XFORM drift, not a
+  ragdoll or a one-frame physics teleport.
+- The matching live log proves v116 intercepted only
+  `pri_a15_zulus... animation=pri_a15_zulus_cam1`. It did not emit an anchor for
+  the actor, Vano, Sokolov, Wanderer or the military cast. The same log shows
+  the Jupiter readiness gate repeatedly blocked on
+  `jup_b219_zulus_id:path-point` and never publishing `JUP NPC XFORM settled`.
+
+### Root cause and v117 correction
+
+- v116 required `state.prop.moving == true` before restoring the authored
+  absolute transform. Every affected animpoint first requests a non-moving
+  `pri_a15_idle_*` state. The base state manager consumes
+  `animation_direction_applied` on that idle with `local_animation = true`, so
+  the later moving cinematic clip normally becomes invisible to the wrapper.
+- v117 removes that incorrect moving-state guard. The first clip carrying the
+  authored animpoint position and direction, including the staging idle, now
+  uses `local_animation = false`. The marker is then retained and every later
+  moving clip delegates to the stock local root-motion chain.
+- Scope remains limited by level, exact NPC section and `jup_b219_`/`pri_a15_`
+  animation prefix. There is no per-frame ground clamp, `set_position`, AI
+  turn, animation restart or change to camera, sound, grass/details, dialogue
+  and animation lists.
+- The engine `animation_movement_controller.cpp` was compared with the original
+  OpenXRay CoP implementation. Its root accumulation and local-chain semantics
+  are equivalent; replacing the controller would add risk without addressing
+  the observed first-anchor defect.
+- Jupiter patrol points are now obtained directly through protected
+  `patrol(path):point(0)` calls. The runtime's unreliable
+  `level.patrol_path_exists` precheck can no longer reject a valid path and
+  force the 30-second LTX fallback.
+
+### Validation and rollback
+
+- Both addon scripts pass the Lua 5.1 parser. The v117 root-motion smoke test
+  covers both Jupiter animpoints and all nine possible Pripyat cast sections,
+  verifies that a non-moving idle is absolute, verifies that the following
+  moving clip remains local and proves unrelated/Underpass gameplay actors are
+  untouched. The Jupiter test deliberately makes `patrol_path_exists` lie while
+  the real patrol object exists and still requires the six-member gate to settle.
+- The inherited v115 and v116 staging/root tests continue to pass. v117 remains
+  addon-only; DX11 and DX11-AVX engine binaries are unchanged.
+- The pre-v117 installed addon, active MO2 profile and captured log are backed
+  up under `E:/ANTHOLOGY_BACKUPS/20260825_v117_pre_grounded_cop_root_motion`.
