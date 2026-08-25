@@ -3927,3 +3927,93 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   addon-only; DX11 and DX11-AVX engine binaries are unchanged.
 - The pre-v117 installed addon, active MO2 profile and captured log are backed
   up under `E:/ANTHOLOGY_BACKUPS/20260825_v117_pre_grounded_cop_root_motion`.
+
+## 2026-08-25 - v118 original CoP physical-motion binding
+
+### v117 live failure and corrected diagnosis
+
+- Frame-by-frame comparison of the newest Jupiter recording finds no remaining
+  NPC Y jump there, but a large actor/world-body backpack blocks the camera
+  from 9.238 through the 38.570-second cut while target names change behind the
+  same silhouette; the original-CoP reference has no such body. That is
+  consistent with the cutscene actor's animpoint starting from the wrong local
+  root, which v118 now catches on its first concrete motion.
+- The newest Pripyat recording retains a clear non-reference root excursion:
+  Wanderer is planted by the booth until about 74.05 seconds, then slides
+  left/forward toward the camera from about 74.20 to 76.9 and returns
+  right/back by 78.1 with yaw and feet not matching travel. Later foreground
+  actors also retain accumulated static XZ offsets, while the reference cast
+  stays near its authored roots. This is continuous root/XFORM drift, not a
+  camera cut, one-frame teleport or ragdoll lift.
+- The live log proves that v117 loaded, but it emitted an absolute root anchor
+  only for the later `pri_a15_zulus_cam1` epoch. Actor, Vano, Sokolov,
+  Wanderer and the military cast never entered its wrapper.
+- v117 compared the argument of `state_mgr_animation.animation:add_anim` with
+  logical-state prefixes such as `pri_a15_`. That argument is actually the
+  selected physical motion. The first INTO motion for
+  `pri_a15_idle_none/strap/unstrap` is `chest_0_idle_0`, so v117 delegated
+  it to the Anomaly base branch. The base branch immediately marked the
+  authored transform as applied while starting it with
+  `local_animation = true`; later scene motions could no longer repair the
+  initial matrix. The old v117 smoke test was false-positive because it passed
+  `pri_a15_idle_none` directly as the physical motion name.
+- Contrary to the earlier v117 explanation, these logical idle tables have
+  `prop.moving = true`. Removing v116's moving guard was therefore not the
+  material correction. The defect was the logical-state/physical-motion name
+  mismatch.
+
+### Original CoP contract and v118 correction
+
+- The original CoP `state_mgr_animation.script`, preserved in the engine's
+  imported game-resource history and independently checked against a stock CoP
+  script mirror, shows the explicit-position branch calling
+  `add_animation(..., local_animation = false)` for the first moving/root
+  clip, then retaining local root motion for the following chain.
+- v118 decides the narrow override only from the exact runtime level and exact
+  spawn section of the `jup_b219` or `pri_a15` cast. It deliberately does
+  not filter the concrete motion name. The first root-moving clip of the
+  authored position/direction is absolute; a genuinely non-moving clip leaves
+  the anchor pending as in retail CoP. Subsequent clips at the same anchor
+  delegate to the unchanged base local chain. A new explicit transform after a
+  stock reset is forwarded as another absolute request without replacing the
+  engine's controller lifecycle.
+- Diagnostics now record the concrete motion, logical target state, animation
+  marker and bounded per-NPC anchor epoch. This proves whether
+  `chest_0_idle_0` consumed the authored matrix before the camera reveals the
+  cast without installing a global per-frame animation hook.
+- The authored level data are valid and are not rewritten. The Pripyat
+  smart-cover roots are clustered around Y=-0.51/-0.52 and use animation root
+  motion to distribute the cast; the hidden actor spawn at Y=-27.724 is
+  intentional staging. Jupiter walker paths agree around Y=20.1-20.54.
+  `wrong smartcover name` warnings are an ID-Cleaner load-order symptom;
+  v113 subsequently reports `rebound=52 missing=0 ready=true`, so renaming
+  covers or forcing NPC positions would damage valid scene data.
+- The C++ `add_animation`, `CGameObject::create_anim_mov_ctrl` and
+  `animation_movement_controller::NewBlend` chain was compared with OpenXRay
+  CoP. The significant semantics match: `local_animation=true` accumulates
+  the preceding root, while an absolute first anchor uses the authored start
+  matrix. No global engine-physics change is needed for this script-layer
+  binding defect.
+
+### Jupiter patrol readiness and validation
+
+- v117 still detached the luabind method as `pcall(path.point, path, 0)`.
+  The live engine rejected that call and logged
+  `jup_b219_zulus_id:path-point` until the 30-second hard fallback despite
+  the path existing in `all.spawn`. v118 keeps `patrol(path_name)` and
+  `path:point(0)` inside one protected closure. Camera, grass/details, sound,
+  dialogue, scene animations and NPC positions remain untouched.
+- Both v118 scripts pass the Lua 5.1 parser. The new smoke test passes real
+  `chest_0_idle_0` motions for all six Jupiter and all nine Pripyat sections,
+  checks exact-level/section isolation, preserves the following local chain,
+  verifies that a non-moving clip defers rather than consumes the anchor,
+  verifies forwarding of a second explicit transform and rejects
+  Underpass/unrelated actors. The inherited v117 Jupiter settle and v115
+  live-XFORM tests also pass against the v118 addon.
+- v118 is addon-only; DX11 and DX11-AVX binaries remain unchanged. The
+  canonical addon is stored in
+  `D:/ANTHOLOGY_DEV/addons/Anthology Cutscenes v118 - Original CoP Motion Binding`,
+  junctioned into MO2 and enabled above v117 in the HARD profile. Source and
+  installed script hashes match. The pre-v118 v117 addon, profile modlist and
+  captured live log are backed up under
+  `E:/ANTHOLOGY_BACKUPS/20260825_v118_pre_original_cop_motion_binding`.
