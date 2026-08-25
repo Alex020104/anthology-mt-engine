@@ -4017,3 +4017,93 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   installed script hashes match. The pre-v118 v117 addon, profile modlist and
   captured live log are backed up under
   `E:/ANTHOLOGY_BACKUPS/20260825_v118_pre_original_cop_motion_binding`.
+
+## 2026-08-25 - v119 retail CoP animpoint ownership
+
+### v118 live result and remaining retail-CoP divergence
+
+- The newest v118 log proves that the addon loaded and applied the initial
+  absolute anchor to the complete Pripyat cast. PRI staging reached
+  `NPC XFORM settled (43 updates, 310 ms)` before the scene was revealed, so
+  the remaining visible return was not caused by a missing first anchor or an
+  invalid smart-cover coordinate.
+- Later Zulus received another absolute anchor on `pri_a15_zulus_cam1`. That
+  proves a new authored transform epoch occurred, but by itself does not prove
+  whether it was a legitimate camera-state transition or a GOAP restart.
+- Authentic retail CoP `xr_animpoint.position_riched()` immediately returns
+  true when `current_action` is non-nil. Current Anomaly/CoC keeps testing
+  distance from the original cover. This creates a concrete way for authored
+  root-motion to invalidate its own active animpoint and for GOAP to start a
+  second reach route over the scene animation. v119 restores the retail rule
+  narrowly; live video remains the acceptance test for whether that divergence
+  was the remaining slide/turn/return source.
+
+### v119 correction and isolation
+
+- v119 restores only the retail ownership invariant for the exact level,
+  spawn section, cover name and action family of all nine `pri_a15` animpoint
+  actors plus the actor/Azot animpoints in `jup_b219`.
+- The original Anomaly implementation remains authoritative before an action
+  starts and for wrong levels, covers, action families, ordinary gameplay
+  animpoints and all Underpass walkers. `action_animpoint` initialize/finalize,
+  danger/combat preconditions, C++ movement controllers and the v118 absolute
+  anchor recovery are unchanged.
+- Physical arrival is not bypassed. While `current_action` is nil, the base
+  `action_reach_animpoint` still pathfinds the NPC to the start point. During
+  the active action, the C++ animation movement controller still advances the
+  physical XFORM to every authored root-motion endpoint. When finalize clears
+  the action, ordinary reach evaluation becomes authoritative again.
+- No NPC position is written, no frame callback is registered and no movement,
+  camera, grass/details, sound, dialogue or motion asset is replaced.
+- The JUP patrol helper now accepts the live callable luabind `patrol` object.
+  v118 incorrectly rejected it because `type(patrol)` is not guaranteed to be
+  the native Lua string `function`, which explains the repeated
+  `jup_b219_zulus_id:path-point` diagnostics and 30-second fallback.
+- Root-anchor epoch output now uses `%s`, matching the modpack's custom `printf`
+  implementation, so a genuine later recovery epoch will be visible in logs.
+
+### Validation target
+
+- The Lua 5.1 smoke test covers every exact PRI/JUP scope, transparent
+  delegation for nil actions and wrong level/section/cover/prefix, all four
+  PAS walkers, double-install protection, physical pre-start/post-finalize
+  reaching and both true/false base return paths.
+- A 200-tick simulated root-motion trajectory remains owned after moving far
+  outside the cover: no base distance evaluation, finalize, reach action or
+  second anchor epoch occurs. Source assertions reject `set_position`, forced
+  state changes, per-frame callbacks and action initialize/finalize overrides.
+- Live acceptance requires NPCs to reach the start point normally, follow the
+  authored animation on the ground and avoid a GOAP walk-back during the active
+  camera chain. A new explicit scene transform, real save/load or legitimate
+  scheme reinitialization may still create a retail-compatible anchor epoch.
+
+### Asset/root-motion forensic and deployment
+
+- The active Anthology and authentic CoP SDK `stalker_scenario_animation.omf`
+  were decoded and compared. All 312 `pri_a15_*` motion chunks are byte-equal;
+  the Anthology file contains duplicate definitions, but the corresponding
+  physical chunks are identical to the retail data and `std::map::insert`
+  retains the first definition. No loose actor OMF or
+  `actors/modded_stalker_animations` override is active in MO2.
+- The active loose Wanderer OGF has the same bone hierarchy/IDs and complete IK
+  bind transforms as retail CoP. Its only material non-render metadata delta is
+  the user-data include section. The root is ID 0 `root_stalker`, followed by
+  ID 1 `bip01` and ID 2 pelvis, exactly matching the OMF remap and the movement
+  controller's hardcoded root lookup.
+- `pri_a15_monolit_cam4` is byte-equal in retail and every physical Anthology
+  duplicate. Across all 520 frames root X/Y/Z and bip01/pelvis XZ displacement
+  are constant. The several-metre on-screen slide therefore cannot originate
+  in that clip, its skeleton bind or root remap; another runtime movement layer
+  is changing the object XFORM over an in-place cinematic motion.
+- The v119 smoke test explicitly proves three phases: base physical reaching
+  before `current_action`, uninterrupted scene ownership while root-motion is
+  active, and restored base reaching after finalize clears the action. It also
+  rejects position writes, forced state transitions and per-frame callbacks.
+  v119, v118, the v117 Jupiter settle test and the v115 staging test pass under
+  Lua 5.1; all v119 addon scripts pass `luac -p`.
+- The canonical addon is synchronized to
+  `D:/ANTHOLOGY_DEV/addons/Anthology Cutscenes v119 - Retail CoP Animpoint Ownership`,
+  junctioned into MO2 and enabled above v118 in the HARD profile. Source,
+  canonical and installed hashes match. The pre-v119 addon/profile/log backup
+  remains under
+  `E:/ANTHOLOGY_BACKUPS/20260825_v119_pre_retail_cop_animpoint_ownership`.

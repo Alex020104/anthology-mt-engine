@@ -1,0 +1,167 @@
+-- Anthology Cutscenes v118
+-- Restore the original Call of Pripyat absolute transform for the first
+-- animation rooted at an authored animpoint. The first state is normally a
+-- logical CoP idle, but state_mgr_animation passes its concrete motion name
+-- (usually chest_0_idle_0) to add_anim. It must consume the authored
+-- position/direction in absolute mode before the later moving clips start their
+-- local root-motion chain.
+--
+-- Scope is deliberately limited to the two affected CoP cinematics. All
+-- subsequent moving clips keep the normal local root-motion chain.
+
+local EVENT_ID = "anthology_cutscenes_v118_original_root_anchor"
+local MAX_LOGGED_EPOCHS_PER_NPC = 8
+
+local PRI_SECTIONS = {
+	pri_a15_actor = true,
+	pri_a15_vano = true,
+	pri_a15_sokolov_scene = true,
+	pri_a15_zulus = true,
+	pri_a15_wanderer = true,
+	pri_a15_military_tarasov = true,
+	pri_a15_military_2 = true,
+	pri_a15_military_3 = true,
+	pri_a15_military_4 = true,
+}
+
+local JUP_SECTIONS = {
+	jup_b219_actor = true,
+	jup_b219_stalker_tech = true,
+	jup_b219_zulus = true,
+	jup_b219_vano = true,
+	jup_b219_soldier = true,
+	jup_b219_monolith_squad_leader_freedom_skin = true,
+}
+
+local anchor_epochs = {}
+local installed = false
+
+local function current_level_name()
+	if not (level and type(level.name) == "function") then
+		return ""
+	end
+	local ok, value = pcall(level.name)
+	return ok and tostring(value or "") or ""
+end
+
+local function npc_section(npc)
+	if not (npc and npc.section) then
+		return nil
+	end
+	local ok, value = pcall(npc.section, npc)
+	return ok and tostring(value or "") or nil
+end
+
+local function use_original_cop_anchor(npc)
+	local section = npc_section(npc)
+	if not section then
+		return false, nil, current_level_name()
+	end
+
+	local level_name = current_level_name()
+	if level_name == "pripyat" and PRI_SECTIONS[section] then
+		return true, section, level_name
+	end
+
+	if level_name == "jupiter" and JUP_SECTIONS[section] then
+		return true, section, level_name
+	end
+
+	return false, section, level_name
+end
+
+
+local function animation_class()
+	local module = rawget(_G, "state_mgr_animation")
+	if module and module.animation then
+		return module.animation
+	end
+	return nil
+end
+
+local function install_patch()
+	local class = animation_class()
+	if not (class and class.add_anim) then
+		return false
+	end
+
+	if class.anthology_v118_original_anchor_wrapped then
+		installed = true
+		return true
+	end
+
+	local original_add_anim = class.add_anim
+	function class:add_anim(animation_name, state)
+		local manager = self.mgr
+		local explicit_anchor = manager
+			and manager.animation_position
+			and manager.animation_direction
+			and not manager.animation_direction_applied
+
+		if explicit_anchor then
+			-- Do not filter by animation_name here. add_anim receives the selected
+			-- physical motion (for example chest_0_idle_0), not the logical CoP
+			-- state (for example pri_a15_idle_none).
+			local scoped, section, level_name = use_original_cop_anchor(self.npc)
+			if not scoped then
+				return original_add_anim(self, animation_name, state)
+			end
+
+			local moving = state and state.prop and state.prop.moving == true
+			if not moving then
+				-- Retail CoP does not consume the authored transform on a
+				-- non-root-moving clip. Leave the marker clear so the first
+				-- moving clip can install the absolute scene matrix.
+				self.npc:add_animation(animation_name, true, false)
+				return
+			end
+
+			local direction = manager.animation_direction
+			local rotation_y = -math.deg(math.atan2(direction.x, direction.z))
+			self.npc:add_animation(
+				animation_name,
+				true,
+				manager.animation_position,
+				vector():set(0, rotation_y, 0),
+				false
+			)
+			manager.animation_direction_applied = true
+
+			local id = self.npc:id()
+			local epoch = (anchor_epochs[id] or 0) + 1
+			anchor_epochs[id] = epoch
+			if epoch <= MAX_LOGGED_EPOCHS_PER_NPC then
+				printf(
+					"* [anthology/cutscenes-v118] original CoP root anchor npc=%s section=%s level=%s motion=%s state=%s marker=%s moving=%s epoch=%s local=false",
+					tostring(self.npc:name()),
+					tostring(section),
+					tostring(level_name),
+					tostring(animation_name),
+					tostring(manager.target_state),
+					tostring(self.states and self.states.anim_marker),
+					tostring(moving),
+					tostring(epoch)
+				)
+			end
+			return
+		end
+
+		return original_add_anim(self, animation_name, state)
+	end
+
+	class.anthology_v118_original_anchor_wrapped = true
+	installed = true
+	printf("* [anthology/cutscenes-v118] original CoP motion-binding patch active")
+	return true
+end
+
+local function delayed_install()
+	return install_patch()
+end
+
+function on_game_start()
+	anchor_epochs = {}
+	if not installed and not install_patch() and type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, "install_retry", 0.25, delayed_install)
+	end
+end

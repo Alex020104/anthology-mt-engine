@@ -1,0 +1,172 @@
+-- Anthology Cutscenes v119
+--
+-- Retail Call of Pripyat gives an animpoint action ownership of the NPC after
+-- the action has started. Root-motion is then allowed to move the physical
+-- XFORM away from the smart-cover anchor without making GOAP leave the action.
+--
+-- Anomaly/CoC changed position_riched() so it keeps checking the distance even
+-- when current_action is already active. A moving cinematic clip consequently
+-- invalidates its own animpoint, action_animpoint is finalized, the reach action
+-- walks the NPC back to the cover, and the cinematic action is initialized a
+-- second time. On screen this is the slide/turn/snap-back loop.
+--
+-- Restore only the retail ownership invariant and only for the exact CoP scene
+-- actors, covers and action families involved. Initial reaching, danger logic,
+-- action initialize/finalize, movement controllers and all ordinary animpoints
+-- continue through the base Anomaly implementation.
+
+local EVENT_ID = "anthology_cutscenes_v119_animpoint_ownership"
+
+local PRI_COVERS = {
+	pri_a15_actor = "pri_a15_animpoint_actor",
+	pri_a15_vano = "pri_a15_animpoint_vano",
+	pri_a15_sokolov_scene = "pri_a15_animpoint_sokolov",
+	pri_a15_zulus = "pri_a15_animpoint_zulus",
+	pri_a15_wanderer = "pri_a15_animpoint_wanderer",
+	pri_a15_military_tarasov = "pri_a15_animpoint_military_1",
+	pri_a15_military_2 = "pri_a15_animpoint_military_2",
+	pri_a15_military_3 = "pri_a15_animpoint_military_3",
+	pri_a15_military_4 = "pri_a15_animpoint_military_4",
+}
+
+local JUP_COVERS = {
+	jup_b219_actor = {
+		cover = "jup_b219_actor_smart_cover",
+		prefixes = { "pri_a15_idle_", "jup_b219_actor_" },
+	},
+	jup_b219_stalker_tech = {
+		cover = "jup_b219_azot_smart_cover",
+		prefixes = { "pri_a15_idle_", "jup_b219_azot_" },
+	},
+}
+
+local installed = false
+local logged_actions = {}
+
+local function starts_with(value, prefix)
+	return string.sub(value, 1, string.len(prefix)) == prefix
+end
+
+local function current_level_name()
+	if not (level and level.name) then
+		return ""
+	end
+	local ok, value = pcall(level.name)
+	return ok and tostring(value or "") or ""
+end
+
+local function npc_section(npc)
+	if not (npc and npc.section) then
+		return nil
+	end
+	local ok, value = pcall(npc.section, npc)
+	return ok and tostring(value or "") or nil
+end
+
+local function npc_name(npc)
+	if not (npc and npc.name) then
+		return "unknown"
+	end
+	local ok, value = pcall(npc.name, npc)
+	return ok and tostring(value or "unknown") or "unknown"
+end
+
+local function object_for_animpoint(controller)
+	local id = controller and controller.npc_id
+	local storage = id and db and db.storage and db.storage[id] or nil
+	return storage and storage.object or nil
+end
+
+local function scoped_scene_action(level_name, section, cover, action)
+	if not (section and cover and action) then
+		return false
+	end
+
+	if level_name == "pripyat" then
+		return PRI_COVERS[section] == cover and starts_with(action, "pri_a15_")
+	end
+
+	if level_name == "jupiter" then
+		local entry = JUP_COVERS[section]
+		if not (entry and entry.cover == cover) then
+			return false
+		end
+		for _, prefix in ipairs(entry.prefixes) do
+			if starts_with(action, prefix) then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+local function animpoint_class()
+	local module = rawget(_G, "xr_animpoint")
+	return module and module.animpoint or nil
+end
+
+local function install_patch()
+	local class = animpoint_class()
+	if not (class and class.position_riched) then
+		return false
+	end
+
+	if class.anthology_v119_retail_reach_wrapped then
+		installed = true
+		return true
+	end
+
+	local original_position_riched = class.position_riched
+	function class:position_riched()
+		local action = self.current_action
+		if action ~= nil then
+			local npc = object_for_animpoint(self)
+			local section = npc_section(npc)
+			local cover = self.st and self.st.cover_name or nil
+			local level_name = current_level_name()
+			local action_name = tostring(action)
+
+			if npc and scoped_scene_action(level_name, section, cover, action_name) then
+				local key = tostring(self.npc_id) .. ":" .. action_name
+				if not logged_actions[key] then
+					logged_actions[key] = true
+					printf(
+						"* [anthology/cutscenes-v119] retail animpoint ownership npc=%s section=%s level=%s cover=%s action=%s",
+						npc_name(npc),
+						tostring(section),
+						tostring(level_name),
+						tostring(cover),
+						action_name
+					)
+				end
+
+				-- Exact retail CoP invariant: once an animpoint action owns the NPC,
+				-- its authored root-motion cannot invalidate that same action. This
+				-- does not freeze or rewrite XFORM: the C++ movement controller keeps
+				-- advancing the physical root to the authored endpoint. Before start
+				-- and after finalize current_action is nil, so normal physical reaching
+				-- remains delegated to the base Anomaly implementation.
+				return true
+			end
+		end
+
+		return original_position_riched(self)
+	end
+
+	class.anthology_v119_retail_reach_wrapped = true
+	installed = true
+	printf("* [anthology/cutscenes-v119] retail CoP animpoint ownership active")
+	return true
+end
+
+local function delayed_install()
+	return install_patch()
+end
+
+function on_game_start()
+	logged_actions = {}
+	if not installed and not install_patch() and type(CreateTimeEvent) == "function" then
+		CreateTimeEvent(EVENT_ID, "install_retry", 0.25, delayed_install)
+	end
+end
