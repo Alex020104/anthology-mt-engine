@@ -148,7 +148,7 @@ void CRenderTarget::phase_luminance()
 		pv++;
 		RCache.Vertex.Unlock(4, g_bloom_filter->vb_stride);
 
-		f_luminance_adapt = .9f * f_luminance_adapt + .1f * Device.fTimeDelta * ps_r2_tonemap_adaptation;
+		f_luminance_adapt = .9f * f_luminance_adapt + .1f * f_main_view_adaptation_delta * ps_r2_tonemap_adaptation;
 		float amount = ps_r2_ls_flags.test(R2FLAG_TONEMAP) ? ps_r2_tonemap_amount : 0;
 		Fvector3 _none, _full, _result;
 		_none.set(1, 0, 1);

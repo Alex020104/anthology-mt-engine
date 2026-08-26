@@ -102,7 +102,18 @@ public:
 	Fmatrix mFullTransform_saved;
 	Fmatrix mView_saved_svp;
 	Fmatrix mProject_saved_svp;
+	Fmatrix mViewHud_saved_main;
+	Fmatrix mProjectHud_saved_main;
+	Fmatrix mFullTransformHud_saved_main;
+	Fmatrix mViewCam_saved_main;
+	Fmatrix mProjectCam_saved_main;
+	Fmatrix mFullTransformCam_saved_main;
+	Fvector4 mGrassBenderPos_saved_main[16];
+	Fvector4 mGrassBenderDir_saved_main[16];
+	u16 mGrassBenderId_saved_main[16];
 	bool mSVPCameraSaved;
+	bool mMainHudCamSaved;
+	u16 mMainGrassBendersValidMask;
 	u32 mSVPCameraFrame;
 
 	float fFOV;
@@ -146,32 +157,63 @@ class ENGINE_API CRenderDevice : public CRenderDeviceBase
 public:
 	class ENGINE_API CSecondVPParams //--#SM+#-- +SecondVP+
 	{
-		bool isActive; // Oeaa aeoeaaoee ?aiaa?a ai aoi?ie au?ii?o
-		bool isThermal;
-		int thermalMode;
-		u8 frameDelay;  // Ia eaeii eaa?a n iiiaioa i?ioeiai ?aiaa?a ai aoi?ie au?ii?o iu ia?i?i iiaue
+		bool isActive = false; // Oeaa aeoeaaoee ?aiaa?a ai aoi?ie au?ii?o
+		bool isThermal = false;
+		bool isTextureReady = false;
+		int thermalMode = 0;
+		u8 frameDelay = 2;  // Ia eaeii eaa?a n iiiaioa i?ioeiai ?aiaa?a ai aoi?ie au?ii?o iu ia?i?i iiaue
 						  //(ia ii?ao auou iaiuoa 2 - ea?aue aoi?ie eaa?, ?ai aieuoa oai aieaa ieceee FPS ai aoi?ii au?ii?oa)
+		u16 ownerId = u16(-1);
+		int qualityPreset = -1;
 
 	public:
-		bool isCamReady; // Oeaa aioiaiinoe eaia?u (FOV, iiceoey, e o.i) e ?aiaa?o aoi?iai au?ii?oa
+		bool isCamReady = false; // Oeaa aioiaiinoe eaia?u (FOV, iiceoey, e o.i) e ?aiaa?o aoi?iai au?ii?oa
 
 		IC bool IsSVPActive() { return isActive; }
 		void SetSVPActive(bool bState);
 		bool    IsSVPFrame();
+		IC bool IsSVPTextureReady() const { return isTextureReady; }
+		IC void MarkSVPTextureReady() { isTextureReady = isActive; }
+		void InvalidateSVPContent();
+		void SetSVPOwner(u16 id)
+		{
+			if (ownerId != id)
+			{
+				ownerId = id;
+				InvalidateSVPContent();
+			}
+		}
+		void SetSVPQualityPreset(int preset)
+		{
+			clamp<int>(preset, 0, 3);
+			if (qualityPreset != preset)
+			{
+				qualityPreset = preset;
+				InvalidateSVPContent();
+			}
+		}
 		IC bool IsSVPThermal() const { return isThermal; }
-		IC void SetSVPThermal(bool bState) { isThermal = bState; }
+		IC void SetSVPThermal(bool bState)
+		{
+			if (isThermal != bState)
+				InvalidateSVPContent();
+			isThermal = bState;
+		}
 		IC int GetSVPThermalMode() const { return thermalMode; }
 		IC void SetSVPThermalMode(int mode)
 		{
+			clamp<int>(mode, 0, 1);
+			if (thermalMode != mode)
+				InvalidateSVPContent();
 			thermalMode = mode;
-			clamp<int>(thermalMode, 0, 1);
 		}
-
 		IC u8 GetSVPFrameDelay() { return frameDelay; }
 		void  SetSVPFrameDelay(u8 iDelay)
 		{
+			clamp<u8>(iDelay, 2, u8(-1));
+			if (frameDelay != iDelay)
+				InvalidateSVPContent();
 			frameDelay = iDelay;
-			clamp<u8>(frameDelay, 2, u8(-1));
 		}
 	};	
 	
@@ -319,6 +361,8 @@ public:
 		m_SecondViewport.SetSVPFrameDelay(2);
 		m_SecondViewport.isCamReady = false;
 		mSVPCameraSaved = false;
+		mMainHudCamSaved = false;
+		mMainGrassBendersValidMask = 0;
 		mSVPCameraFrame = 0;
 	};
 

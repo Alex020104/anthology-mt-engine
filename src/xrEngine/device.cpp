@@ -661,17 +661,11 @@ void CRenderDevice::on_idle()
 	mFullTransformCam.mul(mProjectCam, mView);
 	m_pRender->SetCacheXform(mView, mProject);
 
-	mViewHud_prev = mViewHud;
-	mProjectHud_prev = mProjectHud;
-	mFullTransformHud_prev = mFullTransformHud;
-	mViewCam_prev = mViewCam;
-	mProjectCam_prev = mProjectCam;
-	mFullTransformCam_prev = mFullTransformCam;
+	const bool svp_frame = m_SecondViewport.IsSVPFrame();
 
 	// Keep previous camera transforms per viewport. SecondVP alternates with the
 	// main view, so sharing one previous transform makes its TAA reproject across
 	// unrelated FOVs.
-	const bool svp_frame = m_SecondViewport.IsSVPFrame();
 	if (svp_frame)
 	{
 		const u32 frame_delay = std::max<u8>(m_SecondViewport.GetSVPFrameDelay(), 2);
@@ -698,21 +692,89 @@ void CRenderDevice::on_idle()
 	mFullTransformHud.mul(mProjectHud, mViewHud);
 	mFullTransformCam.mul(mProjectCam, mViewCam);
 
-	// Save previous frame grass benders data
-	IGame_Persistent::grass_data& GData = g_pGamePersistent->grass_shader_data;
-
-	GData.prev_pos[0].set(Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, -1);
-	GData.prev_dir[0].set(0.0f, -99.0f, 0.0f, 1.0f);
-
-	for (int pBend = 1; pBend < _min(16, ps_ssfx_grass_interactive.y + 1); pBend++)
+	if (!svp_frame)
 	{
-		GData.prev_pos[pBend].set(GData.pos[pBend].x, GData.pos[pBend].y, GData.pos[pBend].z, GData.radius_curr[pBend]);
-		GData.prev_dir[pBend].set(GData.dir[pBend].x, GData.dir[pBend].y, GData.dir[pBend].z, GData.str[pBend]);
+		// mViewHud/mViewCam are overwritten by a lens frame as part of the normal
+		// device setup. Keep explicit last-main copies so the next presented frame
+		// never treats that intermediate PiP camera as HUD motion history.
+		if (mMainHudCamSaved)
+		{
+			mViewHud_prev = mViewHud_saved_main;
+			mProjectHud_prev = mProjectHud_saved_main;
+			mFullTransformHud_prev = mFullTransformHud_saved_main;
+			mViewCam_prev = mViewCam_saved_main;
+			mProjectCam_prev = mProjectCam_saved_main;
+			mFullTransformCam_prev = mFullTransformCam_saved_main;
+		}
+		else
+		{
+			mViewHud_prev = mViewHud;
+			mProjectHud_prev = mProjectHud;
+			mFullTransformHud_prev = mFullTransformHud;
+			mViewCam_prev = mViewCam;
+			mProjectCam_prev = mProjectCam;
+			mFullTransformCam_prev = mFullTransformCam;
+			mMainHudCamSaved = true;
+		}
+
+		mViewHud_saved_main = mViewHud;
+		mProjectHud_saved_main = mProjectHud;
+		mFullTransformHud_saved_main = mFullTransformHud;
+		mViewCam_saved_main = mViewCam;
+		mProjectCam_saved_main = mProjectCam;
+		mFullTransformCam_saved_main = mFullTransformCam;
 	}
 
-	// Save wind animation position
-	wind_anim_prev = wind_anim_saved;
-	wind_anim_saved = g_pGamePersistent->Environment().wind_anim;
+	if (!svp_frame)
+	{
+		// Keep grass motion history on the presented-view cadence. FrameMove may
+		// advance the live bender state during a sparse lens frame, so copying the
+		// live state directly here would make the next main TAA frame compare
+		// against the lens tick instead of the previous presented frame.
+		IGame_Persistent::grass_data& GData = g_pGamePersistent->grass_shader_data;
+		const int benders_count = std::max(1, std::min(16, int(ps_ssfx_grass_interactive.y) + 1));
+		const u16 active_mask = benders_count >= 16 ? u16(-1) : u16((1u << benders_count) - 1u);
+
+		for (int pBend = 0; pBend < benders_count; ++pBend)
+		{
+			Fvector4 current_pos;
+			Fvector4 current_dir;
+			if (pBend == 0)
+			{
+				current_pos.set(vCameraPosition.x, vCameraPosition.y, vCameraPosition.z, -1.0f);
+				current_dir.set(0.0f, -99.0f, 0.0f, 1.0f);
+			}
+			else
+			{
+				current_pos.set(GData.pos[pBend].x, GData.pos[pBend].y, GData.pos[pBend].z,
+					GData.radius_curr[pBend]);
+				current_dir.set(GData.dir[pBend].x, GData.dir[pBend].y, GData.dir[pBend].z,
+					GData.str[pBend]);
+			}
+
+			const u16 bender_bit = u16(1u << pBend);
+			const bool same_bender = pBend == 0 || mGrassBenderId_saved_main[pBend] == GData.id[pBend];
+			if ((mMainGrassBendersValidMask & bender_bit) && same_bender)
+			{
+				GData.prev_pos[pBend].set(mGrassBenderPos_saved_main[pBend]);
+				GData.prev_dir[pBend].set(mGrassBenderDir_saved_main[pBend]);
+			}
+			else
+			{
+				GData.prev_pos[pBend].set(current_pos);
+				GData.prev_dir[pBend].set(current_dir);
+			}
+
+			mGrassBenderPos_saved_main[pBend].set(current_pos);
+			mGrassBenderDir_saved_main[pBend].set(current_dir);
+			mGrassBenderId_saved_main[pBend] = pBend == 0 ? u16(-1) : GData.id[pBend];
+		}
+		mMainGrassBendersValidMask = active_mask;
+
+		// Save wind animation on the same main-view cadence.
+		wind_anim_prev = wind_anim_saved;
+		wind_anim_saved = g_pGamePersistent->Environment().wind_anim;
+	}
 
 	//RCache.set_xform_view ( mView );
 	//RCache.set_xform_project ( mProject );
@@ -1360,9 +1422,29 @@ void CLoadScreenRenderer::OnRender()
 
 void CRenderDevice::CSecondVPParams::SetSVPActive(bool bState) //--#SM+#-- +SecondVP+
 {
+	if (isActive != bState)
+	{
+		isTextureReady = false;
+		isCamReady = false;
+	}
+	if (!bState)
+	{
+		isThermal = false;
+		thermalMode = 0;
+		isCamReady = false;
+		isTextureReady = false;
+		ownerId = u16(-1);
+		qualityPreset = -1;
+	}
 	isActive = bState;
 	if (g_pGamePersistent != NULL)
 		g_pGamePersistent->m_pGShaderConstants->m_blender_mode.z = (isActive ? 1.0f : 0.0f);
+}
+
+void CRenderDevice::CSecondVPParams::InvalidateSVPContent()
+{
+	isTextureReady = false;
+	isCamReady = false;
 }
 
 bool CRenderDevice::CSecondVPParams::IsSVPFrame() //--#SM+#-- +SecondVP+

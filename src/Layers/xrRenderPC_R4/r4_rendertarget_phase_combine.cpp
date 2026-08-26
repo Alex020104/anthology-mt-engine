@@ -44,25 +44,19 @@ void CRenderTarget::phase_combine()
 	bool ssfx_PrevPos_Requiered = false;
 	//	TODO: DX10: Remove half poxel offset
 	bool _menu_pp = g_pGamePersistent ? g_pGamePersistent->OnRenderPPUI_query() : false;
+	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+	const int pip_quality = svp_frame ? clampr(ps_scope_lense_quality_preset, 0, 3) : 0;
 
 	u32 Offset = 0;
 	Fvector2 p0, p1;
 
-	//*** exposure-pipeline
-	if (Device.m_SecondViewport.IsSVPActive())	//--#SM+#-- +SecondVP+ Fix for screen flickering
-	{
-		if (t_LUM_src != rt_LUM_pool[0]->pTexture)
-			t_LUM_src->surface_set(rt_LUM_pool[0]->pSurface);
-		if (t_LUM_dest != rt_LUM_pool[1]->pTexture)
-			t_LUM_dest->surface_set(rt_LUM_pool[1]->pSurface);
-	}
-	else
-	{
-		if (t_LUM_src != rt_LUM_pool[0]->pTexture)
-			t_LUM_src->surface_set(rt_LUM_pool[0]->pSurface);
-		if (t_LUM_dest != rt_LUM_pool[1]->pTexture)
-			t_LUM_dest->surface_set(rt_LUM_pool[1]->pSurface);
-	}
+	// PiP consumes the current main-view exposure snapshot. It must not select a
+	// second luminance pair or contaminate the main adaptation history.
+	if (t_LUM_src != rt_LUM_pool[0]->pTexture)
+		t_LUM_src->surface_set(rt_LUM_pool[0]->pSurface);
+	ref_rt& luminance_dest = svp_frame ? rt_LUM_pool[0] : rt_LUM_pool[1];
+	if (t_LUM_dest != luminance_dest->pTexture)
+		t_LUM_dest->surface_set(luminance_dest->pSurface);
 
 	if (RImplementation.o.ssao_hdao && RImplementation.o.ssao_ultra)
 	{
@@ -102,14 +96,15 @@ void CRenderTarget::phase_combine()
 	}
 
 	{
-		// Disable when rendering SecondViewport
+		// AO/IL histories belong to the main camera. Always neutralize the shared
+		// combine inputs first so the SVP pass cannot sample main-view spatial
+		// data; only the main pass advances the temporal AO/IL pipelines.
+		FLOAT NeutralAOIL[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		HW.pContext->ClearRenderTargetView(rt_ssfx_temp->pRT, NeutralAOIL);
+		HW.pContext->ClearRenderTargetView(rt_ssfx_temp2->pRT, NeutralAOIL);
+
 		if (!Device.m_SecondViewport.IsSVPFrame())
 		{
-			// Clear RT
-			FLOAT ColorRGBA[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-			HW.pContext->ClearRenderTargetView(rt_ssfx_temp->pRT, ColorRGBA);
-			HW.pContext->ClearRenderTargetView(rt_ssfx_temp2->pRT, ColorRGBA);
-
 			if (RImplementation.o.ssfx_ao && ps_ssfx_ao.y > 0)
 			{
 				ssfx_PrevPos_Requiered = true;
@@ -388,7 +383,10 @@ void CRenderTarget::phase_combine()
 	RImplementation.GMBase.r_dsgraph_render_water();
 	
 	{
-		if (RImplementation.o.ssfx_rain)
+		// SSFX rain samples bloom/volumetric buffers that intentionally retain
+		// main-view state during a lens frame. Keep it on the main view so the PiP
+		// cannot refract stale data from a different camera.
+		if (!svp_frame && RImplementation.o.ssfx_rain)
 		{
 			phase_ssfx_rain(); // Render a small color buffer to do the refraction and more
 
@@ -435,12 +433,12 @@ void CRenderTarget::phase_combine()
 
 	//	Igor: for volumetric lights
 	//	combine light volume here
-	if (RImplementation.o.ssfx_volumetric)
+	if (!(svp_frame && pip_quality >= 2) && RImplementation.o.ssfx_volumetric)
 	{
 		if (m_bHasActiveVolumetric || m_bHasActiveVolumetric_spot)
 			phase_combine_volumetric();
 	}
-	else
+	else if (!(svp_frame && pip_quality >= 2))
 	{
 		if (m_bHasActiveVolumetric)
 			phase_combine_volumetric();
@@ -511,18 +509,26 @@ void CRenderTarget::phase_combine()
 
 
 
+	// The fog, thermal and DOF shaders sample shared blur targets. Build them
+	// from the SVP camera before those passes instead of inheriting main-view
+	// blur. Balanced/Performance skip this cost unless the weapon lens is thermal.
+	const bool svp_needs_blur = svp_frame &&
+		(pip_quality < 2 || Device.m_SecondViewport.IsSVPThermal() || !RImplementation.o.ssfx_bloom);
+	if (svp_needs_blur)
+		phase_blur();
+
 	if (!_menu_pp)
 	{
-		if (ps_sunshafts_mode == R2SS_SCREEN_SPACE || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS)
+		if (pip_quality < 2 && (ps_sunshafts_mode == R2SS_SCREEN_SPACE || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS))
 			phase_sunshafts();
 	}
 
-	if (RImplementation.o.ssfx_fog && ps_ssfx_fog_scattering > 0)
+	if (pip_quality < 2 && RImplementation.o.ssfx_fog && ps_ssfx_fog_scattering > 0)
 	{
 		phase_ssfx_fog_scattering();
 	}
 
-	if (RImplementation.o.ssfx_motionblur && ps_ssfx_motionblur.y > 0 && !Device.m_SecondViewport.IsSVPActive())
+	if (RImplementation.o.ssfx_motionblur && ps_ssfx_motionblur.y > 0 && !svp_frame)
 	{
 		phase_ssfx_motion_blur();
 	}
@@ -532,14 +538,17 @@ void CRenderTarget::phase_combine()
 		phase_3DSSReticle(); // Redotix99: for 3D Shader Based Scopes
 	}
 
-	//Compute blur textures
-	if (!Device.m_SecondViewport.IsSVPFrame()) // Temp fix for blur buffer and SVP
+	// Preserve the original main-view ordering. SVP blur was generated above,
+	// before the PiP-only consumers that otherwise sampled main-camera data.
+	if (!svp_frame)
 		phase_blur();
 
 	//Compute bloom (new)
 	if (RImplementation.o.ssfx_bloom)
 	{
-		if (!Device.m_SecondViewport.IsSVPFrame())
+		// Native/Quality retain the current camera's spatial bloom. The reduced
+		// presets deliberately clear it; no main-camera bloom may survive in PiP.
+		if (!svp_frame || pip_quality < 2)
 			phase_ssfx_bloom();
 		else
 			HW.pContext->ClearRenderTargetView(rt_ssfx_bloom1->pRT, ColorRGBA);
@@ -549,14 +558,14 @@ void CRenderTarget::phase_combine()
 		phase_pp_bloom();
 	}
 	
-	if (ps_r2_ls_flags.test(R2FLAG_DOF))
+	if (pip_quality < 1 && ps_r2_ls_flags.test(R2FLAG_DOF))
 	{	
 		phase_dof();
 	}
 
 	phase_lut();	
 
-	if(ps_r2_mask_control.x > 0)
+	if (!svp_frame && ps_r2_mask_control.x > 0)
 	{
 		phase_gasmask_dudv();
 		if (ps_r2_drops_control.x > 0)
@@ -565,11 +574,13 @@ void CRenderTarget::phase_combine()
 		}
 	}
 	
-	if(ps_r2_nightvision > 0)
+	if (!svp_frame && ps_r2_nightvision > 0)
 		phase_nightvision();
 
 	//--DSR-- HeatVision_start
-	if (ps_r2_heatvision > 0 || (Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal()))
+	const bool head_heatvision = !svp_frame && ps_r2_heatvision > 0;
+	const bool lens_heatvision = svp_frame && Device.m_SecondViewport.IsSVPThermal();
+	if (head_heatvision || lens_heatvision)
 		phase_heatvision();
 	//--DSR-- HeatVision_end
 
@@ -578,18 +589,20 @@ void CRenderTarget::phase_combine()
 		phase_fakescope(); //crookr
 	}
 
-	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
-
-	if (ps_smaa_quality)
+	// Object, grass and wind motion histories are owned by the presented main
+	// camera. Use spatial AA for every lens capture instead of reprojecting a
+	// sparse second camera through those main-view motion domains.
+	if (ps_smaa_quality || svp_frame)
 	{
         //PIX_EVENT(SMAA);
         phase_smaa();
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !Device.m_SecondViewport.IsSVPActive())
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !svp_frame)
 	{
 		phase_ssfx_taa();
+		ssfx_PrevPos_Requiered = true;
 	}
 
 	if (ssfx_PrevPos_Requiered && !svp_frame)
@@ -705,7 +718,10 @@ void CRenderTarget::phase_combine()
 		RCache.set_c("m_previous", Matrix_previous);
 		RCache.set_c("m_blur", m_blur_scale.x, m_blur_scale.y, 0, 0);
 		/////lvutner		
-		RCache.set_c("mask_control", ps_r2_mask_control.x, ps_r2_mask_control.y, ps_r2_mask_control.z, ps_r2_mask_control.w);
+		if (svp_frame)
+			RCache.set_c("mask_control", 0.0f, 0.0f, 0.0f, 0.0f);
+		else
+			RCache.set_c("mask_control", ps_r2_mask_control.x, ps_r2_mask_control.y, ps_r2_mask_control.z, ps_r2_mask_control.w);
 
 		RCache.set_c("tnmp_a", ps_r2_tnmp_a);
 		RCache.set_c("tnmp_b", ps_r2_tnmp_b);
@@ -740,8 +756,8 @@ void CRenderTarget::phase_combine()
 
 	//	if FP16-BLEND !not! supported - draw flares here, overwise they are already in the bloom target
 	/* if (!RImplementation.o.fp16_blend)*/
-	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0 &&
-		!(Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal())) //--DSR-- HeatVision
+	const bool current_view_heatvision = svp_frame ? Device.m_SecondViewport.IsSVPThermal() : ps_r2_heatvision > 0;
+	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && !current_view_heatvision) //--DSR-- HeatVision
 		g_pGamePersistent->Environment().RenderFlares(); // lens-flares
 
 	//	PP-if required
@@ -755,6 +771,7 @@ void CRenderTarget::phase_combine()
 	RCache.set_Stencil(FALSE);
 
 	//*** exposure-pipeline-clear
+	if (!svp_frame)
 	{
 		std::swap(rt_LUM_pool[0], rt_LUM_pool[1]);
 		t_LUM_src->surface_set(NULL);

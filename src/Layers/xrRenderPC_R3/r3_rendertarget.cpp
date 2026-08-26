@@ -444,6 +444,9 @@ CRenderTarget::CRenderTarget()
             rt_Generic_temp.create("$user$generic_temp", w, h, D3DFMT_A8R8G8B8, 1);
 
 		rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A8R8G8B8, 1); //--#SM+#-- +SecondVP+
+		Device.m_SecondViewport.InvalidateSVPContent();
+		Device.mMainHudCamSaved = false;
+		Device.mMainGrassBendersValidMask = 0;
 		rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A8R8G8B8, 1);
 
 		rt_dof.create(r2_RT_dof, w, h, D3DFMT_A8R8G8B8);

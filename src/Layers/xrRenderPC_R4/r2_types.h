@@ -118,13 +118,9 @@
 
 #define		r2_RT_ssfx_taa				"$user$ssfx_taa" // TAA
 #define		r2_RT_ssfx_prev_frame		"$user$ssfx_prev_frame" // Prev Frame
-#define		r2_RT_ssfx_prev_frame_main	"$user$ssfx_prev_frame_main"
-#define		r2_RT_ssfx_prev_frame_svp	"$user$ssfx_prev_frame_svp"
 #define		r2_RT_ssfx_motion_vectors	"$user$ssfx_motion_vectors" // Motion vectors
 
 #define		r2_RT_ssfx_prevPos		"$user$ssfx_prev_p" // Prev Position
-#define		r2_RT_ssfx_prevPos_main	"$user$ssfx_prev_p_main"
-#define		r2_RT_ssfx_prevPos_svp		"$user$ssfx_prev_p_svp"
 
 #define		JITTER(a) r2_jitter #a
 

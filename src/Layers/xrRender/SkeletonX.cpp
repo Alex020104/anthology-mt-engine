@@ -65,7 +65,9 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 #ifdef USE_DX11 //
 	if (RImplementation.o.ssfx_motionvectors)
 	{
-		if (Device.dwFrame > Parent->CurrentFrame)
+		// SVP uses spatial AA and must not advance the motion history consumed by
+		// the next presented main frame.
+		if (!Device.m_SecondViewport.IsSVPFrame() && Device.dwFrame > Parent->CurrentFrame)
 		{
 			// Save current frame
 			Parent->CurrentFrame = Device.dwFrame;

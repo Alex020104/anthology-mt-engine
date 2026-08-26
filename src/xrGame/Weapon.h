@@ -403,6 +403,10 @@ protected:
 		bool m_bSecondVPThermal;
 		int m_iSecondVPThermalMode;
 		u8 m_u8SecondVPFrameDelay;
+		bool m_bSecondVPPolicyLatched;
+		bool m_bSecondVPPolicyAllowed;
+		bool m_bSecondVPHeadNVGLatched;
+		bool m_bSecondVPHeadThermalLatched;
 		Fvector m_ZoomDof;
 		Fvector4 m_ReloadDof;
 		Fvector4 m_ReloadEmptyDof; //Swartz: reload when empty mag. DOF

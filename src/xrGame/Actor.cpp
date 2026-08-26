@@ -67,6 +67,7 @@
 #include "ai/monsters/basemonster/base_monster.h"
 
 #include "../Include/xrRender/UIRender.h"
+#include "../Layers/xrRender/xrRender_console.h"
 
 #include "ai_object_location.h"
 #include "ui/uiMotionIcon.h"
@@ -1183,6 +1184,24 @@ void CActor::UpdateCL()
 
 	SetZoomAimingMode(false);
 	CWeapon* pWeapon = smart_cast<CWeapon*>(inventory().ActiveItem());
+	const bool is_current_entity = Level().CurrentEntity() && this->ID() == Level().CurrentEntity()->ID();
+
+	// Resolve SecondVP ownership, cadence and the lens FOV before CameraManager
+	// builds this frame's projection. Updating it after cam_Update leaves dynamic
+	// zoom one capture behind its reticle and can publish a stale owner/FOV.
+	if (pWeapon && is_current_entity)
+	{
+		pWeapon->UpdateSecondVP();
+		g_pGamePersistent->m_pGShaderConstants->hud_params.y = pWeapon->GetSecondVPFov();
+	}
+	else if (is_current_entity || this == g_actor)
+	{
+		// The local actor continues updating while a holder, remote view or demo
+		// camera owns the screen. Tear down its old global viewport explicitly;
+		// do not let a non-current remote CActor disable the local player's PiP.
+		Device.m_SecondViewport.SetSVPActive(false);
+		ps_scope_lense_ads_is_pip = 0;
+	}
 
 	cam_Update(float(Device.dwTimeDelta) / 1000.0f, currentFOV());
     m_legs_controller.update(this);
@@ -1209,7 +1228,7 @@ void CActor::UpdateCL()
 			SetZoomAimingMode(true);
 		}
 
-		if (Level().CurrentEntity() && this->ID() == Level().CurrentEntity()->ID())
+		if (is_current_entity)
 		{
 			float fire_disp_full = pWeapon->GetFireDispersion(true, true);
 			m_fdisp_controller.SetDispertion(fire_disp_full);
@@ -1233,9 +1252,6 @@ void CActor::UpdateCL()
 			psHUD_Flags.set(HUD_CROSSHAIR_RT2, B);
 
 			psHUD_Flags.set(HUD_DRAW_RT, pWeapon->show_indicators());
-
-			// Update SecondVP with Weapon Data
-			pWeapon->UpdateSecondVP();
 
 			// Apply Weapon Data in Shaders
 			g_pGamePersistent->m_pGShaderConstants->hud_params.x = pWeapon->GetZRotatingFactor();

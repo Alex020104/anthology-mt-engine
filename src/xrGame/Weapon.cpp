@@ -143,6 +143,10 @@ CWeapon::CWeapon()
 	m_zoom_params.m_bSecondVPThermal = false;
 	m_zoom_params.m_iSecondVPThermalMode = 0;
 	m_zoom_params.m_u8SecondVPFrameDelay = 2;
+	m_zoom_params.m_bSecondVPPolicyLatched = false;
+	m_zoom_params.m_bSecondVPPolicyAllowed = true;
+	m_zoom_params.m_bSecondVPHeadNVGLatched = false;
+	m_zoom_params.m_bSecondVPHeadThermalLatched = false;
 
 	m_altAimPos = false;
 	m_zoomtype = 0;
@@ -1395,7 +1399,11 @@ void CWeapon::UpdateCL()
 		}
 	}
 
-	if (m_zoom_params.m_pNight_vision && !need_renderable())
+	// A PiP frame deliberately hides the first-person weapon from the lens pass,
+	// but that is not a 2D scope. Starting the scope PPE from need_renderable()
+	// made head NVG switch off/on with the viewport cadence and hid the hands.
+	const bool uses_2d_scope_ppe = IsZoomed() && ZoomTexture() && !IsRotatingToZoom();
+	if (m_zoom_params.m_pNight_vision && uses_2d_scope_ppe)
 	{
 		if (!m_zoom_params.m_pNight_vision->IsActive())
 		{
@@ -2078,6 +2086,17 @@ void CWeapon::OnZoomIn()
     //////////
     
 	m_zoom_params.m_bIsZoomModeNow = true;
+	// Snapshot before CWeaponMagazined dispatches Lua ADS callbacks. Beef NVG
+	// and Heat Vision may hide their 2D overlays in those callbacks, but the PiP
+	// policy still needs the real device state for the whole ADS session.
+	m_zoom_params.m_bSecondVPHeadNVGLatched = ps_scope_lense_head_nvg_active != 0 || ps_r2_nightvision > 0;
+	m_zoom_params.m_bSecondVPHeadThermalLatched = ps_scope_lense_head_thermal_active != 0 || ps_r2_heatvision > 0;
+	CActor* pActor = smart_cast<CActor*>(H_Parent());
+	const bool svp_ads_intended = ParentIsActor() && m_pInventory && m_pInventory->ActiveItem() == this &&
+		pActor && Level().CurrentEntity() && pActor->ID() == Level().CurrentEntity()->ID() &&
+		Level().CurrentViewEntity() == pActor && !Level().Cameras().GetCamEffector(cefDemo) &&
+		pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && m_zoomtype == 0;
+	ps_scope_lense_ads_is_pip = svp_ads_intended ? 1 : 0;
 
 	if (!firstZoomDone) {
 		firstZoomDone = true;
@@ -2144,6 +2163,9 @@ void CWeapon::OnZoomIn()
 void CWeapon::OnZoomOut()
 {
 	m_zoom_params.m_bIsZoomModeNow = false;
+	ps_scope_lense_ads_is_pip = 0;
+	m_zoom_params.m_bSecondVPHeadNVGLatched = false;
+	m_zoom_params.m_bSecondVPHeadThermalLatched = false;
 	if (m_zoom_params.m_bUseDynamicZoom)
 	{
 		m_fRTZoomFactor = IsSecondVPDynamicLensZoom() ? m_zoom_params.m_fSecondVPZoomFactor : (scope_radius > 0.0 ? GetZoomFactor() * scope_scrollpower : GetZoomFactor()); //store current
@@ -3466,17 +3488,76 @@ void CWeapon::UpdateSecondVP()
 {
 	if (!(ParentIsActor() && (m_pInventory != NULL) && (m_pInventory->ActiveItem() == this)))
 	{
-		Device.m_SecondViewport.SetSVPThermal(false);
-		Device.m_SecondViewport.SetSVPThermalMode(0);
+		m_zoom_params.m_bSecondVPPolicyLatched = false;
+		m_zoom_params.m_bSecondVPPolicyAllowed = true;
+		m_zoom_params.m_bSecondVPHeadNVGLatched = false;
+		m_zoom_params.m_bSecondVPHeadThermalLatched = false;
+		ps_scope_lense_ads_is_pip = 0;
+		Device.m_SecondViewport.SetSVPActive(false);
 		return;
 	}
 
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
-	const bool svp_requested = m_zoomtype == 0 && pActor->cam_Active() == pActor->cam_FirstEye() && IsSecondVPZoomPresent() && IsZoomed() && m_zoom_params.m_fZoomRotationFactor > 0.001f;
+	const bool svp_ads_intended = pActor && Level().CurrentEntity() &&
+		pActor->ID() == Level().CurrentEntity()->ID() && pActor->cam_Active() == pActor->cam_FirstEye() &&
+		Level().CurrentViewEntity() == pActor && !Level().Cameras().GetCamEffector(cefDemo) &&
+		m_zoomtype == 0 && IsSecondVPZoomPresent() && IsZoomed();
+	ps_scope_lense_ads_is_pip = svp_ads_intended ? 1 : 0;
+	const bool svp_base_requested = svp_ads_intended && m_zoom_params.m_fZoomRotationFactor > 0.001f;
+	if (!svp_base_requested)
+	{
+		m_zoom_params.m_bSecondVPPolicyLatched = false;
+		m_zoom_params.m_bSecondVPPolicyAllowed = true;
+		m_zoom_params.m_bSecondVPHeadNVGLatched = false;
+		m_zoom_params.m_bSecondVPHeadThermalLatched = false;
+	}
+	else
+	{
+		m_zoom_params.m_bSecondVPHeadNVGLatched = m_zoom_params.m_bSecondVPHeadNVGLatched ||
+			ps_scope_lense_head_nvg_active != 0 || ps_r2_nightvision > 0;
+		m_zoom_params.m_bSecondVPHeadThermalLatched = m_zoom_params.m_bSecondVPHeadThermalLatched ||
+			ps_scope_lense_head_thermal_active != 0 || ps_r2_heatvision > 0;
+
+		const bool head_nvg_active = m_zoom_params.m_bSecondVPHeadNVGLatched;
+		const bool head_thermal_active = m_zoom_params.m_bSecondVPHeadThermalLatched;
+		if (!m_zoom_params.m_bSecondVPPolicyLatched)
+		{
+			const bool nvg_blocked = head_nvg_active && ps_scope_lense_allow_nvg == 0;
+			const bool thermal_blocked = head_thermal_active && ps_scope_lense_allow_thermal == 0;
+			m_zoom_params.m_bSecondVPPolicyAllowed = !nvg_blocked && !thermal_blocked;
+			m_zoom_params.m_bSecondVPPolicyLatched = true;
+		}
+		else if ((head_nvg_active && ps_scope_lense_allow_nvg == 0) ||
+			(head_thermal_active && ps_scope_lense_allow_thermal == 0))
+		{
+			// A device enabled during ADS must still force the safe fallback. Keep it
+			// latched for this ADS session so a script-side overlay transition cannot
+			// repeatedly tear down and recreate the viewport on adjacent frames.
+			m_zoom_params.m_bSecondVPPolicyAllowed = false;
+		}
+	}
+
+	const bool svp_requested = svp_base_requested && m_zoom_params.m_bSecondVPPolicyAllowed;
+	u8 effective_frame_delay = std::max<u8>(m_zoom_params.m_u8SecondVPFrameDelay, 2);
+	if (ps_scope_lense_quality_preset == 2)
+		effective_frame_delay = std::max<u8>(effective_frame_delay, 3);
+	else if (ps_scope_lense_quality_preset >= 3)
+		effective_frame_delay = std::max<u8>(effective_frame_delay, 4);
+	Device.m_SecondViewport.SetSVPFrameDelay(effective_frame_delay);
+	if (svp_requested)
+	{
+		Device.m_SecondViewport.SetSVPOwner(ID());
+		Device.m_SecondViewport.SetSVPQualityPreset(ps_scope_lense_quality_preset);
+	}
+
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;
 	if (svp_requested)
 	{
-		const bool advance_lens = !IsSecondVPDynamicLensZoom() || Device.m_SecondViewport.IsSVPFrame();
+		// Do not query IsSVPFrame here: on a reactivation frame the viewport still
+		// carries last frame's inactive state until SetSVPActive below. The cadence
+		// itself is already final, so derive capture readiness directly.
+		const bool capture_due = Device.dwFrame % effective_frame_delay == 0;
+		const bool advance_lens = !IsSecondVPDynamicLensZoom() || capture_due;
 		if (advance_lens)
 		{
 			const float frame_scale = IsSecondVPDynamicLensZoom() ? Device.m_SecondViewport.GetSVPFrameDelay() : 1.0f;
@@ -3500,9 +3581,6 @@ void CWeapon::UpdateSecondVP()
 	Device.m_SecondViewport.SetSVPActive(svp_active);
 	Device.m_SecondViewport.SetSVPThermal(svp_active && m_zoom_params.m_bSecondVPThermal);
 	Device.m_SecondViewport.SetSVPThermalMode((svp_active && m_zoom_params.m_bSecondVPThermal) ? m_zoom_params.m_iSecondVPThermalMode : 0);
-
-	if (svp_active)
-		Device.m_SecondViewport.SetSVPFrameDelay(m_zoom_params.m_u8SecondVPFrameDelay);
 
 }
 

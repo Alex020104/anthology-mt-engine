@@ -1801,8 +1801,14 @@ void CLevel::OnRender()
 	Game().OnRender();
 	BulletManager().Render();
 
-	if (Device.m_SecondViewport.IsSVPFrame())
+	// Update the visible lens only after CameraManager has applied a real PiP
+	// camera. On the activation frame UpdateSecondVP runs after cam_Update, so a
+	// cadence hit can otherwise publish one main-FOV frame into the scope.
+	if (Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.isCamReady)
+	{
 		Render->RenderToTarget(Render->rtSVP);
+		Device.m_SecondViewport.MarkSVPTextureReady();
+	}
 
 	if (use_reshade)
 		render_reshade_effects();

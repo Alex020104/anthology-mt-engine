@@ -185,9 +185,12 @@ void CRenderTarget::phase_heatvision()
 	pv->set(float(w), 0, d_Z, d_W, C, p1.x, p0.y); pv++;
 	RCache.Vertex.Unlock(4, g_combine->vb_stride);
 
-	// Set the regular heatvision mode, or mode 1 for a thermal SecondVP frame.
-	const int heatvision_mode = ps_r2_heatvision > 0 ? ps_r2_heatvision :
-		(Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal() ? 1 : 0);
+	// Select the effect for the camera being rendered. A head-mounted thermal
+	// overlay must not leak into a normal PiP lens, and a thermal lens always
+	// uses its own mode even while the head device remains enabled.
+	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+	const int heatvision_mode = svp_frame ? (Device.m_SecondViewport.IsSVPThermal() ? 1 : 0) :
+		ps_r2_heatvision;
 	RCache.set_Element(s_heatvision->E[heatvision_mode]);
 
 	//Set geometry

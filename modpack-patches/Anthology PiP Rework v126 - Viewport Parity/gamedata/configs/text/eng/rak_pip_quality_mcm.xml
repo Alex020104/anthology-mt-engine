@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+	<string id="ui_mcm_menu_rak_pip_quality"><text>PiP scopes</text></string>
+	<string id="ui_mcm_rak_pip_quality_title"><text>Anthology PiP viewport</text></string>
+	<string id="ui_mcm_rak_pip_quality_preset"><text>PiP quality preset</text></string>
+	<string id="ui_mcm_rak_pip_quality_preset_desc"><text>Controls only the second viewport. Native keeps every effect supported by PiP. Balanced and Performance reduce lens-only effects and update cadence without changing the main renderer.</text></string>
+	<string id="ui_mcm_rak_pip_aim_sensitivity"><text>PiP aiming sensitivity</text></string>
+	<string id="ui_mcm_rak_pip_aim_sensitivity_desc"><text>Mouse sensitivity multiplier applied after automatic optical-FOV scaling.</text></string>
+	<string id="ui_mcm_rak_pip_allow_nvg"><text>Allow PiP with head NVG</text></string>
+	<string id="ui_mcm_rak_pip_allow_nvg_desc"><text>When disabled, active head NVG safely falls back from PiP until the next ADS session.</text></string>
+	<string id="ui_mcm_rak_pip_allow_thermal"><text>Allow PiP with head thermal</text></string>
+	<string id="ui_mcm_rak_pip_allow_thermal_desc"><text>When disabled, active head thermal safely falls back from PiP until the next ADS session.</text></string>
+	<string id="ui_mcm_lst_anth_pip_native"><text>Native</text></string>
+	<string id="ui_mcm_lst_anth_pip_quality"><text>Quality</text></string>
+	<string id="ui_mcm_lst_anth_pip_balanced"><text>Balanced</text></string>
+	<string id="ui_mcm_lst_anth_pip_performance"><text>Performance</text></string>
+</string_table>

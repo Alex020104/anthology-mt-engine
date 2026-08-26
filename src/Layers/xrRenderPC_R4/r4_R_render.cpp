@@ -264,6 +264,15 @@ void CRender::Render()
 				}
 			}
 		}
+		else if (RImplementation.o.ssfx_sss)
+		{
+			// SSS is temporal and intentionally remains main-view only. Its light
+			// shaders still sample these shared targets during PiP, so neutralize
+			// them instead of reusing shadows projected by the main camera.
+			FLOAT NeutralSSS[4] = { 1, 1, 1, 1 };
+			HW.pContext->ClearRenderTargetView(Target->rt_ssfx_sss->pRT, NeutralSSS);
+			HW.pContext->ClearRenderTargetView(Target->rt_ssfx_sss_tmp->pRT, NeutralSSS);
+		}
 	}
 
 	// Directional light - fucking sun
@@ -320,7 +329,9 @@ void CRender::Render()
 	}
 
 	{
-		if (RImplementation.o.ssfx_volumetric)
+		const bool reduced_svp_volumetrics = Device.m_SecondViewport.IsSVPFrame() &&
+			clampr(ps_scope_lense_quality_preset, 0, 3) >= 2;
+		if (RImplementation.o.ssfx_volumetric && !reduced_svp_volumetrics)
 			Target->phase_ssfx_volumetric_blur();
 	}
 

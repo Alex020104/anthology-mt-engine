@@ -171,7 +171,10 @@ void CDetailManager::hw_Render(light* L)
 	//hw_Render_dump			(&*hwc_s_array,	0, 1, c_hdr );
 	hw_Render_dump(consts, wave.div(PI_MUL_2), dir2, prev_wave.div(PI_MUL_2), prev_dir2, 0, 1, L);
 
-	if (prev_frame != Device.dwFrame) 
+	// PiP is rendered on sparse SecondVP frames and uses SMAA. Do not advance
+	// the shared detail-wind history there: the next main TAA frame must compare
+	// against the previous presented main view.
+	if (!Device.m_SecondViewport.IsSVPFrame() && prev_frame != Device.dwFrame)
 	{
 		prev_frame = Device.dwFrame;
 		

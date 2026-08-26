@@ -189,6 +189,13 @@ extern ECORE_API int ps_r2_nightvision;
 extern ECORE_API int scope_fake_enabled; //crookr
 extern ECORE_API int scope_3D_fake_enabled; // Redotix99: for 3D Shader Based Scopes
 extern ECORE_API int ps_scope_lense_render_quality;
+extern ECORE_API int ps_scope_lense_quality_preset;
+extern ECORE_API float ps_scope_lense_aim_sensitivity;
+extern ECORE_API int ps_scope_lense_allow_nvg;
+extern ECORE_API int ps_scope_lense_allow_thermal;
+extern ECORE_API int ps_scope_lense_head_nvg_active;
+extern ECORE_API int ps_scope_lense_head_thermal_active;
+extern ECORE_API int ps_scope_lense_ads_is_pip;
 extern ECORE_API int ps_r2_heatvision;			//--DSR-- HeatVision
 extern ECORE_API int heat_vision_cooldown;		//--DSR-- HeatVision
 extern ECORE_API float heat_vision_cooldown_time;	//--DSR-- HeatVision

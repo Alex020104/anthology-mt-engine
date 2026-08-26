@@ -106,38 +106,6 @@ void CRenderTarget::phase_ssfx_taa()
 {
 	u32 Offset = 0;
 	Fvector2 p0, p1;
-	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
-	ref_rt& color_history = svp_frame ? rt_ssfx_prev_frame_svp : rt_ssfx_prev_frame_main;
-	ref_rt& depth_history = svp_frame ? rt_ssfx_prevPos_svp : rt_ssfx_prevPos_main;
-	bool& history_valid = svp_frame ? m_taaHistorySVPValid : m_taaHistoryMainValid;
-
-	if (svp_frame)
-	{
-		const u32 frame_delay = std::max<u8>(Device.m_SecondViewport.GetSVPFrameDelay(), 2);
-		const bool interrupted = m_taaSVPLastFrame == 0 || Device.dwFrame > m_taaSVPLastFrame + frame_delay;
-		const bool fov_changed = !fsimilar(Device.fFOV, m_taaSVPLastFov, 0.01f);
-		if (interrupted || fov_changed)
-			history_valid = false;
-
-		m_taaSVPLastFrame = Device.dwFrame;
-		m_taaSVPLastFov = Device.fFOV;
-
-		// Keep a separate SVP history. It is reset only when the SVP stream is
-		// interrupted or the lens FOV changes; forcing current-frame-only here
-		// makes SSS TAA lose its temporal resolve and turns the lens into a soft,
-		// jittery image.
-	}
-
-	if (history_valid)
-	{
-		HW.pContext->CopyResource(rt_ssfx_prev_frame->pTexture->surface_get(), color_history->pTexture->surface_get());
-		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), depth_history->pTexture->surface_get());
-	}
-	else
-	{
-		HW.pContext->CopyResource(rt_ssfx_prev_frame->pTexture->surface_get(), rt_Generic_0->pTexture->surface_get());
-		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
-	}
 
 	u32 C = color_rgba(255, 255, 255, 255);
 	float w = float(Device.dwWidth);
@@ -189,9 +157,6 @@ void CRenderTarget::phase_ssfx_taa()
 
 	// Accumulate
 	HW.pContext->CopyResource(rt_ssfx_prev_frame->pTexture->surface_get(), dest_rt->pTexture->surface_get());
-	HW.pContext->CopyResource(color_history->pTexture->surface_get(), rt_ssfx_prev_frame->pTexture->surface_get());
-	HW.pContext->CopyResource(depth_history->pTexture->surface_get(), rt_Position->pTexture->surface_get());
-	history_valid = true;
 
 	// Sharpening phase
 	u_setrt(rt_Generic_0, nullptr, nullptr, nullptr);
@@ -208,10 +173,9 @@ void CRenderTarget::phase_ssfx_taa()
 	// Draw COLOR
 	RCache.set_Element(s_ssfx_taa->E[2]);
 	
-	Fvector4 taa_setup = ps_ssfx_taa;
-	if (svp_frame)
-		taa_setup.z = _max(taa_setup.z, 0.75f);
-	RCache.set_c("taa_setup", taa_setup);
+	// Use the same user-controlled reconstruction/sharpening as the main view.
+	// The previous PiP-only 0.75 floor was the source of the over-sharp grain.
+	RCache.set_c("taa_setup", ps_ssfx_taa);
 
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);

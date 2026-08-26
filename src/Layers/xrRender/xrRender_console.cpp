@@ -294,6 +294,13 @@ Fvector4 heat_vision_args_2 = { .0f, .0f, .0f, .0f };
 int scope_fake_enabled = 1;
 int scope_3D_fake_enabled = 0; // Redotix99: for 3D Shader Based Scopes
 int ps_scope_lense_render_quality = 0;
+int ps_scope_lense_quality_preset = 0;
+float ps_scope_lense_aim_sensitivity = 1.0f;
+int ps_scope_lense_allow_nvg = 1;
+int ps_scope_lense_allow_thermal = 1;
+int ps_scope_lense_head_nvg_active = 0;
+int ps_scope_lense_head_thermal_active = 0;
+int ps_scope_lense_ads_is_pip = 0;
 int ps_scope_lense_frame_delay_add_compat = 0; // legacy no-op, kept for old user.ltx/MCM values
 //string32 scope_fake_texture = "wpn\\wpn_crosshair_pso1";
 
@@ -1329,6 +1336,13 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "r__3Dfakescope", &scope_3D_fake_enabled, 0, 1); // Redotix99: for 3D Shader Based Scopes
 	CMD4(CCC_Integer, "scope_lense_frame_delay_add", &ps_scope_lense_frame_delay_add_compat, 0, 4);
 	CMD4(CCC_Integer, "scope_lense_render_quality", &ps_scope_lense_render_quality, 0, 3);
+	CMD4(CCC_Integer, "scope_lense_quality_preset", &ps_scope_lense_quality_preset, 0, 3);
+	CMD4(CCC_Float, "scope_lense_aim_sensitivity", &ps_scope_lense_aim_sensitivity, 0.25f, 2.0f);
+	CMD4(CCC_Integer, "scope_lense_allow_nvg", &ps_scope_lense_allow_nvg, 0, 1);
+	CMD4(CCC_Integer, "scope_lense_allow_thermal", &ps_scope_lense_allow_thermal, 0, 1);
+	CMD4(CCC_Integer, "scope_lense_head_nvg_active", &ps_scope_lense_head_nvg_active, 0, 1);
+	CMD4(CCC_Integer, "scope_lense_head_thermal_active", &ps_scope_lense_head_thermal_active, 0, 1);
+	CMD4(CCC_Integer, "scope_lense_ads_is_pip", &ps_scope_lense_ads_is_pip, 0, 1);
 
 	CMD4(CCC_Integer, "r__heatvision", &ps_r2_heatvision, 0, 1); //--DSR-- HeatVision
 	CMD3(CCC_Mask, "r2_terrain_z_prepass", &ps_r2_ls_flags, R2FLAG_TERRAIN_PREPASS); //Terrain Z Prepass @Zagolski

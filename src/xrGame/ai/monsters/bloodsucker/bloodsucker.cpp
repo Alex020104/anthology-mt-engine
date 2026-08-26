@@ -521,8 +521,9 @@ CAI_Bloodsucker::visibility_t CAI_Bloodsucker::get_visibility_state() const
 //--DSR-- HeatVision_start
 float CAI_Bloodsucker::GetTransparency() 
 {
-	const bool thermal_render = ps_r2_heatvision > 0 ||
-		(Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal());
+	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+	const bool thermal_render = (!svp_frame && ps_r2_heatvision > 0) ||
+		(svp_frame && Device.m_SecondViewport.IsSVPThermal());
 	return (m_visibility_state == no_visibility && !thermal_render) ? 1.0f : 0.0f;
 }
 //--DSR-- HeatVision_end
@@ -939,11 +940,12 @@ void CAI_Bloodsucker::renderable_Render(IDSGraphManager* DM)
 
 	const bool thermal_svp = Device.m_SecondViewport.IsSVPThermal();
 	const bool hidden_outside_lens = m_pip_thermal_restore_predator || m_pip_thermal_restore_hidden;
-	if (thermal_svp && hidden_outside_lens && !Device.m_SecondViewport.IsSVPFrame())
+	if (thermal_svp && hidden_outside_lens && !Device.m_SecondViewport.IsSVPFrame() && ps_r2_heatvision == 0)
 		return;
 
-	const bool heatvision_render = ps_r2_heatvision > 0 ||
-		(Device.m_SecondViewport.IsSVPFrame() && thermal_svp);
+	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+	const bool heatvision_render = (!svp_frame && ps_r2_heatvision > 0) ||
+		(svp_frame && thermal_svp);
 	if (heatvision_render && renderable.visual)
 		renderable.visual->MarkAsHot(true);
 

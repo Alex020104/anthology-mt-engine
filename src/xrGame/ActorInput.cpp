@@ -37,6 +37,7 @@
 #include "holder_custom.h"
 #include "Weapon.h"
 #include "CustomOutfit.h"
+#include "../Layers/xrRender/xrRender_console.h"
 
 extern u32 hud_adj_mode;
 
@@ -464,7 +465,7 @@ void CActor::IR_OnMouseMove(int dx, int dy)
 	{
 		CWeapon* weapon = iitem ? iitem->cast_weapon() : nullptr;
 		if (weapon && weapon->IsSecondVPZoomPresent())
-			scale *= clampr(weapon->GetSecondVPFov() / g_fov, 0.01f, 1.0f);
+			scale *= clampr(weapon->GetSecondVPFov() / g_fov, 0.01f, 1.0f) * ps_scope_lense_aim_sensitivity;
 	}
 	if (dx)
 	{

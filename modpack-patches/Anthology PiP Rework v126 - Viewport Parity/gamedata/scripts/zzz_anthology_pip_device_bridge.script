@@ -1,0 +1,93 @@
+-- Anthology PiP v126: expose the real head-device state to the engine.
+-- Beef NVG and Heat Vision intentionally set r__nightvision/r__heatvision to
+-- zero while aiming, so renderer console state alone cannot identify an active
+-- device. This bridge only observes item_device; it does not replace or mutate
+-- either addon.
+
+local console = nil
+local ini_sys = nil
+local next_probe = 0
+local last_nvg = nil
+local last_thermal = nil
+
+local function set_flag(command, value)
+    console = console or get_console()
+    console:execute(command .. (value and " 1" or " 0"))
+end
+
+local function read_device_state()
+    if not db or not db.actor or not item_device then
+        return false, false
+    end
+
+    local active = false
+    if item_device.is_nv_active then
+        active = item_device.is_nv_active() and true or false
+    else
+        active = item_device.nv_state and true or false
+    end
+
+    if not active then
+        return false, false
+    end
+
+    local thermal = false
+    local device_item = db.actor:item_in_slot(10)
+    if device_item then
+        ini_sys = ini_sys or system_ini()
+        local section = device_item:section()
+        local heat_effect = section and ini_sys:r_string_ex(section, "heat_effect")
+        thermal = heat_effect == "heatvision"
+    end
+
+    return not thermal, thermal
+end
+
+local function sync_device_state(force)
+    local nvg, thermal = read_device_state()
+
+    if force or nvg ~= last_nvg then
+        set_flag("scope_lense_head_nvg_active", nvg)
+        last_nvg = nvg
+    end
+
+    if force or thermal ~= last_thermal then
+        set_flag("scope_lense_head_thermal_active", thermal)
+        last_thermal = thermal
+    end
+end
+
+local function actor_on_first_update()
+    sync_device_state(true)
+end
+
+local function actor_on_update()
+    local now = time_global()
+    if now < next_probe then
+        return
+    end
+
+    next_probe = now + 100
+    sync_device_state(false)
+end
+
+local function actor_on_weapon_zoom()
+    -- This callback reads item_device, not the overlay cvar that Beef/Heat may
+    -- clear later in the same zoom event.
+    sync_device_state(true)
+end
+
+function on_game_start()
+    console = get_console()
+    set_flag("scope_lense_head_nvg_active", false)
+    set_flag("scope_lense_head_thermal_active", false)
+    set_flag("scope_lense_ads_is_pip", false)
+    last_nvg = false
+    last_thermal = false
+    next_probe = 0
+
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom)
+    RegisterScriptCallback("actor_on_weapon_zoom_out", actor_on_weapon_zoom)
+end

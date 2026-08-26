@@ -1,0 +1,68 @@
+function on_mcm_load()
+	return {
+		id = "rak_pip_quality",
+		sh = true,
+		gr = {
+			{
+				id = "title",
+				type = "slide",
+				link = "ui_options_slider_player",
+				text = "ui_mcm_rak_pip_quality_title",
+				size = {512, 50},
+				spacing = 20
+			},
+			{
+				id = "quality_preset_v1",
+				type = "list",
+				val = 2,
+				def = 0,
+				cmd = "scope_lense_quality_preset",
+				hint = "rak_pip_quality_preset",
+				content = {
+					{0, "anth_pip_native"},
+					{1, "anth_pip_quality"},
+					{2, "anth_pip_balanced"},
+					{3, "anth_pip_performance"}
+				},
+				text = "ui_mcm_rak_pip_quality_preset",
+				desc = "ui_mcm_rak_pip_quality_preset_desc"
+			},
+			{
+				id = "aim_sensitivity_v1",
+				type = "track",
+				val = 2,
+				def = 1.0,
+				cmd = "scope_lense_aim_sensitivity",
+				hint = "rak_pip_aim_sensitivity",
+				min = 0.25,
+				max = 2.0,
+				step = 0.05,
+				prec = 2,
+				text = "ui_mcm_rak_pip_aim_sensitivity",
+				desc = "ui_mcm_rak_pip_aim_sensitivity_desc"
+			},
+			{
+				id = "allow_nvg_v1",
+				type = "check",
+				val = 1,
+				def = true,
+				cmd = "scope_lense_allow_nvg",
+				hint = "rak_pip_allow_nvg",
+				bool_to_num = true,
+				text = "ui_mcm_rak_pip_allow_nvg",
+				desc = "ui_mcm_rak_pip_allow_nvg_desc"
+			},
+			{
+				id = "allow_thermal_v1",
+				type = "check",
+				val = 1,
+				def = true,
+				cmd = "scope_lense_allow_thermal",
+				hint = "rak_pip_allow_thermal",
+				bool_to_num = true,
+				text = "ui_mcm_rak_pip_allow_thermal",
+				desc = "ui_mcm_rak_pip_allow_thermal_desc"
+			}
+		}
+	}
+end

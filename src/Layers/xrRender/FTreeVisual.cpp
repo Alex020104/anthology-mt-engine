@@ -163,7 +163,9 @@ void FTreeVisual::Render(float LOD)
 {
 	PROF_EVENT("FTreeVisual::Render");
 	static FTreeVisual_setup tvs, prev_tvs;
-	if (tvs.dwFrame != Device.dwFrame)
+	// Keep previous/current wind animation on the main-view cadence. The sparse
+	// SVP pass uses SMAA and must not consume the main temporal step.
+	if (!Device.m_SecondViewport.IsSVPFrame() && tvs.dwFrame != Device.dwFrame)
 	{
 		prev_tvs = tvs; // Save previous frame calculations
 		tvs.calculate();

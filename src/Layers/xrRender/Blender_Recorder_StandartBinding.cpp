@@ -448,24 +448,24 @@ extern Fvector4 heat_vision_args_2;
 
 static int active_heatvision_mode()
 {
-	if (ps_r2_heatvision > 0)
-		return ps_r2_heatvision;
+	if (Device.m_SecondViewport.IsSVPFrame())
+		return Device.m_SecondViewport.IsSVPThermal() ? 1 : 0;
 
-	return Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal() ? 1 : 0;
+	return ps_r2_heatvision;
 }
 
 static float active_heatvision_palette_mode()
 {
-	if (Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal())
-		return float(Device.m_SecondViewport.GetSVPThermalMode());
+	if (Device.m_SecondViewport.IsSVPFrame())
+		return Device.m_SecondViewport.IsSVPThermal() ?
+			float(Device.m_SecondViewport.GetSVPThermalMode()) : 0.0f;
 
 	return heat_vision_mode;
 }
 
 static bool is_thermal_svp_frame()
 {
-	return ps_r2_heatvision == 0 && Device.m_SecondViewport.IsSVPFrame() &&
-		Device.m_SecondViewport.IsSVPThermal();
+	return Device.m_SecondViewport.IsSVPFrame() && Device.m_SecondViewport.IsSVPThermal();
 }
 
 static class cl_heatvision_hotness : public R_constant_setup
@@ -1153,7 +1153,15 @@ static class scope_svp_active : public R_constant_setup
 	{
 		// The scope material is drawn on main-view frames and must keep sampling
 		// the most recently rendered SecondVP texture between SVP updates.
-		RCache.set_c(C, Device.m_SecondViewport.IsSVPActive(), 0, 0, 0);
+		const bool scope_ready = Device.m_SecondViewport.IsSVPActive() &&
+			Device.m_SecondViewport.IsSVPTextureReady();
+#if defined(USE_DX10) || defined(USE_DX11)
+		RCache.set_c(C, int(scope_ready));
+#else
+		// The shared binder is also compiled into R1, whose backend has no scalar
+		// integer constant overload. R1 has no PiP scope shader, so this is inert.
+		RCache.set_c(C, scope_ready ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+#endif
 	}
 } scope_svp_active;
 
@@ -1211,7 +1219,8 @@ static class ssfx_jitter : public R_constant_setup
 		float JitterY = 0;
 
 #if defined(USE_DX11)
-		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !Device.m_SecondViewport.IsSVPActive())
+		const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
+		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !svp_frame)
 		{
 			static Fvector2 TAA_Offset[4] = 
 			{
@@ -1221,10 +1230,16 @@ static class ssfx_jitter : public R_constant_setup
 				{  0.0f,  1.0f }
 			};
 
-			u32 taa_frame = Device.dwFrame;
+			static u32 main_last_frame = u32(-1);
+			static u32 main_sequence = 0;
+			if (main_last_frame != Device.dwFrame)
+			{
+				main_last_frame = Device.dwFrame;
+				++main_sequence;
+			}
 
-			JitterX = TAA_Offset[taa_frame % 4].x / Device.dwWidth;
-			JitterY = TAA_Offset[taa_frame % 4].y / Device.dwHeight;
+			JitterX = TAA_Offset[main_sequence % 4].x / Device.dwWidth;
+			JitterY = TAA_Offset[main_sequence % 4].y / Device.dwHeight;
 		}
 #endif
 

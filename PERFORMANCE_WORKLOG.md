@@ -4399,3 +4399,111 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   no new game or shader-cache cleanup is required. Both JUP and PRI must be
   replayed, then the fresh `[cop-cadence]` summaries must be checked before this
   is called a final visual fix.
+
+## 2026-08-26 - v126 PiP viewport isolation, parity and controls
+
+### Baseline and scope
+
+- v126 is built directly on accepted v125. Loading, A-Life/NPC placement,
+  cutscene root cadence, saves and all unrelated addon patches are unchanged.
+  The existing full-resolution alternating SecondVP architecture is retained;
+  this revision repairs its camera ownership, render state and user controls.
+- The active HARD-profile PiP, Beef NVG and Heat Vision winners were audited as
+  resolved by MO2. The previous MCM quality slider wrote a command the renderer
+  never consumed, while sparse PiP frames shared main-camera temporal/exposure
+  state and could misclassify intentional HUD culling as 2D scope PPE.
+
+### Temporal and viewport correctness
+
+- TAA and its jitter sequence remain enabled for the presented main view and
+  advance only on main frames. Every PiP capture uses non-jittered spatial SMAA;
+  it does not reproject through main-camera object, grass or depth history.
+- Explicit last-main snapshots protect skeleton bones, HUD/camera matrices,
+  trees, sky, detail wind, interactive grass benders and wind animation from
+  sparse PiP cadence. Grass slot IDs are checked before reusing history, so a
+  recycled bender slot cannot create a large false motion vector. Four attempted
+  full-resolution per-view history targets were removed; v126 adds no such VRAM
+  duplication.
+- PiP consumes the latest main exposure snapshot without capturing or swapping
+  global luminance history. Elapsed PiP time is folded into the next main
+  adaptation update. Main motion blur and main TAA continue normally between
+  lens captures.
+- Viewport owner, quality, cadence, camera-ready and texture-ready state are
+  explicit. A new owner, preset, thermal mode, render-target reset or viewport
+  transition invalidates the old lens image. The material samples SecondVP only
+  after a completed capture, preventing a stale frame from the previous weapon.
+- Weapon policy and dynamic lens FOV are resolved before CameraManager builds
+  the projection. Cadence is clamped to at least two frames before modulo use.
+  First activation/reactivation therefore cannot publish a main-FOV capture or
+  divide by a malformed zero frame-delay value.
+- PiP is allowed only for the active weapon of the current first-person actor,
+  when that actor also owns CurrentViewEntity and no `cefDemo` camera is active.
+  Holder, demo/cutscene, remote-view, weapon-switch and no-weapon paths tear down
+  the local global viewport and its ADS bridge flag without letting remote MP
+  actors disable the local player's PiP.
+
+### Visual parity, NVG and thermal policy
+
+- Native/Quality PiP builds current-camera spatial SSFX bloom. Reduced presets
+  clear the PiP bloom target instead of sampling a stale main-camera result.
+  Temporal SSS outputs, unsafe AO/IL state and head-mask constants are neutral
+  on the lens pass; main-only rain, gas-mask, head NVG and head thermal overlays
+  are composed once on the presented view.
+- Weapon-authored thermal remains local to the lens. Heat constants, thermal
+  phase selection, bloodsucker visibility and flare suppression now follow the
+  camera currently being rendered, so a head device cannot leak thermal state
+  into a normal scope (or the reverse). PiP blur is generated before the lens
+  consumers that need it.
+- The 2D night-vision PPE now tests the real zoom-texture path rather than PiP's
+  deliberate world-pass weapon culling. Hands and the weapon remain main-view
+  content. Four active R3/R4 reticle shaders remove only the forced PiP
+  blue/purple grade; authored dirt, reflections, non-PiP lens colour and weapon
+  thermal behavior remain.
+
+### MCM and quality policies
+
+- `scope_lense_aim_sensitivity` (`0.25..2.00`, default `1.00`) is applied after
+  optical-FOV correction. `scope_lense_allow_nvg` and
+  `scope_lense_allow_thermal` default on and fall back cleanly for the current
+  ADS session when disabled. Internal device/ADS flags are reset at game start
+  and on every relevant viewport teardown.
+- The real renderer command is now `scope_lense_quality_preset`: Native (`0`)
+  keeps the weapon-authored cadence and full supported PiP path; Quality (`1`)
+  removes PiP DOF; Balanced (`2`) uses at least a three-frame cadence and skips
+  PiP volumetric blur/combine, fog, sun shafts and spatial SSFX bloom;
+  Performance (`3`) uses the same conservative effect set with at least a
+  four-frame cadence. No lower preset changes the main renderer.
+- Reduced-resolution targets remain a later measured stage. The current path
+  copies an equal-sized swapchain resource; safe scaling needs an explicit
+  resolve/resample chain, not an incompatible destination-size change.
+
+### Addon, validation and deployment
+
+- The canonical addon is
+  `D:/ANTHOLOGY_DEV/addons/Anthology PiP Rework`, mirrored byte-for-byte as
+  `modpack-patches/Anthology PiP Rework v126 - Viewport Parity`, junctioned into
+  MO2 and enabled first in HARD. Its 12 files include MCM Lua, ENG/RUS strings,
+  four R3/R4 shaders, a device-state bridge and full-file high-priority copies
+  of the current HARD Beef NVG/Heat Vision winners. Those two copies differ from
+  their sources only in the narrow allowed-PiP ADS branch; source mod folders
+  are untouched and remain explicit dependencies.
+- Lua 5.1 parsing passes for all 4 scripts in both package copies. Both XML files
+  parse, expose 14 unique matching string IDs and close all 14 MCM references.
+  All 7 engine commands match their MCM ranges/defaults. D, repository and MO2
+  junction content is byte-identical; `git diff --check` is clean apart from
+  line-ending warnings.
+- Both final `DX11|x64` and `DX11-AVX|x64` builds succeed. Build and installed
+  SHA-256 match: DX11 EXE
+  `56AB1D308CA2B41DE41E38004D38471753EDB2B976AACD40C310ABD12E9A9DB4`,
+  DX11 PDB `C759C951761EB10D0176A2A676CE331AA7AC7EA16813EB8E8B5BD2396F0038C6`,
+  AVX EXE `922352503E0D54269231A5208BCA924A3E241AE0FA8E8E75C2EDF4BFB5980E98`
+  and AVX PDB `1A06C49F88E3431AC18C241AAC43E4D779EFD2F266FD46F9543BCCA1B608E7A9`.
+- The complete pre-v126 v125 binaries, resolved PiP inputs, profile/settings,
+  fresh log and recoverable shader cache are stored at
+  `E:/ANTHOLOGY_BACKUPS/20260826_075952_v126_pre_pip_viewport_parity` with a
+  SHA-256 manifest. Because the old shader cache was moved, the first v126 run
+  must compile the changed lens shaders.
+- Live acceptance remains pending. No new game is required. Test first and
+  repeated ADS, dynamic zoom, weapon switching, holder/demo camera takeover,
+  `vid_restart`, Native through Performance, and head NVG/thermal before, during
+  and after ADS. Check hands, lens colour, exposure, stale frames and sensitivity.

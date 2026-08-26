@@ -327,7 +327,8 @@ void dxEnvironmentRender::RenderSky(CEnvironment& env, bool OnlyMV)
 	if (OnlyMV)
 	{
 		RCache.set_xform_world_prev(mSky_prev);
-		mSky_prev = mSky;
+		if (!Device.m_SecondViewport.IsSVPFrame())
+			mSky_prev = mSky;
 
 		RCache.set_Geometry(sh_2geom);
 		RCache.set_Shader(sh_2sky);

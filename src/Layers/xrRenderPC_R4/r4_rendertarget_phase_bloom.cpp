@@ -68,6 +68,10 @@ void CalcGauss_wave(
 void CRenderTarget::phase_bloom()
 {
 	PIX_EVENT(phase_bloom);
+	// PiP frames do not sample or advance the main luminance history. Accumulate
+	// their elapsed time so adaptation speed remains tied to real time rather
+	// than slowing down with the viewport cadence.
+	f_main_view_adaptation_delta += Device.fTimeDelta;
 	u32 Offset;
 
 	// Targets
@@ -133,7 +137,10 @@ void CRenderTarget::phase_bloom()
 
 		// Perform combine (all scalers must account for 4 samples + final diffuse multiply);
 		float s = ps_r2_ls_bloom_threshold; // scale
-		f_bloom_factor = .9f * f_bloom_factor + .1f * ps_r2_ls_bloom_speed * Device.fTimeDelta; // speed
+		// Bloom adaptation is global main-view state. SVP consumes the latest
+		// snapshot without advancing it a second time between presented frames.
+		if (!Device.m_SecondViewport.IsSVPFrame())
+			f_bloom_factor = .9f * f_bloom_factor + .1f * ps_r2_ls_bloom_speed * f_main_view_adaptation_delta; // speed
 		if (!RImplementation.o.dx10_msaa)
 			RCache.set_Element(s_bloom->E[0]);
 		else
@@ -144,7 +151,11 @@ void CRenderTarget::phase_bloom()
 	}
 
 	// Capture luminance values
-	phase_luminance();
+	if (!Device.m_SecondViewport.IsSVPFrame())
+	{
+		phase_luminance();
+		f_main_view_adaptation_delta = 0.0f;
+	}
 
 	if (RImplementation.o.ssfx_bloom)
 		return;
@@ -411,7 +422,7 @@ void CRenderTarget::phase_ssfx_bloom()
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 
 	// BLOOM LENS /////////////////////////////////////////////////////
-	if (ps_r2_mask_control.x > 0)
+	if (!Device.m_SecondViewport.IsSVPFrame() && ps_r2_mask_control.x > 0)
 	{
 		set_viewport_size(HW.pContext, w / 4.0f, h / 4.0f);
 
@@ -538,7 +549,10 @@ void CRenderTarget::phase_ssfx_bloom()
 
 	// Draw COLOR
 	RCache.set_Element(s_ssfx_bloom->E[1]);
-	RCache.set_c("mask_control", ps_r2_mask_control.x, ps_r2_mask_control.y, ps_r2_mask_control.z, ps_r2_mask_control.w);
+	if (Device.m_SecondViewport.IsSVPFrame())
+		RCache.set_c("mask_control", 0.0f, 0.0f, 0.0f, 0.0f);
+	else
+		RCache.set_c("mask_control", ps_r2_mask_control.x, ps_r2_mask_control.y, ps_r2_mask_control.z, ps_r2_mask_control.w);
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 

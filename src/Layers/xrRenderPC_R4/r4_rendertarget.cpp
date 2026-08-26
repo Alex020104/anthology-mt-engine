@@ -377,10 +377,6 @@ CRenderTarget::CRenderTarget()
 	CTimer startupTimer;
 	startupTimer.Start();
 	u32 SampleCount = 1;
-	m_taaHistoryMainValid = false;
-	m_taaHistorySVPValid = false;
-	m_taaSVPLastFrame = 0;
-	m_taaSVPLastFov = 0.0f;
 
 	if (ps_r_ssao_mode != 2/*hdao*/)
 		ps_r_ssao = _min(ps_r_ssao, 3);
@@ -590,6 +586,9 @@ CRenderTarget::CRenderTarget()
 			rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A8R8G8B8, 1); //--#SM+#-- +SecondVP+
 			rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A8R8G8B8);
 		}
+		Device.m_SecondViewport.InvalidateSVPContent();
+		Device.mMainHudCamSaved = false;
+		Device.mMainGrassBendersValidMask = 0;
 
 		// TODO: R11G11B10F? needs another horrible hack + cast + update to converter function
 		if (RImplementation.o.dx11_hdr10) {
@@ -619,14 +618,10 @@ CRenderTarget::CRenderTarget()
 		if (RImplementation.o.dx11_hdr10)
 		{
 			rt_ssfx_prev_frame.create(r2_RT_ssfx_prev_frame, w, h, D3DFMT_A16B16G16R16F); // Temp RT
-			rt_ssfx_prev_frame_main.create(r2_RT_ssfx_prev_frame_main, w, h, D3DFMT_A16B16G16R16F);
-			rt_ssfx_prev_frame_svp.create(r2_RT_ssfx_prev_frame_svp, w, h, D3DFMT_A16B16G16R16F);
 		}
 		else
 		{
 			rt_ssfx_prev_frame.create(r2_RT_ssfx_prev_frame, w, h, D3DFMT_A8R8G8B8); // Temp RT
-			rt_ssfx_prev_frame_main.create(r2_RT_ssfx_prev_frame_main, w, h, D3DFMT_A8R8G8B8);
-			rt_ssfx_prev_frame_svp.create(r2_RT_ssfx_prev_frame_svp, w, h, D3DFMT_A8R8G8B8);
 		}
 
 		rt_ssfx_motion_vectors.create(r2_RT_ssfx_motion_vectors, w, h, D3DFMT_A16B16G16R16F, SampleCount); // HUD mask & Velocity buffer
@@ -677,8 +672,6 @@ CRenderTarget::CRenderTarget()
 		rt_ssfx_water_waves.create(r2_RT_ssfx_water_waves, 512, 512, D3DFMT_A8R8G8B8); // Water Waves
 
 		rt_ssfx_prevPos.create(r2_RT_ssfx_prevPos, w, h, D3DFMT_A16B16G16R16F, SampleCount);
-		rt_ssfx_prevPos_main.create(r2_RT_ssfx_prevPos_main, w, h, D3DFMT_A16B16G16R16F, SampleCount);
-		rt_ssfx_prevPos_svp.create(r2_RT_ssfx_prevPos_svp, w, h, D3DFMT_A16B16G16R16F, SampleCount);
 
 		//rt_ssfx_hud.create(r2_RT_ssfx_hud, w, h, D3DFMT_A16B16G16R16F); // Deprecated
 
@@ -946,6 +939,7 @@ CRenderTarget::CRenderTarget()
 		rt_LUM_8.create(r2_RT_luminance_t8, 8, 8, D3DFMT_A16B16G16R16F);
 		startup_shader_tasks.run([this]() { s_luminance.create_parallel(b_luminance, "r2\\luminance"); });
 		f_luminance_adapt = 0.5f;
+		f_main_view_adaptation_delta = 0.0f;
 
 		t_LUM_src.create(r2_RT_luminance_src);
 		t_LUM_dest.create(r2_RT_luminance_cur);
