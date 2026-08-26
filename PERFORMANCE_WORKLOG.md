@@ -4187,3 +4187,61 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   A controlled Mod Organizer restart retained the `+v120` entry, proving that
   the active profile now persists the corrected state. The next scene run is
   the first valid v120 acceptance test.
+
+## 2026-08-26 - v121 CoP root-motion runtime trace
+
+### Valid v120 result and eliminated hypotheses
+
+- The corrected v120 deployment was tested with its activation marker present.
+  The Pripyat cast initialized once in one action epoch, retained v119
+  animpoint ownership and advanced through unique scene clips without a second
+  initialize/finalize cycle. The user still observed the same excessive
+  sliding/flight and stopped the repeated test early. This excludes the v120
+  retail action-lifecycle and reach-heading divergence as the visible cause.
+- A raw OMF forensic resolves the effective active `chest_0_idle_0` to motion
+  ID 49, the same first-definition record as retail CoP. Its chunk is
+  byte-identical, lasts 16 samples at 30 Hz and has a constant identity
+  `root_stalker` track. The later duplicate ID 635 also has zero root travel.
+  Repeated idle enqueue therefore cannot accumulate the multi-metre world
+  displacement seen on screen.
+- A controlled `mt_calc_bones 0` scene A/B made no visual difference. The
+  setting was restored to `mt_calc_bones 1`; `mt_scheduler 1` is unchanged.
+  No MT-bones workaround is carried into v121.
+
+### Observational engine trace
+
+- v121 changes no motion scale, clip time, NPC position, physics, IK decision,
+  camera, scene script or asset. It is a bounded diagnostic engine build on top
+  of the installed v120 addon.
+- `[cop-root-trace]` records the actual animation movement controller chain for
+  only `pri_a15_*`, `jup_b219_*` and `pas_b400_*` owners: object XFORM before
+  and after, authored start matrix, decoded root sample, requested target,
+  local/absolute hand-off, clip IDs/times, basis scale/determinant and forward
+  vectors. Frame output is limited to the first three, every eighth and final
+  three samples of each clip so logging does not become a new timing defect.
+- `[cop-physics-trace]` records the same NPC XFORM on entry to character
+  physics, after animation-collision update and at exit. This distinguishes a
+  correct root result from a later world-transform overwrite.
+- `[cop-ik-trace]` records the visual root and relative root before/after foot
+  IK, object-shift value, legs blend and frustum/distance skip branch. IK changes
+  bone transforms rather than `CGameObject::XFORM`, so it can explain a visual
+  vertical lift but is not assumed to explain horizontal travel without live
+  evidence.
+- The trace uses release-safe motion-name lookup through the existing shared
+  motion map and only performs that lookup for the three exact CoP scene
+  prefixes. Ordinary NPCs and gameplay movement do not enter the diagnostic
+  path.
+
+### Build and deployment
+
+- `git diff --check` passes. Both `DX11|x64` and `DX11-AVX|x64` Release
+  configurations compile and link successfully.
+- Candidate and installed hashes match:
+  - DX11 EXE: `BF5838826A867ACF359DFC84694314FBB7E7450D81BE6272081DDB073C990956`;
+  - DX11 PDB: `2C0C10C99DB3C2D1A1CF287BDD32462BCF0B38718B61BCC6502D605BFA706F48`;
+  - DX11-AVX EXE: `F81215A2A2418173A24D9B35B52380BDC19F90E160148ED5F62B7A0765B7113B`;
+  - DX11-AVX PDB: `64A35D21A0A7B543A390DEB392020CCED34764CDD427D1E1265437C33432C842`.
+- The exact pre-v121 DX11/DX11-AVX executables and symbols are backed up under
+  `E:/ANTHOLOGY_BACKUPS/20260826_0309_v121_pre_cop_root_runtime_trace`.
+  Replaying only until the first visibly wrong movement is sufficient; a full
+  cutscene or a new game is not required.

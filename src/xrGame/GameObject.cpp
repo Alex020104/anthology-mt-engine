@@ -1247,7 +1247,8 @@ void CGameObject::create_anim_mov_ctrl(CBlend* b, Fmatrix* start_pose, bool loca
 		IKinematics* K = Visual()->dcast_PKinematics();
 		VERIFY(K);
 
-		m_anim_mov_ctrl = xr_new<animation_movement_controller>(&XFORM(), *start_pose, K, b);
+		m_anim_mov_ctrl = xr_new<animation_movement_controller>(
+			&XFORM(), *start_pose, K, b, cName().c_str(), cNameSect().c_str(), local_animation);
 	}
 }
 

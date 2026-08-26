@@ -18,6 +18,18 @@
 
 #include "Actor.h"
 
+namespace
+{
+bool trace_cop_ik_owner(LPCSTR owner)
+{
+	if (!owner)
+		return false;
+
+	return std::strncmp(owner, "pri_a15_", 8) == 0 || std::strncmp(owner, "jup_b219_", 9) == 0 ||
+		std::strncmp(owner, "pas_b400_", 9) == 0;
+}
+} // namespace
+
 CIKLimbsController::CIKLimbsController(): m_object(0), m_legs_blend(0)
 {
 }
@@ -352,14 +364,22 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 		{
 			if(CIKLimbsController* ik = Sh->character_ik_controller())
 			{
+				const bool trace_cop_ik = O->animation_movement_controlled() &&
+					trace_cop_ik_owner(O->cName().c_str()) && (Device.dwFrame % 8 == 0);
 			    if(!Sh->m_pPhysicsShell)
 			    {
 				    Fvector ce;
 				    O->Center(ce);
-				    if (Render->ViewBase.testSphere_dirty(ce, O->Radius()))
+					const bool in_frustum = Render->ViewBase.testSphere_dirty(ce, O->Radius());
+					const float distance_sqr = Device.vCameraPosition.distance_to_sqr(O->Position());
+				    if (in_frustum)
 				    {
-					    if (Device.vCameraPosition.distance_to_sqr(O->Position()) > 3000.f)
+					    if (distance_sqr > 3000.f)
 					    {
+							if (trace_cop_ik)
+								Msg("* [cop-ik-trace] skip_far f=%u ms=%u owner=%s dist2=%.5f shift=%.6f",
+									Device.dwFrame, Device.dwTimeGlobal, O->cName().c_str(), distance_sqr,
+									ik->_object_shift.shift());
 						    //if (Device.dwFrame < ik->optimize_frame)
 						    IKinematics* K = O->Visual()->dcast_PKinematics();
 						    u16 root = K->LL_GetBoneRoot();
@@ -371,16 +391,47 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 
                         {
                             PROF_EVENT("IK_UPDATE_CALCULATE");
+								IKinematics* trace_kinematics = O->Visual()->dcast_PKinematics();
+								const u16 trace_root = trace_kinematics->LL_GetBoneRoot();
+								const Fmatrix trace_xform_before = trace_cop_ik ? O->XFORM() : Fidentity;
+								const Fmatrix trace_root_before = trace_cop_ik ? trace_kinematics->LL_GetTransform(trace_root) : Fidentity;
+								const Fmatrix trace_root_r_before = trace_cop_ik ? trace_kinematics->LL_GetTransform_R(trace_root) : Fidentity;
+								const float trace_shift_before = trace_cop_ik ? ik->_object_shift.shift() : 0.f;
                             ik->_pose_extrapolation.update(O->XFORM());
                             for (CIKLimb& limb : ik->_bone_chains)
                                 ik->LimbUpdate(limb);
 
                             ik->Calculate();
+								if (trace_cop_ik)
+								{
+									const Fmatrix& trace_root_after = trace_kinematics->LL_GetTransform(trace_root);
+									const Fmatrix& trace_root_r_after = trace_kinematics->LL_GetTransform_R(trace_root);
+									Fmatrix trace_world_before;
+									trace_world_before.mul_43(trace_xform_before, trace_root_before);
+									Fmatrix trace_world_after;
+									trace_world_after.mul_43(O->XFORM(), trace_root_after);
+									Msg("* [cop-ik-trace] calculate f=%u ms=%u owner=%s dist2=%.5f shift=%.6f->%.6f "
+										"xform=(%.5f,%.5f,%.5f)->(%.5f,%.5f,%.5f) root=(%.5f,%.5f,%.5f)->(%.5f,%.5f,%.5f) "
+										"root_r=(%.5f,%.5f,%.5f)->(%.5f,%.5f,%.5f) world=(%.5f,%.5f,%.5f)->(%.5f,%.5f,%.5f) "
+										"legs=%u:%u time=%.6f/%.6f",
+										Device.dwFrame, Device.dwTimeGlobal, O->cName().c_str(), distance_sqr,
+										trace_shift_before, ik->_object_shift.shift(), VPUSH(trace_xform_before.c), VPUSH(O->XFORM().c),
+										VPUSH(trace_root_before.c), VPUSH(trace_root_after.c), VPUSH(trace_root_r_before.c),
+										VPUSH(trace_root_r_after.c), VPUSH(trace_world_before.c), VPUSH(trace_world_after.c),
+										ik->m_legs_blend ? u32(ik->m_legs_blend->motionID.slot) : 0u,
+										ik->m_legs_blend ? u32(ik->m_legs_blend->motionID.idx) : 0u,
+										ik->m_legs_blend ? ik->m_legs_blend->timeCurrent : 0.f,
+										ik->m_legs_blend ? ik->m_legs_blend->timeTotal : 0.f);
+								}
                         }
 					    
 				    }
 				    else
 				    {
+						if (trace_cop_ik)
+							Msg("* [cop-ik-trace] skip_frustum f=%u ms=%u owner=%s dist2=%.5f shift=%.6f",
+								Device.dwFrame, Device.dwTimeGlobal, O->cName().c_str(), distance_sqr,
+								ik->_object_shift.shift());
 					    IKinematics* K = O->Visual()->dcast_PKinematics();
 					    u16 root = K->LL_GetBoneRoot();
 					    CBoneInstance& root_bi = K->LL_GetBoneInstance(root);

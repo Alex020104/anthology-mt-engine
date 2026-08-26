@@ -29,12 +29,18 @@ private:
 	bool stopped;
 	float blend_linear_speed;
 	float blend_angular_speed;
+	shared_str m_trace_owner_name;
+	shared_str m_trace_owner_section;
+	shared_str m_trace_motion_name;
+	bool m_trace_cop_motion;
+	bool m_trace_local_animation;
+	u32 m_trace_samples;
 	static void _BCL RootBoneCallback(CBoneInstance* B);
 	void deinitialize();
 	void BlendDestroy(CBlend& blend);
 public:
 	animation_movement_controller(Fmatrix* _pObjXForm, const Fmatrix& inital_pose, IKinematics* _pKinematicsC,
-	                              CBlend* b);
+	                              CBlend* b, LPCSTR owner_name, LPCSTR owner_section, bool local_animation);
 	virtual ~animation_movement_controller();
 	void ObjStartXform(Fmatrix& m) const { m.set(m_startObjXForm); }
 	CBlend* ControlBlend() const { return m_control_blend; }

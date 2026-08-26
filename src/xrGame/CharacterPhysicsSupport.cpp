@@ -54,6 +54,25 @@ float IK_CALC_DIST = 100.f;
 float IK_ALWAYS_CALC_DIST = 20.f;
 float IK_CALC_SSA = 0.006f;
 
+namespace
+{
+bool trace_cop_physics_owner(LPCSTR owner)
+{
+	if (!owner)
+		return false;
+
+	return std::strncmp(owner, "pri_a15_", 8) == 0 || std::strncmp(owner, "jup_b219_", 9) == 0 ||
+		std::strncmp(owner, "pas_b400_", 9) == 0;
+}
+
+float trace_matrix_determinant(const Fmatrix& matrix)
+{
+	Fvector cross;
+	cross.crossproduct(matrix.j, matrix.k);
+	return matrix.i.dotproduct(cross);
+}
+} // namespace
+
 //void  NodynamicsCollide( bool& do_colide, bool bo1, dContact& c, SGameMtl * /*material_1*/, SGameMtl * /*material_2*/ )
 //{
 //	dBodyID body1=dGeomGetBody( c.geom.g1 );
@@ -611,6 +630,9 @@ void CCharacterPhysicsSupport::in_UpdateCL()
 	{
 		return;
 	}
+	const bool trace_cop_physics = anim_mov_state.active && trace_cop_physics_owner(m_EntityAlife.cName().c_str()) &&
+		(Device.dwFrame % 8 == 0);
+	const Fmatrix trace_entry = trace_cop_physics ? mXFORM : Fidentity;
 #ifdef DEBUG
 	if( dbg_draw_character_bones )
 				dbg_draw_geoms( m_weapon_geoms );
@@ -628,6 +650,7 @@ void CCharacterPhysicsSupport::in_UpdateCL()
 				m_pPhysicsShell->dbg_draw_geometry( 0.2f, D3DCOLOR_ARGB( 100 ,255, 0, 0 ) );
 #endif
 	update_animation_collision();
+	const Fmatrix trace_after_collision = trace_cop_physics ? mXFORM : Fidentity;
 	m_character_shell_control.CalculateTimeDelta();
 	if (m_pPhysicsShell)
 	{
@@ -667,6 +690,19 @@ void CCharacterPhysicsSupport::in_UpdateCL()
 				ik_controller()->Update();
 			}
 		}
+	}
+
+	if (trace_cop_physics)
+	{
+		Msg("* [cop-physics-trace] f=%u ms=%u dt=%.6f owner=%s entry=(%.5f,%.5f,%.5f) "
+			"collision=(%.5f,%.5f,%.5f) exit=(%.5f,%.5f,%.5f) "
+			"k_entry=(%.6f,%.6f,%.6f) k_collision=(%.6f,%.6f,%.6f) k_exit=(%.6f,%.6f,%.6f) "
+			"det=(%.6f,%.6f,%.6f) anim_collision=%u character=%u ik=%u",
+			Device.dwFrame, Device.dwTimeGlobal, Device.fTimeDelta, m_EntityAlife.cName().c_str(),
+			VPUSH(trace_entry.c), VPUSH(trace_after_collision.c), VPUSH(mXFORM.c), VPUSH(trace_entry.k),
+			VPUSH(trace_after_collision.k), VPUSH(mXFORM.k), trace_matrix_determinant(trace_entry),
+			trace_matrix_determinant(trace_after_collision), trace_matrix_determinant(mXFORM),
+			animation_collision() ? 1u : 0u, movement()->CharacterExist() ? 1u : 0u, ik_controller() ? 1u : 0u);
 	}
 
 #ifdef DEBUG

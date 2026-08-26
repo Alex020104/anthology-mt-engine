@@ -14,8 +14,99 @@ BOOL	dbg_draw_animation_movement_controller  = FALSE;
 u16		dbg_frame_count = 0;
 #endif
 
+namespace
+{
+bool starts_with(LPCSTR value, LPCSTR prefix)
+{
+	return value && prefix && std::strncmp(value, prefix, std::strlen(prefix)) == 0;
+}
+
+bool trace_cop_motion_owner(LPCSTR owner)
+{
+	return starts_with(owner, "pri_a15_") || starts_with(owner, "jup_b219_") || starts_with(owner, "pas_b400_");
+}
+
+float matrix_basis_determinant(const Fmatrix& matrix)
+{
+	Fvector cross;
+	cross.crossproduct(matrix.j, matrix.k);
+	return matrix.i.dotproduct(cross);
+}
+
+shared_str trace_motion_name(IKinematicsAnimated* animated, MotionID motion_id)
+{
+	if (!animated || !motion_id.valid() || motion_id.slot >= animated->LL_MotionsSlotCount())
+		return shared_str("");
+
+	shared_motions& motions = const_cast<shared_motions&>(animated->LL_MotionsSlot(motion_id.slot));
+	accel_map* motion_map = motions.motion_map();
+	for (accel_map::const_iterator it = motion_map->begin(); it != motion_map->end(); ++it)
+	{
+		if (it->second == motion_id.idx)
+			return it->first;
+	}
+
+	return shared_str("");
+}
+
+void trace_frame(LPCSTR stage, LPCSTR owner, LPCSTR section, LPCSTR motion, bool local_animation, const CBlend* blend,
+	const Fmatrix& before, const Fmatrix& start, const Fmatrix& root, const Fmatrix& target, const Fmatrix& after)
+{
+	Msg("* [cop-root-trace] %s f=%u ms=%u dt=%.6f owner=%s section=%s motion=%s id=%u:%u local=%u "
+		"time=%.6f/%.6f before=(%.5f,%.5f,%.5f) start=(%.5f,%.5f,%.5f) "
+		"root=(%.5f,%.5f,%.5f) target=(%.5f,%.5f,%.5f) after=(%.5f,%.5f,%.5f) "
+		"basis_start=(%.6f,%.6f,%.6f,det=%.6f) basis_root=(%.6f,%.6f,%.6f,det=%.6f) "
+		"basis_target=(%.6f,%.6f,%.6f,det=%.6f) basis_after=(%.6f,%.6f,%.6f,det=%.6f) "
+		"k_start=(%.6f,%.6f,%.6f) k_root=(%.6f,%.6f,%.6f) "
+		"k_target=(%.6f,%.6f,%.6f) k_after=(%.6f,%.6f,%.6f)",
+		stage, Device.dwFrame, Device.dwTimeGlobal, Device.fTimeDelta, owner ? owner : "", section ? section : "",
+		motion ? motion : "", blend ? u32(blend->motionID.slot) : 0u, blend ? u32(blend->motionID.idx) : 0u,
+		local_animation ? 1u : 0u, blend ? blend->timeCurrent : 0.f, blend ? blend->timeTotal : 0.f,
+		VPUSH(before.c), VPUSH(start.c), VPUSH(root.c), VPUSH(target.c), VPUSH(after.c),
+		start.i.magnitude(), start.j.magnitude(), start.k.magnitude(), matrix_basis_determinant(start),
+		root.i.magnitude(), root.j.magnitude(), root.k.magnitude(), matrix_basis_determinant(root),
+		target.i.magnitude(), target.j.magnitude(), target.k.magnitude(), matrix_basis_determinant(target),
+		after.i.magnitude(), after.j.magnitude(), after.k.magnitude(), matrix_basis_determinant(after),
+		VPUSH(start.k), VPUSH(root.k), VPUSH(target.k), VPUSH(after.k));
+}
+
+bool trace_frame_sample(u32 sample, const CBlend* blend)
+{
+	if (sample <= 3 || (sample % 8) == 0)
+		return true;
+
+	return blend && blend->timeTotal - blend->timeCurrent <= 3.f * Device.fTimeDelta;
+}
+
+void trace_blend(LPCSTR owner, LPCSTR section, LPCSTR old_motion, LPCSTR new_motion, bool local_animation,
+	const CBlend* old_blend, const CBlend* new_blend, const Fmatrix& before, const Fmatrix& start_before,
+	const Fmatrix& previous_root, const Fmatrix& start_after, const Fmatrix& requested)
+{
+	Msg("* [cop-root-trace] blend f=%u ms=%u owner=%s section=%s old=%s id_old=%u:%u "
+		"time_old=%.6f/%.6f new=%s id_new=%u:%u time_new=%.6f/%.6f local=%u "
+		"before=(%.5f,%.5f,%.5f) start0=(%.5f,%.5f,%.5f) old_root=(%.5f,%.5f,%.5f) "
+		"start1=(%.5f,%.5f,%.5f) request=(%.5f,%.5f,%.5f) "
+		"basis_start0=(%.6f,%.6f,%.6f,det=%.6f) basis_root=(%.6f,%.6f,%.6f,det=%.6f) "
+		"basis_start1=(%.6f,%.6f,%.6f,det=%.6f) basis_request=(%.6f,%.6f,%.6f,det=%.6f)",
+		Device.dwFrame, Device.dwTimeGlobal, owner ? owner : "", section ? section : "", old_motion ? old_motion : "",
+		old_blend ? u32(old_blend->motionID.slot) : 0u, old_blend ? u32(old_blend->motionID.idx) : 0u,
+		old_blend ? old_blend->timeCurrent : 0.f, old_blend ? old_blend->timeTotal : 0.f,
+		new_motion ? new_motion : "", new_blend ? u32(new_blend->motionID.slot) : 0u,
+		new_blend ? u32(new_blend->motionID.idx) : 0u, new_blend ? new_blend->timeCurrent : 0.f,
+		new_blend ? new_blend->timeTotal : 0.f, local_animation ? 1u : 0u,
+		VPUSH(before.c), VPUSH(start_before.c), VPUSH(previous_root.c), VPUSH(start_after.c), VPUSH(requested.c),
+		start_before.i.magnitude(), start_before.j.magnitude(), start_before.k.magnitude(),
+		matrix_basis_determinant(start_before), previous_root.i.magnitude(), previous_root.j.magnitude(),
+		previous_root.k.magnitude(), matrix_basis_determinant(previous_root), start_after.i.magnitude(),
+		start_after.j.magnitude(), start_after.k.magnitude(), matrix_basis_determinant(start_after),
+		requested.i.magnitude(), requested.j.magnitude(), requested.k.magnitude(), matrix_basis_determinant(requested));
+}
+} // namespace
+
 animation_movement_controller::animation_movement_controller(Fmatrix* _pObjXForm, const Fmatrix& inital_pose,
-                                                             IKinematics* _pKinematicsC, CBlend* b):
+                                                             IKinematics* _pKinematicsC, CBlend* b,
+                                                             LPCSTR owner_name, LPCSTR owner_section,
+                                                             bool local_animation):
 	m_startObjXForm(inital_pose),
 	m_pObjXForm(*_pObjXForm),
 	m_pKinematicsC(_pKinematicsC),
@@ -24,6 +115,12 @@ animation_movement_controller::animation_movement_controller(Fmatrix* _pObjXForm
 	stopped(false),
 	blend_linear_speed(0),
 	blend_angular_speed(0),
+	m_trace_owner_name(owner_name ? owner_name : ""),
+	m_trace_owner_section(owner_section ? owner_section : ""),
+	m_trace_motion_name(""),
+	m_trace_cop_motion(trace_cop_motion_owner(owner_name)),
+	m_trace_local_animation(local_animation),
+	m_trace_samples(0),
 	m_control_blend(b),
 	m_poses_blending(Fidentity, Fidentity, -1.f)
 #ifdef	DEBUG
@@ -55,6 +152,17 @@ animation_movement_controller::animation_movement_controller(Fmatrix* _pObjXForm
 	m_pKinematicsC->CalculateBones_Invalidate();
 	m_pKinematicsC->CalculateBones(TRUE);
 	SetPosesBlending();
+
+	if (m_trace_cop_motion)
+		m_trace_motion_name = trace_motion_name(m_pKinematicsA, b->motionID);
+	if (m_trace_cop_motion)
+	{
+		Fmatrix root;
+		animation_root_position(root);
+		Fmatrix target = Fmatrix().mul_43(m_startObjXForm, root);
+		trace_frame("create", m_trace_owner_name.c_str(), m_trace_owner_section.c_str(), m_trace_motion_name.c_str(),
+			m_trace_local_animation, m_control_blend, m_pObjXForm, m_startObjXForm, root, target, m_pObjXForm);
+	}
 #ifdef	DEBUG
 	if( dbg_draw_animation_movement_controller )
 	{
@@ -237,10 +345,20 @@ void animation_movement_controller::OnFrame()
 	Fmatrix root_pos;
 	animation_root_position(root_pos);
 
-
+	const Fmatrix object_before = m_pObjXForm;
 	Fmatrix obj_pos = Fmatrix().mul_43(m_startObjXForm, root_pos);
 	//Fvector prv_pos = m_pObjXForm.c;
 	InitalPositionBlending(obj_pos);
+	if (m_trace_cop_motion && m_trace_samples < 4096)
+	{
+		++m_trace_samples;
+		if (trace_frame_sample(m_trace_samples, m_control_blend))
+		{
+			trace_frame("frame", m_trace_owner_name.c_str(), m_trace_owner_section.c_str(),
+				m_trace_motion_name.c_str(), m_trace_local_animation, m_control_blend, object_before,
+				m_startObjXForm, root_pos, obj_pos, m_pObjXForm);
+		}
+	}
 
 #ifdef DEBUG
 	DBG_previous_position = m_pObjXForm;
@@ -304,6 +422,12 @@ void animation_movement_controller::NewBlend(CBlend* B, const Fmatrix& new_matri
 	//CMotion* m_curr = smart_cast<IKinematicsAnimated*>(m_pKinematicsC)->LL_GetRootMotion(m_control_blend->motionID);
 	//CMotion* m_new = smart_cast<IKinematicsAnimated*>(m_pKinematicsC)->LL_GetRootMotion(B->motionID);
 	VERIFY(IsActive( ));
+	const shared_str old_motion_name = m_trace_motion_name;
+	const shared_str new_motion_name = m_trace_cop_motion ? trace_motion_name(m_pKinematicsA, B->motionID) : shared_str("");
+	const CBlend* old_blend = m_control_blend;
+	const Fmatrix object_before = m_pObjXForm;
+	const Fmatrix start_before = m_startObjXForm;
+	Fmatrix previous_root = Fidentity;
 
 	//m_control_blend->timeCurrent = m_control_blend->timeTotal - SAMPLE_SPF;
 	//m_pKinematicsC->Bone_GetAnimPos( m_pObjXForm, 0, u8(-1), true );
@@ -328,9 +452,8 @@ void animation_movement_controller::NewBlend(CBlend* B, const Fmatrix& new_matri
 	{
 		float blend_time = m_control_blend->timeCurrent;
 		m_control_blend->timeCurrent = m_control_blend->timeTotal - SAMPLE_SPF; //(SAMPLE_SPF+EPS);
-		Fmatrix root;
-		animation_root_position(root);
-		m_startObjXForm.mulB_43(root);
+		animation_root_position(previous_root);
+		m_startObjXForm.mulB_43(previous_root);
 #ifdef	DEBUG
 		if( dbg_draw_animation_movement_controller )
 		{
@@ -342,7 +465,17 @@ void animation_movement_controller::NewBlend(CBlend* B, const Fmatrix& new_matri
 		m_control_blend->timeCurrent = blend_time;
 	}
 
+	if (m_trace_cop_motion)
+	{
+		trace_blend(m_trace_owner_name.c_str(), m_trace_owner_section.c_str(), old_motion_name.c_str(),
+			new_motion_name.c_str(), local_animation, old_blend, B, object_before, start_before, previous_root,
+			m_startObjXForm, new_matrix);
+	}
+
 	m_control_blend = B;
+	m_trace_motion_name = new_motion_name;
+	m_trace_local_animation = local_animation;
+	m_trace_samples = 0;
 	if (set_blending)
 		SetPosesBlending();
 	else
