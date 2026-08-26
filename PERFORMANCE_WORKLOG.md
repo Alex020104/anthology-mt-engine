@@ -4477,21 +4477,30 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   copies an equal-sized swapchain resource; safe scaling needs an explicit
   resolve/resample chain, not an incompatible destination-size change.
 
-### Addon, validation and deployment
+### Module 1.1 integration, validation and deployment
 
-- The canonical addon is
-  `D:/ANTHOLOGY_DEV/addons/Anthology PiP Rework`, mirrored byte-for-byte as
-  `modpack-patches/Anthology PiP Rework v126 - Viewport Parity`, junctioned into
-  MO2 and enabled first in HARD. Its 12 files include MCM Lua, ENG/RUS strings,
-  four R3/R4 shaders, a device-state bridge and full-file high-priority copies
-  of the current HARD Beef NVG/Heat Vision winners. Those two copies differ from
-  their sources only in the narrow allowed-PiP ADS branch; source mod folders
-  are untouched and remain explicit dependencies.
-- Lua 5.1 parsing passes for all 4 scripts in both package copies. Both XML files
-  parse, expose 14 unique matching string IDs and close all 14 MCM references.
-  All 7 engine commands match their MCM ranges/defaults. D, repository and MO2
-  junction content is byte-identical; `git diff --check` is clean apart from
-  line-ending warnings.
+- The first deployment as a separate high-priority v126 patch was rejected.
+  Runtime content now lives directly in the existing HARD-profile module
+  `[WPN][1.1][SCP][R.A.K Weapon Pack Adaptation Global Anomaly PiP for 3DSS (OBT)]`.
+  Its existing MCM and four R3/R4 reticle shaders were updated in place; the
+  English table and a uniquely named device bridge were added to the same
+  module. No `modpack-patches` PiP package is kept in this repository.
+- Beef NVG and Heat Vision are no longer overridden by full-file copies. The
+  module-local bridge observes the real head-device state and registers late ADS
+  callbacks. For allowed PiP it restores the device renderer after the original
+  addon callback; the original Beef/Heat files, priorities and update logic stay
+  untouched.
+- The first Russian table incorrectly combined a `windows-1251` declaration
+  with Unicode numeric Cyrillic entities. X-Ray TinyXML's legacy entity path
+  truncates those code points to bytes. The module table now contains literal
+  CP1251 Cyrillic, no BOM and no numeric Cyrillic entities. Both ENG/RUS XML
+  files parse and expose 14 unique matching IDs; both module Lua files pass
+  Lua 5.1 syntax checks and all MCM references resolve.
+- The former MO2 junction was renamed
+  `_DISABLED_Anthology PiP Rework v126 - Viewport Parity` and removed from the
+  HARD profile. Its D: authoring directory is retained only as an inactive
+  recovery source. The pre-migration module, profile and package are backed up
+  at `E:/ANTHOLOGY_BACKUPS/20260826_083500_v126_pip_module_1_1_migration`.
 - Both final `DX11|x64` and `DX11-AVX|x64` builds succeed. Build and installed
   SHA-256 match: DX11 EXE
   `56AB1D308CA2B41DE41E38004D38471753EDB2B976AACD40C310ABD12E9A9DB4`,
