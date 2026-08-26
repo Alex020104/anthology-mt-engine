@@ -4317,3 +4317,76 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The pre-v123 profile, fresh v122 log and both replaced resolved LTX files are
   backed up under
   `E:/ANTHOLOGY_BACKUPS/20260826_0422_v123_pre_retail_cop_logic_sync`.
+
+## 2026-08-26 - v124 retail CoP IK and root-motion frame order
+
+### v123 live result and evidence
+
+- The user replayed the scene on v123 and reported unchanged NPC flight and
+  return. The fresh log proves the addon was active: all nine `pri_a15` actors
+  entered their `_all` ownership consecutively at lines 9666-9674, before the
+  actor/camera transition at 9675. The launch split targeted by v123 is gone,
+  but the visible defect remains, so launch synchronization is rejected as its
+  cause.
+- From `cam1` until the manual disconnect there is no repeated animpoint
+  ownership/finalize, NPC teleport, settle or root-anchor correction. There are
+  instead 150 normal `animations=0->1` clip transitions. This excludes LTX and
+  animpoint lifecycle code as the source of the repeated visible return.
+- No post-v123 NVIDIA recording exists. In the latest available Anthology and
+  retail CoP pair, camera cuts and clip durations align with a constant offset
+  of about 0.586 seconds. Anthology NPCs nevertheless travel across most of the
+  frame while retail NPCs remain in the authored compact area. The defect is
+  therefore root-to-object translation/ground contact inside continuous
+  motion, not camera speed, models or a scripted teleport.
+
+### Confirmed engine divergence
+
+- Retail CoP prepares IK in `CIKLimbsController::Update` after the object's
+  root-motion update: `UpdateTracks`, pose extrapolation from XFORM and
+  `LimbUpdate`. Its visual callback performs only the final `Calculate`.
+- The current Monolith-derived path moved pose/limb preparation into the visual
+  callback and runs `CalculateBonesThread` concurrently with `GameThread`.
+  `UpdateTracks` can finish the current control blend while the game scheduler
+  enqueues/constructs the next root-motion controller. Those paths share
+  XFORM, blend and root callback state without one ordering barrier. v122 only
+  preserved one callback during culling and did not remove this race.
+
+### v124 correction and scope
+
+- Only active original CoP cinematic objects with prefixes `pri_a15_`,
+  `jup_b219_` and `pas_b400_` enable the serialized frame path. Their root
+  controller is counted from construction through destruction, with one grace
+  frame covering the proven destroy-to-next-clip `animations=0->1` boundary.
+- During that narrow window the engine uses the retail order:
+  finish earlier workers, run `GameThread`, calculate bones, then render. The
+  normal game keeps the existing overlapped game/bones/render path, so ordinary
+  A-Life and base FPS are untouched.
+- These actors bypass SSA/frustum suppression while scripted root motion owns
+  XFORM. Their object update performs retail pose extrapolation and limb
+  preparation; the matching visual callback only calls `Calculate`, before all
+  Monolith distance/frustum culling. No duplicate `CalculateBones` is issued
+  from the object update.
+- The log now emits `[cop-cinematic-sync] begin/end` with owner and active count,
+  making live activation and balanced lifecycle directly verifiable.
+- Models, OMF files, camera/sound scripts, LTX scene timing, grass, saves and
+  ordinary NPC IK are unchanged. The cumulative v123/v120 cutscene addons stay
+  enabled as installed.
+
+### Validation, build and deployment
+
+- `v124_retail_cop_ik_pipeline_smoke.lua` passes under Lua 5.1. It verifies the
+  three-name scope, balanced controller count, one-frame transition grace,
+  `worker barrier -> GameThread -> bones` ordering, retail IK split and
+  preservation of the asynchronous ordinary-game path. v123 and v120
+  regression tests pass unchanged, and `git diff --check` is clean.
+- Both x64 configurations build successfully. Installed/source SHA-256 match:
+  DX11 EXE `87ABB2BD0A8C20F2A2BB4908038D7FA3F954DB49987A232A3EFF52D2873944AE`,
+  DX11 PDB `31644D3B2958E60DF505B267A39D27CFDD33AC76CCCA65E0A3B223AC69DB7EE0`,
+  AVX EXE `41ECA80F1DB53E9A2E311E7CCDBAE38154B5E4F8FFE07DFA624C9F7E2AE3AF7A`,
+  AVX PDB `7593E0FDF3AB9690E3B282841D03F890934DF66941B75A2AF3E80637B5AA2D12`.
+- Previous binaries, fresh v123 log and HARD profile are backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260826_0500_v124_pre_retail_cop_ik_pipeline`.
+  MO2 was closed for replacement and reopened afterward.
+- Live acceptance is pending. Use the same pre-scene save; no new game or
+  shader-cache cleanup is required. The first check is whether the earliest
+  oversized NPC step/flight and subsequent snap are gone.

@@ -39,6 +39,8 @@ std::atomic<u64> frame_lua_gc_skipped_postload{};
 std::atomic<u64> frame_parallel_items{};
 std::atomic<u64> frame_parallel_item_max_ticks{};
 std::atomic<LPCSTR> frame_parallel_item_max_name{};
+std::atomic<u32> original_cop_cinematic_controllers{};
+std::atomic<u32> original_cop_cinematic_grace_until_frame{u32(-1)};
 
 void RecordFrameTask(EFrameTaskProfile task, u64 elapsed)
 {
@@ -78,6 +80,55 @@ public:
 			RecordFrameTask(task, CPU::QPC() - started_at);
 	}
 };
+}
+
+bool XRay::Engine::IsOriginalCoPCinematicObjectName(LPCSTR name)
+{
+	if (!name)
+		return false;
+
+	static constexpr char pri_a15_prefix[] = "pri_a15_";
+	static constexpr char jup_b219_prefix[] = "jup_b219_";
+	static constexpr char pas_b400_prefix[] = "pas_b400_";
+
+	return !strncmp(name, pri_a15_prefix, sizeof(pri_a15_prefix) - 1) ||
+		!strncmp(name, jup_b219_prefix, sizeof(jup_b219_prefix) - 1) ||
+		!strncmp(name, pas_b400_prefix, sizeof(pas_b400_prefix) - 1);
+}
+
+u32 XRay::Engine::RegisterOriginalCoPCinematicController()
+{
+	return original_cop_cinematic_controllers.fetch_add(1, std::memory_order_acq_rel) + 1;
+}
+
+u32 XRay::Engine::UnregisterOriginalCoPCinematicController()
+{
+	// The next scripted clip can be enqueued one FrameMove after the previous
+	// controller is destroyed. Keep that boundary frame serialized as well; it
+	// is the exact animations=0->1 window that otherwise reintroduced the race.
+	original_cop_cinematic_grace_until_frame.store(Device.dwFrame + 1, std::memory_order_release);
+
+	u32 current = original_cop_cinematic_controllers.load(std::memory_order_acquire);
+	while (current)
+	{
+		if (original_cop_cinematic_controllers.compare_exchange_weak(
+			current, current - 1, std::memory_order_acq_rel, std::memory_order_acquire))
+		{
+			return current - 1;
+		}
+	}
+
+	Msg("! [cop-cinematic-sync] unbalanced controller unregister");
+	return 0;
+}
+
+bool XRay::Engine::OriginalCoPCinematicControllerActive()
+{
+	if (original_cop_cinematic_controllers.load(std::memory_order_acquire) != 0)
+		return true;
+
+	const u32 grace_until = original_cop_cinematic_grace_until_frame.load(std::memory_order_acquire);
+	return grace_until != u32(-1) && s32(grace_until - Device.dwFrame) >= 0;
 }
 
 u64 XRay::Engine::BeginVisionTaskProfile()

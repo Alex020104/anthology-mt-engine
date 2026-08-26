@@ -33,6 +33,14 @@ extern ENGINE_API BOOL mt_FrameProfileDetailed;
 
 namespace XRay::Engine
 {
+	// Original CoP scripted root-motion scenes must update their animation
+	// controller before any worker calculates the corresponding skeleton. The
+	// counter is non-zero only while one of those temporary controllers exists.
+	ENGINE_API bool IsOriginalCoPCinematicObjectName(LPCSTR name);
+	ENGINE_API u32 RegisterOriginalCoPCinematicController();
+	ENGINE_API u32 UnregisterOriginalCoPCinematicController();
+	ENGINE_API bool OriginalCoPCinematicControllerActive();
+
 	void PreRenderThread();
     void PreRenderPostTransformsThread();
 	void CalculateBonesThread();

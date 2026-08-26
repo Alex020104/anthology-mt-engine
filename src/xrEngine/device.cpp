@@ -742,17 +742,32 @@ void CRenderDevice::on_idle()
 	// render frames are left untouched.
 	const bool prepare_world_render = !measure_precache_frame ||
 		pApp->LoadSessionShouldRenderPrecacheWorld(dwPrecacheFrame, dwPrecacheTotal);
+	const bool serialize_original_cop_cinematic =
+		XRay::Engine::OriginalCoPCinematicControllerActive();
 	if (prepare_world_render)
 	{
 		secondary_tasks.run(&XRay::Engine::PreRenderPostTransformsThread);
-		if (mt_calc_bones)
+		if (!serialize_original_cop_cinematic && mt_calc_bones)
 			secondary_tasks.run(&XRay::Engine::CalculateBonesThread);
-		else
+		else if (!serialize_original_cop_cinematic)
 			XRay::Engine::CalculateBonesThread();
 	}
 
 	Device.isRendering = true;
-	secondary_tasks.run(&XRay::Engine::GameThread);
+	if (serialize_original_cop_cinematic)
+	{
+		// Retail CoP order for authored root-motion scenes: finish earlier render
+		// preparation, update XFORM/blends, then calculate bones. In the normal
+		// game path all three tasks keep their existing overlap.
+		secondary_tasks.wait();
+		XRay::Engine::GameThread();
+		if (prepare_world_render)
+			XRay::Engine::CalculateBonesThread();
+	}
+	else
+	{
+		secondary_tasks.run(&XRay::Engine::GameThread);
+	}
 	
 #ifdef ECO_RENDER // ECO_RENDER START
 	{

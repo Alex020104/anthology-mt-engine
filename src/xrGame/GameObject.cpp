@@ -31,6 +31,7 @@
 #include "ai_obstacle.h"
 #include "magic_box3.h"
 #include "animation_movement_controller.h"
+#include "../xrEngine/EngineThreading.h"
 #include "../xrengine/xr_collide_form.h"
 #include "script_attachment_manager.h"
 #include "player_hud.h"
@@ -1247,12 +1248,24 @@ void CGameObject::create_anim_mov_ctrl(CBlend* b, Fmatrix* start_pose, bool loca
 		IKinematics* K = Visual()->dcast_PKinematics();
 		VERIFY(K);
 
+		if (XRay::Engine::IsOriginalCoPCinematicObjectName(cName().c_str()))
+		{
+			const u32 active = XRay::Engine::RegisterOriginalCoPCinematicController();
+			Msg("* [cop-cinematic-sync] begin owner=%s active=%u", cName().c_str(), active);
+		}
+
 		m_anim_mov_ctrl = xr_new<animation_movement_controller>(&XFORM(), *start_pose, K, b);
 	}
 }
 
 void CGameObject::destroy_anim_mov_ctrl()
 {
+	if (m_anim_mov_ctrl && XRay::Engine::IsOriginalCoPCinematicObjectName(cName().c_str()))
+	{
+		const u32 active = XRay::Engine::UnregisterOriginalCoPCinematicController();
+		Msg("* [cop-cinematic-sync] end owner=%s active=%u", cName().c_str(), active);
+	}
+
 	xr_delete(m_anim_mov_ctrl);
 }
 

@@ -650,6 +650,15 @@ void CCharacterPhysicsSupport::in_UpdateCL()
 		//} 
 	else if (ik_controller())
 	{
+		if (ik_controller()->UsesOriginalCoPCinematicPipeline())
+		{
+			// These temporary actors use authored root translation. Never skip the
+			// retail pose/IK preparation while their controller owns XFORM.
+			update_interactive_anims();
+			ik_controller()->Update();
+			return;
+		}
+
 		CFrustum& view_frust = ::Render->ViewBase;
 		vis_data& vis = m_EntityAlife.Visual()->getVisData();
 		Fvector p;

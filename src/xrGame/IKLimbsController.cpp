@@ -12,13 +12,18 @@
 //#include "ode_include.h"
 #include "characterphysicssupport.h"
 #include "../xrEngine/motion.h"
+#include "../xrEngine/EngineThreading.h"
 #ifdef DEBUG
 #	include "PHDebug.h"
 #endif // DEBUG
 
 #include "Actor.h"
 
-CIKLimbsController::CIKLimbsController(): m_object(0), m_legs_blend(0)
+CIKLimbsController::CIKLimbsController():
+	m_legs_blend(0),
+	m_object(0),
+	m_original_cop_cinematic_actor(false),
+	m_original_cop_update_frame(u32(-1))
 {
 }
 
@@ -29,6 +34,9 @@ void CIKLimbsController::Create(CGameObject* O)
 
 	IKinematics* K = smart_cast<IKinematics*>(O->Visual());
 	m_object = O;
+	m_original_cop_cinematic_actor =
+		XRay::Engine::IsOriginalCoPCinematicObjectName(O->cName().c_str());
+	m_original_cop_update_frame = u32(-1);
 	VERIFY(K);
 	u16 sz = 2;
 	if (K->LL_UserData() && K->LL_UserData()->section_exist("ik"))
@@ -44,6 +52,12 @@ void CIKLimbsController::Create(CGameObject* O)
 	if (already_has_callbacks)
 		std::swap(*(O->visual_callbacks().begin()), *(O->visual_callbacks().end() - 1));
 	_pose_extrapolation.init(O->XFORM());
+}
+
+bool CIKLimbsController::UsesOriginalCoPCinematicPipeline() const
+{
+	return m_original_cop_cinematic_actor && m_object &&
+		m_object->animation_movement_controlled();
 }
 
 
@@ -354,6 +368,17 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 			{
 			    if(!Sh->m_pPhysicsShell)
 			    {
+					// The matching Update already prepared the pose and limbs after
+					// animation_movement_controller::OnFrame. Retail CoP performs only
+					// the final IK calculation from this visual callback.
+					if (ik->m_original_cop_cinematic_actor &&
+						ik->m_original_cop_update_frame == Device.dwFrame)
+					{
+						PROF_EVENT("IK_RETAIL_COP_CALCULATE");
+						ik->Calculate();
+						return;
+					}
+
 				    Fvector ce;
 				    O->Center(ce);
 				    if (Render->ViewBase.testSphere_dirty(ce, O->Radius()))
@@ -422,6 +447,18 @@ void CIKLimbsController::Update()
 
 	skeleton_animated->UpdateTracks();
 	update_blend(m_legs_blend);
+
+	if (m_original_cop_cinematic_actor && m_object->animation_movement_controlled())
+	{
+		// Restore the original CoP split. Pose extrapolation and limb state are
+		// prepared in the object update after root-motion updated XFORM; the
+		// visual callback above only commits Calculate().
+		_pose_extrapolation.update(m_object->XFORM());
+		for (CIKLimb& limb : _bone_chains)
+			LimbUpdate(limb);
+
+		m_original_cop_update_frame = Device.dwFrame;
+	}
 
 	/*
 	Fmatrix predict;
