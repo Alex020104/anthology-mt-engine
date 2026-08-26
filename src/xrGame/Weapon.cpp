@@ -54,15 +54,31 @@ float hud_fov_aim_multiplier = 1.0f;
 
 extern int g_nearwall;
 
-static bool IsSecondVPThermalSection(LPCSTR section)
+static bool HasSectionSuffix(LPCSTR section, LPCSTR suffix)
 {
-	if (!section)
+	if (!section || !suffix)
 		return false;
 
-	return strstr(section, "echo1") ||
-		strstr(section, "gauss") ||
-		strstr(section, "gauss_sight") ||
-		strstr(section, "t12");
+	const size_t section_length = strlen(section);
+	const size_t suffix_length = strlen(suffix);
+	if (section_length == suffix_length)
+		return xr_strcmp(section, suffix) == 0;
+
+	return section_length > suffix_length &&
+		section[section_length - suffix_length - 1] == '_' &&
+		xr_strcmp(section + section_length - suffix_length, suffix) == 0;
+}
+
+static bool IsSecondVPThermalSection(LPCSTR section)
+{
+	// Keep compatibility for the legacy thermal optics that do not carry an
+	// explicit LTX flag. Do not classify the generic "gauss" token here: a base
+	// weapon named wpn_gauss would otherwise turn every one of its optics thermal.
+	// R.A.K's actual *_gauss thermal optics have scope_lense_thermal in their
+	// concrete weapon sections.
+	return HasSectionSuffix(section, "echo1") ||
+		HasSectionSuffix(section, "gauss_sight") ||
+		HasSectionSuffix(section, "t12");
 }
 
 BOOL g_use_non_linear_inertia = TRUE;
@@ -2086,6 +2102,11 @@ void CWeapon::OnZoomIn()
     //////////
     
 	m_zoom_params.m_bIsZoomModeNow = true;
+	// A new ADS transition is a new PiP policy session. Do not inherit a
+	// previous allow-NVG/thermal fallback when zoom-out and zoom-in happen in
+	// the same update tick.
+	m_zoom_params.m_bSecondVPPolicyLatched = false;
+	m_zoom_params.m_bSecondVPPolicyAllowed = true;
 	// Snapshot before CWeaponMagazined dispatches Lua ADS callbacks. Beef NVG
 	// and Heat Vision may hide their 2D overlays in those callbacks, but the PiP
 	// policy still needs the real device state for the whole ADS session.
@@ -2164,6 +2185,8 @@ void CWeapon::OnZoomOut()
 {
 	m_zoom_params.m_bIsZoomModeNow = false;
 	ps_scope_lense_ads_is_pip = 0;
+	m_zoom_params.m_bSecondVPPolicyLatched = false;
+	m_zoom_params.m_bSecondVPPolicyAllowed = true;
 	m_zoom_params.m_bSecondVPHeadNVGLatched = false;
 	m_zoom_params.m_bSecondVPHeadThermalLatched = false;
 	if (m_zoom_params.m_bUseDynamicZoom)
@@ -3578,10 +3601,17 @@ void CWeapon::UpdateSecondVP()
 	}
 
 	const bool svp_active = svp_requested;
+	const bool inherited_head_thermal = svp_active &&
+		ps_scope_lense_allow_thermal != 0 && ps_scope_lense_head_thermal_active != 0;
+	const bool authored_thermal = svp_active && m_zoom_params.m_bSecondVPThermal;
+	const bool effective_thermal = authored_thermal || inherited_head_thermal;
+	const int effective_thermal_mode = authored_thermal
+		? m_zoom_params.m_iSecondVPThermalMode
+		: (inherited_head_thermal && heat_vision_mode >= 0.5f ? 1 : 0);
 
 	Device.m_SecondViewport.SetSVPActive(svp_active);
-	Device.m_SecondViewport.SetSVPThermal(svp_active && m_zoom_params.m_bSecondVPThermal);
-	Device.m_SecondViewport.SetSVPThermalMode((svp_active && m_zoom_params.m_bSecondVPThermal) ? m_zoom_params.m_iSecondVPThermalMode : 0);
+	Device.m_SecondViewport.SetSVPThermal(effective_thermal);
+	Device.m_SecondViewport.SetSVPThermalMode(effective_thermal ? effective_thermal_mode : 0);
 
 }
 

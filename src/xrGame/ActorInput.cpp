@@ -464,7 +464,7 @@ void CActor::IR_OnMouseMove(int dx, int dy)
 	if (Device.m_SecondViewport.IsSVPActive())
 	{
 		CWeapon* weapon = iitem ? iitem->cast_weapon() : nullptr;
-		if (weapon && weapon->IsSecondVPZoomPresent())
+		if (weapon && weapon->GetZoomType() == 0 && weapon->IsZoomed() && weapon->IsSecondVPZoomPresent())
 			scale *= clampr(weapon->GetSecondVPFov() / g_fov, 0.01f, 1.0f) * ps_scope_lense_aim_sensitivity;
 	}
 	if (dx)

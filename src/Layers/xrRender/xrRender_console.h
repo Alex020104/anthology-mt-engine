@@ -211,6 +211,7 @@ IC int ScopeLenseQualityTier()
 }
 
 extern ECORE_API int ps_r2_heatvision;			//--DSR-- HeatVision
+extern ECORE_API float heat_vision_mode;		//--DSR-- HeatVision palette (colour/greyscale)
 extern ECORE_API int heat_vision_cooldown;		//--DSR-- HeatVision
 extern ECORE_API float heat_vision_cooldown_time;	//--DSR-- HeatVision
 extern ECORE_API int heat_vision_zombie_cold;	//--DSR-- HeatVision

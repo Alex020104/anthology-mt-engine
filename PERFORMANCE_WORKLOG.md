@@ -4598,3 +4598,58 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   sharpness during sway/pan, head thermal before/during ADS, and 100/75/50%
   quality. For the affected external installation, verify the fresh log says
   `SSS CORE INSTALLED 1` and no longer lists the missing shader block.
+
+## 2026-08-27 - v128 PiP head-thermal inheritance, Gauss isolation and alt-sight sensitivity
+
+### Head thermal inside PiP
+
+- The existing module-1.1 `scope_lense_allow_thermal` option now controls the
+  complete behavior. When enabled, an active head thermal device also marks
+  the SecondVP lens as thermal; when disabled, the existing safe non-PiP
+  fallback remains in force.
+- Inherited lens thermal follows the live device flag rather than the ADS
+  latch, so switching the head device off/on while aiming changes the lens on
+  the next capture instead of remaining stuck until zoom-out. Its colour versus
+  greyscale mode follows the live `heat_vision_mode`. A scope with an authored
+  `scope_lense_thermal` flag keeps its own configured mode and has priority.
+- PiP policy state is reset explicitly at both zoom-in and zoom-out boundaries.
+  A quick ADS cycle can no longer inherit a denied NVG/thermal policy from the
+  previous session.
+- The existing `zzz_anthology_pip_device_bridge.script` was updated in place in
+  module 1.1. It probes every frame only while PiP ADS is active (console writes
+  still occur only on a state change), and keeps its 100 ms cadence elsewhere.
+  Lua 5.1 syntax passes; SHA-256 is
+  `9A4831E785AC0B753AF6696D943DF0953E934C590B39BA78C45BA5AADC18D6BF`.
+
+### Gauss and sensitivity fixes
+
+- The old thermal heuristic matched `gauss` anywhere in a weapon section, so
+  every `wpn_gauss_*` optic became thermal before its LTX was considered. The
+  legacy fallback now recognises only terminal `echo1`, `gauss_sight` and `t12`
+  optic tokens. R.A.K's real `*_gauss` thermal variants remain thermal through
+  their explicit `scope_lense_thermal` configuration; ordinary Gauss optics no
+  longer inherit thermal from the weapon name.
+- The PiP mouse multiplier now requires the current primary PiP aim mode and an
+  active zoom. Switching a weapon with an integrated PiP optic (for example
+  SR-25) to its non-PiP alternate collimator no longer retains the PiP
+  sensitivity reduction. The normal camera-FOV sensitivity remains unchanged.
+
+### Build, deployment and recovery
+
+- Branch: `anthology-v128-pip-head-thermal-gauss-fix`, based directly on the
+  accepted v127 commit `22c5905ae2`. No DLSS/FSR work is included.
+- `git diff --check` and the module bridge Lua 5.1 parser pass. Both
+  `DX11|x64` and `DX11-AVX|x64` compile and link successfully. Existing project
+  warnings remain, with no new build error.
+- Build and installed hashes match:
+  - DX11 EXE `8445496D14AD1BB6FF997C481E8D0DD3E6AD519C6CDF7609D8219357D9B543CC`;
+  - DX11 PDB `9751364144362FD663FB7906049E77B8192773242D9A0493DB9493B97EAD1424`;
+  - DX11-AVX EXE `0B5BB6866BF5FAB1B78466C67115351322B252B48FC1F85449C93BD516FB189F`;
+  - DX11-AVX PDB `832117A658DAA335FDA3FAC4D425C6420E9462F545173B813BB53BF1B95F1CD8`.
+- Pre-v128 module/profile/binaries are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260827_021933_v128_pre_head_thermal_gauss_fix`.
+  The shader cache was not read, deleted, moved or modified.
+- No new game is required. Live matrix: normal optic with head thermal on/off;
+  allow-thermal on/off; palette switch; authored thermal optic without a head
+  device; ordinary and thermal Gauss optics; rapid ADS/scope/weapon switching;
+  SR-25 primary PiP versus alternate collimator sensitivity.
