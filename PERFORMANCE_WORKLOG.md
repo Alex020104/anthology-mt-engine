@@ -4187,3 +4187,53 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   A controlled Mod Organizer restart retained the `+v120` entry, proving that
   the active profile now persists the corrected state. The next scene run is
   the first valid v120 acceptance test.
+
+## 2026-08-26 - v122 preserve cinematic root callback
+
+### v121 runtime proof
+
+- v121 was an instrumentation build, not a visual correction. Its complete
+  PRI/PAS runtime trace excluded the previously suspected physics path: all
+  4,186 physics samples retained identical entry, collision and exit XFORMs,
+  and every measured IK object shift was zero.
+- Authored motion matrices, object XFORMs and animation timing were continuous.
+  The failure instead correlated exactly with `CIKLimbsController` culling:
+  every distant or off-frustum cinematic participant entered `skip_far` or
+  `skip_frustum`, where the optimization unconditionally called
+  `root_bi.reset_callback()`.
+- That callback belongs to `animation_movement_controller`. It removes the
+  visual root after applying authored root motion to the game object's XFORM.
+  Once culling deleted it, the same displacement remained in the skeleton and
+  was rendered a second time. One captured participant had already moved about
+  20.1 metres through XFORM and received another 20.1 metres from the visual
+  root, directly explaining the oversized steps, flight and later snap-back.
+- Retail CoP/OpenXRay calculates this IK path without the Monolith culling
+  branch. The v121 diagnostics are retained on the separate
+  `anthology-v121-cop-root-runtime-trace` branch/tag and are deliberately not
+  included in the v122 release binary or its normal log.
+
+### v122 correction and scope
+
+- The far/frustum IK culler now preserves the root callback while scripted
+  animation movement owns it. The authored root is consequently applied once
+  to XFORM and cleared from the rendered skeleton as intended.
+- The existing SSA, distance, frustum and IK cadence optimizations remain
+  unchanged, including for cinematic participants. Only the destructive
+  callback reset is suppressed during the controller's active ownership
+  window, so the fix adds no new per-frame IK workload.
+- A-Life, ordinary NPC logic, models,
+  motions, scene scripts, camera scripts, grass/details, sound and saves are
+  untouched. The cumulative v120 cutscene addon remains installed and enabled.
+
+### Build and deployment
+
+- DX11 and DX11-AVX x64 configurations build successfully. Installed SHA-256:
+  DX11 EXE `0B8F5072175BAB52FC7C6A1FFC605CC383BDC5621B3920366DEE5F711103F7E4`,
+  DX11 PDB `C4D455C20B9A3B25BAA3B2CD5886973A2A7ACCD4ED34E856F5DD192F9B8CF160`,
+  AVX EXE `F1EE90A67890FD925FB139141EE6A6772B8B019D9A9BE3B922755F98549A3043`,
+  and AVX PDB `49E83CCF2855C216F82A7265CCF89B904E42AFC0ECAF55CC73F63DAF92E8C5A8`.
+- Source and installed hashes match. The previous v121 binaries are backed up
+  at
+  `E:/ANTHOLOGY_BACKUPS/20260826_0329_v122_pre_preserve_cinematic_root_callback`.
+- Live acceptance is intentionally still pending: the same save can be used,
+  and only the first previously broken NPC movement needs to be replayed.

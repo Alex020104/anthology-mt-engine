@@ -364,7 +364,10 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 						    IKinematics* K = O->Visual()->dcast_PKinematics();
 						    u16 root = K->LL_GetBoneRoot();
 						    CBoneInstance& root_bi = K->LL_GetBoneInstance(root);
-						    root_bi.reset_callback();
+						    // Animation movement owns this callback. Removing it applies authored
+						    // root motion both to XFORM and to the rendered skeleton.
+						    if (!O->animation_movement_controlled())
+							    root_bi.reset_callback();
 						    return;
 						    //ik->optimize_frame = Device.dwFrame + Random.randI(8);
 					    }
@@ -384,7 +387,8 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 					    IKinematics* K = O->Visual()->dcast_PKinematics();
 					    u16 root = K->LL_GetBoneRoot();
 					    CBoneInstance& root_bi = K->LL_GetBoneInstance(root);
-					    root_bi.reset_callback();
+					    if (!O->animation_movement_controlled())
+						    root_bi.reset_callback();
 				    }
 			    }
 			}
