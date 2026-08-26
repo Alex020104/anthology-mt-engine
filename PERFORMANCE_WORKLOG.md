@@ -4237,3 +4237,83 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260826_0329_v122_pre_preserve_cinematic_root_callback`.
 - Live acceptance is intentionally still pending: the same save can be used,
   and only the first previously broken NPC movement needs to be replayed.
+
+## 2026-08-26 - v123 retail CoP logic synchronization
+
+### v122 live result and corrected diagnosis
+
+- The user stopped the new `pri_a15` run early because NPC movement looked
+  unchanged. The fresh log proves v122 was installed and the scene ran without
+  a crash, but the callback-preservation change produced no visible correction.
+  The doubled-root/callback-reset hypothesis is therefore rejected as the
+  primary cause of this scene defect.
+- No NVIDIA recording newer than the v122 installation exists. The last two
+  available game videos are from 2026-08-25, so they cannot be used as v122
+  acceptance evidence. Their comparison with retail CoP still shows matching
+  camera changes and gross trajectories, with the visible divergence occurring
+  inside continuous movement/foot phase rather than as an extra XFORM teleport.
+- The fresh v122 log exposes a deterministic launch asymmetry. The camera
+  restrictor `pri_a15_sr_exit` is switched immediately at log lines 9783-9784,
+  while the nine NPCs enter their cinematic logic only at lines 9788-9803.
+  Five `cam1` motions are enqueued before continual time 119514 and the other
+  four after it; the measured split reaches about 1.18 seconds. Zulus later
+  enters `cam12` about one second after the other participants as well.
+
+### Exact retail divergence
+
+- Retail CoP `xr_effects.update_npc_logic` first calls
+  `xr_motivator.update_logic(npc)`, then performs the existing planner x3 and
+  state-manager x7 pump. Anthology's extracted override at
+  `analysis_quest_adaptation/extracted/scripts_anthology/scripts/xr_effects.script`
+  comments out precisely that first call while retaining the pump.
+- The old public `xr_motivator.update_logic` symbol no longer exists in the
+  active Anomaly script set, so blindly uncommenting it would be a nil-function
+  crash. Its normal retail body is the same operation already used by the
+  neighbouring `xr_effects.update_obj_logic`:
+  `xr_logic.try_switch_to_another_section` for the current active scheme.
+- Without that operation, each NPC observes the shared start info through its
+  individual motivator binder. That binder limits logic checks to once per
+  500 ms and is scheduled per object, while the camera is switched immediately.
+  The scene therefore begins with different NPC animation epochs relative to
+  one common camera timeline.
+
+### v123 correction and scope
+
+- v123 is an LTX-only addon. In `pri_a15`, immediately after
+  `+pri_a15_cutscene_go`, the existing `update_obj_logic` is called for the same
+  nine NPCs. The unchanged `update_npc_logic` planner/state-manager pump follows,
+  and only then is `pri_a15_exit` switched to start the camera.
+- `jup_b219` had the same missing forced transition. All eight party-composition
+  branches and their hard fallbacks now synchronously switch the universal
+  six-story-ID cast, pump the available participants, and reveal/start the
+  camera only afterward. Missing optional companions are skipped by the stock
+  effects.
+- No Lua callback or engine code is added. Models, OMF, root-motion binding,
+  XFORM, physics, patrol paths, cameras, sounds, grass, ordinary A-Life and all
+  unrelated quests remain unchanged. The installed v122 DX11/DX11-AVX binaries
+  do not need rebuilding for this script/config defect.
+
+### Validation target
+
+- The Lua 5.1 static smoke test proves the exact PRI order
+  `start info -> nine-NPC switch -> planner pump -> camera switch`, and the same
+  `start info -> six-ID switch -> planner pump -> reveal` order in all sixteen
+  JUP normal/fallback launch lines.
+- Live acceptance remains required. The same pre-scene save is valid; a new
+  game and shader-cache cleanup are not required. The next log must show the NPC
+  section transitions before `pri_a15_sr_exit`/camera activation and eliminate
+  the previous scheduler-scale split at the first motion enqueue.
+
+### Validation and deployment
+
+- The dedicated Lua 5.1 static test passes against source, canonical and MO2
+  paths. It checks the exact ordering and all 16 JUP normal/fallback launch
+  branches. The inherited v120 lifecycle and v119 ownership smoke tests also
+  pass unchanged.
+- The canonical addon is stored at
+  `D:/ANTHOLOGY_DEV/addons/Anthology Cutscenes v123 - Retail CoP Logic Sync`,
+  junctioned into MO2 and enabled above v120 in the HARD profile. Source,
+  canonical and installed hashes match for all three package files.
+- The pre-v123 profile, fresh v122 log and both replaced resolved LTX files are
+  backed up under
+  `E:/ANTHOLOGY_BACKUPS/20260826_0422_v123_pre_retail_cop_logic_sync`.
