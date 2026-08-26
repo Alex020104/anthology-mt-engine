@@ -48,6 +48,23 @@ extern MagicBox3 MagicMinBox(int iQuantity, const Fvector* akPoint);
 
 extern ENGINE_API bool g_dedicated_server;
 
+namespace
+{
+bool is_original_cop_cinematic_object(LPCSTR name)
+{
+	if (!name)
+		return false;
+
+	static constexpr char pri_a15_prefix[] = "pri_a15_";
+	static constexpr char jup_b219_prefix[] = "jup_b219_";
+	static constexpr char pas_b400_prefix[] = "pas_b400_";
+
+	return !strncmp(name, pri_a15_prefix, sizeof(pri_a15_prefix) - 1) ||
+		!strncmp(name, jup_b219_prefix, sizeof(jup_b219_prefix) - 1) ||
+		!strncmp(name, pas_b400_prefix, sizeof(pas_b400_prefix) - 1);
+}
+}
+
 CGameObject::CGameObject()
 {
 	m_ai_obstacle = 0;
@@ -62,6 +79,18 @@ CGameObject::CGameObject()
 
 	m_callbacks = xr_new<CALLBACK_MAP>();
 	m_anim_mov_ctrl = 0;
+	m_original_cop_cinematic_cadence = false;
+	m_cop_cadence_started_frame = u32(-1);
+	m_cop_cadence_last_root_frame = u32(-1);
+	m_cop_cadence_last_ik_frame = u32(-1);
+	m_cop_cadence_last_bones_frame = u32(-1);
+	m_cop_cadence_root_updates = 0;
+	m_cop_cadence_root_gaps = 0;
+	m_cop_cadence_max_root_gap = 0;
+	m_cop_cadence_ik_prepares = 0;
+	m_cop_cadence_bone_calculations = 0;
+	m_cop_cadence_missed_callbacks = 0;
+	m_cop_cadence_logged_gaps = 0;
 }
 
 CGameObject::~CGameObject()
@@ -1178,6 +1207,56 @@ bool CGameObject::animation_movement_controlled() const
 	return !!animation_movement() && animation_movement()->IsActive();
 }
 
+bool CGameObject::is_original_cop_cinematic_actor() const
+{
+	return is_original_cop_cinematic_object(cName().c_str());
+}
+
+bool CGameObject::original_cop_cinematic_cadence_active() const
+{
+	// This lifetime deliberately begins before animation_movement_controller's
+	// constructor. That constructor calculates the first pose and invokes visual
+	// callbacks before m_anim_mov_ctrl can receive the returned pointer.
+	return m_original_cop_cinematic_cadence;
+}
+
+void CGameObject::note_original_cop_ik_prepare()
+{
+	if (!original_cop_cinematic_cadence_active())
+		return;
+
+	m_cop_cadence_last_ik_frame = Device.dwFrame;
+	++m_cop_cadence_ik_prepares;
+}
+
+void CGameObject::note_original_cop_bone_calculation()
+{
+	if (!original_cop_cinematic_cadence_active())
+		return;
+
+	m_cop_cadence_last_bones_frame = Device.dwFrame;
+	++m_cop_cadence_bone_calculations;
+}
+
+bool CGameObject::original_cop_bones_calculated_this_frame() const
+{
+	return original_cop_cinematic_cadence_active() &&
+		m_cop_cadence_last_bones_frame == Device.dwFrame;
+}
+
+void CGameObject::note_original_cop_missed_bone_callback()
+{
+	if (!original_cop_cinematic_cadence_active())
+		return;
+
+	++m_cop_cadence_missed_callbacks;
+	if (m_cop_cadence_missed_callbacks <= 8)
+	{
+		Msg("! [cop-cadence] missed-bone-callback owner=%s frame=%u prepared=%u",
+			cName().c_str(), Device.dwFrame, m_cop_cadence_last_ik_frame);
+	}
+}
+
 void CGameObject::update_animation_movement_controller()
 {
 	if (!m_anim_mov_ctrl)
@@ -1185,6 +1264,28 @@ void CGameObject::update_animation_movement_controller()
 
 	if (m_anim_mov_ctrl->IsActive())
 	{
+		if (m_original_cop_cinematic_cadence)
+		{
+			if (m_cop_cadence_last_root_frame != u32(-1))
+			{
+				const u32 frame_gap = Device.dwFrame - m_cop_cadence_last_root_frame;
+				if (frame_gap > 1)
+				{
+					++m_cop_cadence_root_gaps;
+					m_cop_cadence_max_root_gap = _max(m_cop_cadence_max_root_gap, frame_gap);
+					if (m_cop_cadence_logged_gaps < 8)
+					{
+						Msg("! [cop-cadence] root-update-gap owner=%s frame=%u gap=%u",
+							cName().c_str(), Device.dwFrame, frame_gap);
+						++m_cop_cadence_logged_gaps;
+					}
+				}
+			}
+
+			m_cop_cadence_last_root_frame = Device.dwFrame;
+			++m_cop_cadence_root_updates;
+		}
+
 		m_anim_mov_ctrl->OnFrame();
 		return;
 	}
@@ -1247,6 +1348,23 @@ void CGameObject::create_anim_mov_ctrl(CBlend* b, Fmatrix* start_pose, bool loca
 		IKinematics* K = Visual()->dcast_PKinematics();
 		VERIFY(K);
 
+		if (is_original_cop_cinematic_actor())
+		{
+			m_original_cop_cinematic_cadence = true;
+			m_cop_cadence_started_frame = Device.dwFrame;
+			m_cop_cadence_last_root_frame = u32(-1);
+			m_cop_cadence_last_ik_frame = u32(-1);
+			m_cop_cadence_last_bones_frame = u32(-1);
+			m_cop_cadence_root_updates = 0;
+			m_cop_cadence_root_gaps = 0;
+			m_cop_cadence_max_root_gap = 0;
+			m_cop_cadence_ik_prepares = 0;
+			m_cop_cadence_bone_calculations = 0;
+			m_cop_cadence_missed_callbacks = 0;
+			m_cop_cadence_logged_gaps = 0;
+			Msg("* [cop-cadence] arm owner=%s frame=%u", cName().c_str(), Device.dwFrame);
+		}
+
 		m_anim_mov_ctrl = xr_new<animation_movement_controller>(&XFORM(), *start_pose, K, b);
 	}
 }
@@ -1254,6 +1372,16 @@ void CGameObject::create_anim_mov_ctrl(CBlend* b, Fmatrix* start_pose, bool loca
 void CGameObject::destroy_anim_mov_ctrl()
 {
 	xr_delete(m_anim_mov_ctrl);
+
+	if (m_original_cop_cinematic_cadence)
+	{
+		Msg("* [cop-cadence] disarm owner=%s frame=%u duration=%u root_updates=%u root_gaps=%u max_gap=%u ik_prepares=%u bone_calculations=%u missed_callbacks=%u",
+			cName().c_str(), Device.dwFrame, Device.dwFrame - m_cop_cadence_started_frame,
+			m_cop_cadence_root_updates, m_cop_cadence_root_gaps, m_cop_cadence_max_root_gap,
+			m_cop_cadence_ik_prepares, m_cop_cadence_bone_calculations,
+			m_cop_cadence_missed_callbacks);
+		m_original_cop_cinematic_cadence = false;
+	}
 }
 
 IC bool similar(const Fmatrix& _0, const Fmatrix& _1, const float& epsilon = EPS)

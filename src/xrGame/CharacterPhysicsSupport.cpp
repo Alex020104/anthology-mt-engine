@@ -650,6 +650,16 @@ void CCharacterPhysicsSupport::in_UpdateCL()
 		//} 
 	else if (ik_controller())
 	{
+		if (ik_controller()->UsesOriginalCoPCinematicPipeline())
+		{
+			// Prepare the retail pose after root-motion changed XFORM. Final bones
+			// are committed at the end of CAI_Stalker::UpdateCL, after sight and
+			// weapon state have finished mutating this actor.
+			update_interactive_anims();
+			ik_controller()->PrepareOriginalCoPCinematicFrame();
+			return;
+		}
+
 		CFrustum& view_frust = ::Render->ViewBase;
 		vis_data& vis = m_EntityAlife.Visual()->getVisData();
 		Fvector p;
@@ -696,6 +706,12 @@ void CCharacterPhysicsSupport::in_UpdateCL()
 */
 	}
 #endif
+}
+
+void CCharacterPhysicsSupport::finalize_original_cop_cinematic_frame()
+{
+	if (m_ik_controller)
+		m_ik_controller->FinalizeOriginalCoPCinematicFrame();
 }
 
 void CCharacterPhysicsSupport::CreateSkeleton(CPhysicsShell* & pShell)

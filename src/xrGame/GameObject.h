@@ -99,6 +99,18 @@ class CGameObject :
 	CAI_ObjectLocation* m_ai_location;
 	ALife::_STORY_ID m_story_id;
 	animation_movement_controller* m_anim_mov_ctrl;
+	bool m_original_cop_cinematic_cadence;
+	u32 m_cop_cadence_started_frame;
+	u32 m_cop_cadence_last_root_frame;
+	u32 m_cop_cadence_last_ik_frame;
+	u32 m_cop_cadence_last_bones_frame;
+	u32 m_cop_cadence_root_updates;
+	u32 m_cop_cadence_root_gaps;
+	u32 m_cop_cadence_max_root_gap;
+	u32 m_cop_cadence_ik_prepares;
+	u32 m_cop_cadence_bone_calculations;
+	u32 m_cop_cadence_missed_callbacks;
+	u32 m_cop_cadence_logged_gaps;
 protected:
 	//время удаления объекта
 	bool m_bObjectRemoved;
@@ -244,6 +256,12 @@ public:
 	bool animation_movement_controlled() const;
 	const animation_movement_controller* animation_movement() const { return m_anim_mov_ctrl; }
 	animation_movement_controller* animation_movement() { return m_anim_mov_ctrl; }
+	bool is_original_cop_cinematic_actor() const;
+	bool original_cop_cinematic_cadence_active() const;
+	void note_original_cop_ik_prepare();
+	void note_original_cop_bone_calculation();
+	bool original_cop_bones_calculated_this_frame() const;
+	void note_original_cop_missed_bone_callback();
 	// Game-specific events
 
 	virtual BOOL UsedAI_Locations();

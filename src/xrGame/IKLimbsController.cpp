@@ -18,7 +18,11 @@
 
 #include "Actor.h"
 
-CIKLimbsController::CIKLimbsController(): m_object(0), m_legs_blend(0)
+CIKLimbsController::CIKLimbsController():
+	m_legs_blend(0),
+	m_object(0),
+	m_original_cop_prepared_frame(u32(-1)),
+	m_original_cop_force_calculate(false)
 {
 }
 
@@ -26,6 +30,8 @@ void CIKLimbsController::Create(CGameObject* O)
 {
 	VERIFY(O);
 	m_legs_blend = 0;
+	m_original_cop_prepared_frame = u32(-1);
+	m_original_cop_force_calculate = false;
 
 	IKinematics* K = smart_cast<IKinematics*>(O->Visual());
 	m_object = O;
@@ -44,6 +50,53 @@ void CIKLimbsController::Create(CGameObject* O)
 	if (already_has_callbacks)
 		std::swap(*(O->visual_callbacks().begin()), *(O->visual_callbacks().end() - 1));
 	_pose_extrapolation.init(O->XFORM());
+}
+
+bool CIKLimbsController::UsesOriginalCoPCinematicPipeline() const
+{
+	return m_object && m_object->original_cop_cinematic_cadence_active();
+}
+
+void CIKLimbsController::PrepareOriginalCoPCinematicFrame()
+{
+	if (!UsesOriginalCoPCinematicPipeline())
+		return;
+
+	m_original_cop_prepared_frame = u32(-1);
+	Update();
+
+#ifdef DEBUG
+	if (ph_dbg_draw_mask1.test(phDbgIKOff))
+		return;
+#endif
+
+	_pose_extrapolation.update(m_object->XFORM());
+	for (CIKLimb& limb : _bone_chains)
+		LimbUpdate(limb);
+
+	m_original_cop_prepared_frame = Device.dwFrame;
+	m_object->note_original_cop_ik_prepare();
+}
+
+void CIKLimbsController::FinalizeOriginalCoPCinematicFrame()
+{
+	if (!m_object || m_original_cop_prepared_frame != Device.dwFrame || !m_object->Visual())
+		return;
+
+	IKinematics* K = m_object->Visual()->dcast_PKinematics();
+	if (!K)
+		return;
+
+	// Consume the stamp before CalculateBones so no second caller can commit
+	// the same prepared pose. The callback bypass is live only in this call.
+	m_original_cop_prepared_frame = u32(-1);
+	m_original_cop_force_calculate = true;
+	K->CalculateBones_Invalidate();
+	K->CalculateBones(TRUE);
+	m_original_cop_force_calculate = false;
+
+	if (!m_object->original_cop_bones_calculated_this_frame())
+		m_object->note_original_cop_missed_bone_callback();
 }
 
 
@@ -330,6 +383,8 @@ void CIKLimbsController::Destroy(CGameObject* O)
 #endif
 
 	O->remove_visual_callback(IKVisualCallback);
+	m_original_cop_prepared_frame = u32(-1);
+	m_original_cop_force_calculate = false;
 	xr_vector<CIKLimb>::iterator i = _bone_chains.begin(), e = _bone_chains.end();
 	for (; e != i; ++i)
 		i->Destroy();
@@ -352,6 +407,13 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 		{
 			if(CIKLimbsController* ik = Sh->character_ik_controller())
 			{
+				if (ik->m_original_cop_force_calculate)
+				{
+					ik->Calculate();
+					O->note_original_cop_bone_calculation();
+					return;
+				}
+
 			    if(!Sh->m_pPhysicsShell)
 			    {
 				    Fvector ce;
@@ -366,7 +428,8 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 						    CBoneInstance& root_bi = K->LL_GetBoneInstance(root);
 						    // Animation movement owns this callback. Removing it applies authored
 						    // root motion both to XFORM and to the rendered skeleton.
-						    if (!O->animation_movement_controlled())
+						    if (!O->animation_movement_controlled() &&
+							    !O->original_cop_cinematic_cadence_active())
 							    root_bi.reset_callback();
 						    return;
 						    //ik->optimize_frame = Device.dwFrame + Random.randI(8);
@@ -387,7 +450,8 @@ void _stdcall CIKLimbsController::IKVisualCallback(IKinematics* K)
 					    IKinematics* K = O->Visual()->dcast_PKinematics();
 					    u16 root = K->LL_GetBoneRoot();
 					    CBoneInstance& root_bi = K->LL_GetBoneInstance(root);
-					    if (!O->animation_movement_controlled())
+					    if (!O->animation_movement_controlled() &&
+						    !O->original_cop_cinematic_cadence_active())
 						    root_bi.reset_callback();
 				    }
 			    }

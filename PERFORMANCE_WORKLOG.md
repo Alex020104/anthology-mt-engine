@@ -4317,3 +4317,85 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The pre-v123 profile, fresh v122 log and both replaced resolved LTX files are
   backed up under
   `E:/ANTHOLOGY_BACKUPS/20260826_0422_v123_pre_retail_cop_logic_sync`.
+
+## 2026-08-26 - v125 continuous original-CoP root cadence
+
+### Live result and evidence reset
+
+- The user reported no visible NPC-motion change after the local v124 test.
+  The later interruption was a Codex application crash, not a game crash; no
+  false engine-crash diagnosis is carried into v125.
+- Sokolov and Vano use the retail `jup_b219_*_all` states and their authored
+  physical motion chains. Their active Anthology patrol XYZ, flags and level
+  vertices are byte-identical to retail CoP. Models, patrol coordinates, a
+  synthetic look target and teleport correction are therefore rejected as
+  primary fixes.
+- `OPTIMIZE_CALCULATE_BONES` is not defined by either shipped configuration;
+  its SkeletonRigid downgrade block is compile-dead and was not changed.
+- The broad v124 game/bones barrier is not present in v125. It ran after the
+  object frame and did not protect the root handoff, while globally reducing
+  parallel overlap.
+
+### Root cause addressed
+
+- Animation track time can advance while an ordinary non-crow NPC skips
+  `UpdateCL`. The next `animation_movement_controller::OnFrame` then consumes a
+  multi-frame root delta as one large step. v125 keeps only an active original
+  CoP cinematic participant in every-frame `UpdateCL`; ordinary actors retain
+  the existing scheduler/culling policy.
+- For the same scoped participant, ObjectHandler mutation is kept on the object
+  update path. After root motion updates XFORM, the existing interactive pose
+  and IK preparation run without SSA/frustum rejection. At the end of
+  `CAI_Stalker::UpdateCL`, after sight and weapon writers, exact bones and the IK
+  callback are committed synchronously. The normal device worker passes then
+  see the same-frame calculated skeleton and early-out.
+- The cadence lifetime is armed before constructing
+  `animation_movement_controller` and disarmed only after deleting it. This is
+  intentional: the controller constructor calculates its first pose before
+  `m_anim_mov_ctrl` receives the returned pointer. Both far-distance and
+  off-frustum reset branches now preserve the root callback during this
+  constructor handoff as well as during normal controller ownership.
+- Scope is name-limited to the original CoP cinematic families `jup_b219_`,
+  `pas_b400_` and `pri_a15_`. No global frame barrier, save-format change,
+  animation-speed change or new per-frame Lua callback is introduced.
+
+### LTX launch correction
+
+- v123's launch transitions called `update_npc_logic` after switching the cast.
+  Anthology's helper updates every available participant's planner three times
+  and state manager seven times in the same frame. Retail scene launch does not
+  perform that pump; it can create the first movement controller between
+  artificial updates and anchor it to an intermediate XFORM.
+- The separate v125 addon preserves readiness gates, info portions, the exact
+  participant lists and `update_obj_logic`, but removes only that extra
+  planner/state-manager pump in PRI and all sixteen JUP normal/fallback lines.
+  Camera, sound, models, OMF, patrol data and every unrelated script remain
+  unchanged.
+
+### Diagnostics and validation
+
+- `[cop-cadence] arm`, bounded `root-update-gap`/`missed-bone-callback` records,
+  and one `[cop-cadence] disarm` summary per physical controller report duration,
+  root updates/gaps, maximum gap, IK prepares and exact bone callbacks.
+- The v125 Lua 5.1 smoke test checks constructor-time arming, both callback-reset
+  guards, every-frame crow scope, synchronous ObjectHandler scope, root -> IK ->
+  final-bones order, absence of the v124 global barrier, and removal of the LTX
+  pump while preserving all participant switches. It passes. The inherited
+  v119 animpoint-ownership and v120 action-lifecycle tests also pass against the
+  installed canonical addons. `git diff --check` is clean.
+- DX11 and DX11-AVX x64 configurations build successfully. Installed SHA-256:
+  DX11 EXE `AE19A13167942A639492CE7EC3C8355D3BB908B31DD1A82968FBB91FFFC9FA40`,
+  DX11 PDB `0E37BD126D7B70402CD89A572AD786201C3228378BD9177AF2125A604B34EE95`,
+  AVX EXE `5F09AD1E5DE0DA785D8059548E43C96E79CDB4AFAD8F7F4FA8F958EB9BD37FFE`,
+  and AVX PDB `4A67E351510162C9100431E9B659F873097E15C67A17420FD6DF08C51D6D8222`.
+  Source and installed hashes match.
+- The canonical addon is
+  `D:/ANTHOLOGY_DEV/addons/Anthology Cutscenes v125 - Continuous CoP Root Cadence`,
+  junctioned into MO2 and enabled above v123 in the HARD profile. Source,
+  canonical and MO2 hashes match. The previous binaries, profile, fresh log and
+  resolved v123 LTX files are backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260826_063508_v125_pre_continuous_cop_root_cadence`.
+- Live acceptance is deliberately pending. The same pre-scene saves are valid;
+  no new game or shader-cache cleanup is required. Both JUP and PRI must be
+  replayed, then the fresh `[cop-cadence]` summaries must be checked before this
+  is called a final visual fix.

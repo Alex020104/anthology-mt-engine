@@ -142,6 +142,7 @@ public:
 	bool CollisionCorrectObjPos();
 
 	void in_UpdateCL();
+	void finalize_original_cop_cinematic_frame();
 	void in_shedule_Update(u32 DT);
 	void in_NetSpawn(CSE_Abstract* e);
 	void in_NetDestroy();

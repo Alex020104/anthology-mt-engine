@@ -22,6 +22,9 @@ public:
 public:
 	void PlayLegs(CBlend* b);
 	void Update();
+	bool UsesOriginalCoPCinematicPipeline() const;
+	void PrepareOriginalCoPCinematicFrame();
+	void FinalizeOriginalCoPCinematicFrame();
 	float Shift() { return _object_shift.shift(); }
 private:
 	void Calculate();
@@ -40,6 +43,8 @@ private:
 private:
 	CBlend* m_legs_blend;
 	CGameObject* m_object;
+	u32 m_original_cop_prepared_frame;
+	bool m_original_cop_force_calculate;
 	xr_vector<CIKLimb> _bone_chains;
 	object_shift _object_shift;
 	extrapolation::points _pose_extrapolation;

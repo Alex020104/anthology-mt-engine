@@ -1018,7 +1018,9 @@ void CAI_Stalker::UpdateCL()
 
 			if (g_Alive())
 			{
-				if (g_mt_config.test(mtObjectHandler) && CObjectHandler::planner().initialized())
+				if (g_mt_config.test(mtObjectHandler) &&
+					!is_original_cop_cinematic_actor() &&
+					CObjectHandler::planner().initialized())
 				{
 					xr_delegate<void()> f = xr_make_delegate(
 						this, &CAI_Stalker::update_object_handler);
@@ -1095,6 +1097,10 @@ void CAI_Stalker::UpdateCL()
 						weapon_shot_effector().Update();
 				STOP_PROFILE
 			}
+
+			// All per-frame stalker writers are complete. Commit the prepared
+			// root/IK pose synchronously before device workers can calculate it.
+			m_pPhysics_support->finalize_original_cop_cinematic_frame();
 #ifdef DEBUG
 	debug_text	();
 #endif
@@ -1544,7 +1550,8 @@ void CAI_Stalker::aim_target(Fvector& result, const CGameObject* object)
 BOOL CAI_Stalker::AlwaysTheCrow()
 {
 	VERIFY(character_physics_support ());
-	return (character_physics_support()->interactive_motion());
+	return (character_physics_support()->interactive_motion() ||
+		original_cop_cinematic_cadence_active());
 }
 
 smart_cover::cover const* CAI_Stalker::get_current_smart_cover()
