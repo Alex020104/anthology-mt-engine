@@ -4516,3 +4516,85 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   repeated ADS, dynamic zoom, weapon switching, holder/demo camera takeover,
   `vid_restart`, Native through Performance, and head NVG/thermal before, during
   and after ADS. Check hands, lens colour, exposure, stale frames and sensitivity.
+
+## 2026-08-26 - v127 PiP TAA/thermal correction, quality slider and texture guard
+
+### Baseline and scope
+
+- v127 is built directly on the accepted v126 PiP/module-1.1 integration. It
+  does not change loading, A-Life/NPC placement, cutscene cadence, the main
+  renderer's quality settings or unrelated addons. Runtime PiP files remain
+  inside the existing
+  `[WPN][1.1][SCP][R.A.K Weapon Pack Adaptation Global Anomaly PiP for 3DSS (OBT)]`
+  module; no new priority patch was created.
+- The later SSS Update 24 Alpha 7 / DLSS / FSR investigation is deliberately
+  not part of v127.
+
+### TAA sharpness and head thermal composition
+
+- PiP capture still uses its non-temporal spatial AA path. The reported blur
+  came from compositing the sharp lens into the presented main frame before
+  main-view TAA. The reticle phase now binds the existing SSFX TAA-mask target
+  as MRT slot 2 while explicitly clearing slot 3. The four active R3/R4
+  reticle pixel shaders write only mask alpha for covered lens pixels; they do
+  not classify the lens as HUD or alter the main motion vectors.
+- Module-local R3/R4 `models_scope_reticle.vs` overrides apply the same
+  current main-view TAA jitter as the rest of the presented geometry. Main TAA
+  can therefore return the exact current sharp lens sample instead of
+  unjittering an unjittered reticle. Main-view TAA remains enabled outside the
+  lens.
+- Head Heat Vision reconstructs the complete image and previously overwrote the
+  already drawn scope/grid. Only presented head-thermal frames now defer the
+  single 3DSS reticle composition until immediately after Heat Vision.
+  Weapon-local thermal/SVP frames keep their original ordering and the reticle
+  is not drawn twice.
+
+### Real MCM quality control
+
+- The former four-item list is replaced in module 1.1 by a 50..100% trackbar
+  backed by the new `scope_lense_quality_percent` command. Default 100%
+  keeps the native v126 PiP path.
+- Lower values apply a PiP-only SSA/LOD budget equivalent to linear quality
+  `q` via `g_fSCREEN *= q*q`. The shared full-resolution render-target chain
+  and the presented main view are not resized. Effect/cadence tiers are derived
+  at 90/75/60%: lower tiers progressively remove the already defined lens-only
+  effects and enforce minimum 3/4-frame capture cadence.
+- This is a real geometry/effect workload control, not a fake post-process
+  blur. Because the current renderer shares full-size targets, it is not
+  advertised as true internal-resolution scaling; a safe resolution scaler
+  needs a dedicated SecondVP RT/resolve graph.
+- The module's Russian XML remains literal Windows-1251 without BOM and parses
+  successfully. It was not converted to UTF-8 or numeric Cyrillic entities.
+
+### Intermittent CreateTexture assertion
+
+- `xray_eugen (1).log` fails during parallel level C++ shader preparation:
+  `Tree -> uber_deffer -> r_dx10Texture -> _CreateTexture("")`. Optional
+  bump/detail bindings can legitimately resolve to an empty name; the recorder
+  now rejects null/empty names both before and after texture-name
+  normalization instead of passing them into the resource-manager assertion.
+- The same log also proves an incomplete external shader installation:
+  `SSS CORE INSTALLED 0`, followed by missing AO/IL/SSR/TAA/bloom/fog shaders
+  and missing `deffer_terrain_low_flat.ps`, all replaced by stubs. The engine
+  guard prevents this particular empty-texture crash, but distributions must
+  still include/enable the complete SSS addon. This is why only some users
+  reproduce it; it is not a PiP render-target or VRAM exhaustion failure.
+
+### Validation, build and installation
+
+- `git diff --check`, the module MCM Lua 5.1 parser, ENG XML and literal
+  CP1251 RUS XML checks pass. Both `DX11|x64` and `DX11-AVX|x64` compile and
+  link successfully.
+- Build and installed hashes match:
+  - DX11 EXE `F39973F939B96FC14CEE1A1E3A4EB02B37E82C608545DEC135077C0910682A5A`;
+  - DX11 PDB `0CBA57A55C63364BBC5DF3B24D3EC9792BAB34217080455126C7081090F2907B`;
+  - DX11-AVX EXE `2448A8D007D87D2295026B52928BA18E0696E3BB035AA0E76E6C7187E2DEFC34`;
+  - DX11-AVX PDB `BC4B86802CFE0FE596814E4DB38FDA9979458A66F0F3734664CEE6779E34121D`.
+- The pre-v127 module, profile/settings, binaries and supplied crash log are
+  backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260826_112533_v127_pre_pip_taa_thermal_scale_crashfix`.
+  At the user's request, the shader cache was not deleted, moved or modified.
+- Live acceptance remains pending. No new game is required. Test main TAA
+  sharpness during sway/pan, head thermal before/during ADS, and 100/75/50%
+  quality. For the affected external installation, verify the fresh log says
+  `SSS CORE INSTALLED 1` and no longer lists the missing shader block.

@@ -330,7 +330,7 @@ void CRender::Render()
 
 	{
 		const bool reduced_svp_volumetrics = Device.m_SecondViewport.IsSVPFrame() &&
-			clampr(ps_scope_lense_quality_preset, 0, 3) >= 2;
+			ScopeLenseQualityTier() >= 2;
 		if (RImplementation.o.ssfx_volumetric && !reduced_svp_volumetrics)
 			Target->phase_ssfx_volumetric_blur();
 	}

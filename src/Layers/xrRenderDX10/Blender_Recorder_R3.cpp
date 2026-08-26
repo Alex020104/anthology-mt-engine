@@ -43,11 +43,17 @@ void CBlender_Compile::r_CullMode(D3DCULL Mode)
 void CBlender_Compile::r_dx10Texture(LPCSTR ResourceName, LPCSTR texture)
 {
 	VERIFY(ResourceName);
-	if (!texture) return;
+	// Optional bump/detail bindings legitimately use an empty string when the
+	// selected shader permutation does not have a matching texture. Parallel
+	// level shader preparation can expose that path before the constant table
+	// rejects the unused binding, so never pass an empty resource name to the
+	// texture manager.
+	if (!texture || !texture[0]) return;
 	//
 	string256 TexName;
 	xr_strcpy(TexName, texture);
 	fix_texture_name(TexName);
+	if (!TexName[0]) return;
 
 	// Find index
 	R_constant* C = ctable.get(ResourceName);

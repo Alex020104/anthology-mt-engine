@@ -210,7 +210,12 @@ void CRenderTarget::phase_3DSSReticle()
 
 	HW.pContext->CopyResource(rt_Generic_temp->pTexture->surface_get(), rt_Generic_0->pTexture->surface_get());
 
-	u_setrt(RImplementation.Target->rt_Generic_0, RImplementation.Target->rt_Position, 0, HW.pBaseZB);
+	// The reticle is composited before main-view TAA. Mark exactly the rendered
+	// lens pixels in the existing SSFX motion-vector/TAA mask so the main
+	// temporal pass keeps the current sharp PiP sample instead of blending it
+	// with lens history from an older camera frame.
+	u_setrt(RImplementation.Target->rt_Generic_0, RImplementation.Target->rt_Position,
+		RImplementation.Target->rt_ssfx_motion_vectors, 0, HW.pBaseZB);
 
 	RCache.set_CullMode(CULL_CCW);
 	RCache.set_Stencil(FALSE);

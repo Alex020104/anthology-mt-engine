@@ -3538,16 +3538,17 @@ void CWeapon::UpdateSecondVP()
 	}
 
 	const bool svp_requested = svp_base_requested && m_zoom_params.m_bSecondVPPolicyAllowed;
+	const int scope_quality = ScopeLenseQualityTier();
 	u8 effective_frame_delay = std::max<u8>(m_zoom_params.m_u8SecondVPFrameDelay, 2);
-	if (ps_scope_lense_quality_preset == 2)
+	if (scope_quality == 2)
 		effective_frame_delay = std::max<u8>(effective_frame_delay, 3);
-	else if (ps_scope_lense_quality_preset >= 3)
+	else if (scope_quality >= 3)
 		effective_frame_delay = std::max<u8>(effective_frame_delay, 4);
 	Device.m_SecondViewport.SetSVPFrameDelay(effective_frame_delay);
 	if (svp_requested)
 	{
 		Device.m_SecondViewport.SetSVPOwner(ID());
-		Device.m_SecondViewport.SetSVPQualityPreset(ps_scope_lense_quality_preset);
+		Device.m_SecondViewport.SetSVPQualityPreset(scope_quality);
 	}
 
 	const float target_fov = svp_requested ? GetSecondVPTargetFov() : g_fov;

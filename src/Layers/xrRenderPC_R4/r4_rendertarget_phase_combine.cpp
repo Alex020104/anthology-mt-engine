@@ -45,7 +45,7 @@ void CRenderTarget::phase_combine()
 	//	TODO: DX10: Remove half poxel offset
 	bool _menu_pp = g_pGamePersistent ? g_pGamePersistent->OnRenderPPUI_query() : false;
 	const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
-	const int pip_quality = svp_frame ? clampr(ps_scope_lense_quality_preset, 0, 3) : 0;
+	const int pip_quality = svp_frame ? ScopeLenseQualityTier() : 0;
 
 	u32 Offset = 0;
 	Fvector2 p0, p1;
@@ -533,7 +533,12 @@ void CRenderTarget::phase_combine()
 		phase_ssfx_motion_blur();
 	}
 
-	if (scope_3D_fake_enabled)
+	// HeatVision reconstructs the full frame and does not sample the already
+	// composited reticle. On a presented head-thermal frame defer the single
+	// reticle pass until after HeatVision, otherwise its grid is overwritten.
+	const bool defer_reticle_after_head_heatvision =
+		scope_3D_fake_enabled && !svp_frame && ps_r2_heatvision > 0;
+	if (scope_3D_fake_enabled && !defer_reticle_after_head_heatvision)
 	{
 		phase_3DSSReticle(); // Redotix99: for 3D Shader Based Scopes
 	}
@@ -582,6 +587,9 @@ void CRenderTarget::phase_combine()
 	const bool lens_heatvision = svp_frame && Device.m_SecondViewport.IsSVPThermal();
 	if (head_heatvision || lens_heatvision)
 		phase_heatvision();
+
+	if (defer_reticle_after_head_heatvision)
+		phase_3DSSReticle();
 	//--DSR-- HeatVision_end
 
 	if (scope_fake_enabled && !Device.m_SecondViewport.IsSVPActive())
