@@ -4778,3 +4778,33 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   and on; thermal toggled during ADS and after re-ADS; normal and authored
   thermal optics; repeated PiP captures while rotating across backlit shadow
   edges; grass shadows in direct sun at near range; a control run without ADS.
+
+## 2026-08-27 - v131 adaptive 4K startup splash
+
+- Replaced the legacy 500x281 startup bitmap with the authored 3840x2160
+  `A.N.T.H.O.L.O.G.Y_triptych_v18` source. The embedded bitmap remains
+  lossless 24-bit RGB; no JPEG compression or shader-cache change is involved.
+- The startup dialog is now shown only after its final size is known, preventing
+  the old small control or a cropped 4K frame from flashing first.
+- The splash preserves the exact 16:9 composition, uses up to 84% of the active
+  monitor, never upscales beyond the 4K source and downsamples through GDI
+  `HALFTONE` filtering. The image therefore stays sharp on 1080p, 1440p and 4K
+  displays without stretching faces or clipping the title.
+- The decoded RGB SHA-256 of the embedded BMP is identical to the supplied 4K
+  PNG (`4E6ED4CEBD2EB859BB258C880C74034049ED6400FEA9B9A93FD5B9843B68F2A3`),
+  proving that the format conversion changed no image pixels. On the current
+  1920x1080 display the resulting splash is 1613x907 and remains centered.
+- The owner-drawn bitmap exists only for the startup dialog lifetime and is
+  released on `WM_DESTROY`; loading, renderer, PiP, SSS and gameplay paths are
+  unchanged.
+- Both `DX11|x64` and `DX11-AVX|x64` build successfully. A Win32 resource
+  validation against both candidates and both installed executables reports
+  `IDB_BITMAP1 = 3840x2160, 24 bpp`. Build and installed hashes match:
+  - DX11 EXE `65DF6985988D33CFB224DAE5A035208762EC5F604F05C1FA7AD88ECCAA8337DF`;
+  - DX11 PDB `F2DCB476C2C3C19B73335151C388E2F6C6D79EBCE795C6BCC644E47A28E857AE`;
+  - DX11-AVX EXE `4CD20FE6B2E77648DF75C7AB1F748CB045C1D3C5D469BB0D85603D7D6F3A5A5C`;
+  - DX11-AVX PDB `D89B15F23A2996C45CCE474200432DA646481A84E7F345080DDBE93B3D084BDD`.
+- Branch: `anthology-v131-4k-startup-splash`, based directly on accepted v130.
+  The pre-v131 source and installed binaries are backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260827_055435_v131_pre_4k_startup_splash` with a
+  SHA-256 manifest. The shader cache was not touched.

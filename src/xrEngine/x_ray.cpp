@@ -172,6 +172,7 @@ struct _SoundProcessor : public pureFrame
 // global variables
 ENGINE_API CApplication* pApp = NULL;
 static HWND logoWindow = NULL;
+static HBITMAP logoBitmap = NULL;
 
 int doLauncher();
 void doBenchmark(LPCSTR name);
@@ -770,12 +771,86 @@ void Startup()
 	destroyEngine();
 }
 
+static bool PrepareStartupSplash(HWND picture, u32 screenW, u32 screenH, int& splashW, int& splashH)
+{
+	logoBitmap = static_cast<HBITMAP>(LoadImage(
+		GetModuleHandle(NULL), MAKEINTRESOURCE(IDB_BITMAP1), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+	if (!logoBitmap)
+		return false;
+
+	BITMAP imageInfo = {};
+	if (!GetObject(logoBitmap, sizeof(imageInfo), &imageInfo) || imageInfo.bmWidth <= 0 || imageInfo.bmHeight <= 0)
+	{
+		DeleteObject(logoBitmap);
+		logoBitmap = NULL;
+		return false;
+	}
+
+	// Keep a comfortable border around the splash on every monitor while using
+	// the complete 4K source. Never upscale: high-resolution screens display the
+	// authored pixels, lower-resolution screens get one HALFTONE downsample.
+	const float maxWidth = static_cast<float>(screenW) * 0.84f;
+	const float maxHeight = static_cast<float>(screenH) * 0.84f;
+	float scale = maxWidth / static_cast<float>(imageInfo.bmWidth);
+	const float heightScale = maxHeight / static_cast<float>(imageInfo.bmHeight);
+	if (heightScale < scale)
+		scale = heightScale;
+	if (scale > 1.f)
+		scale = 1.f;
+
+	splashW = static_cast<int>(static_cast<float>(imageInfo.bmWidth) * scale + 0.5f);
+	splashH = static_cast<int>(static_cast<float>(imageInfo.bmHeight) * scale + 0.5f);
+	if (splashW <= 0 || splashH <= 0)
+		return false;
+
+	SetWindowPos(picture, NULL, 0, 0, splashW, splashH, SWP_NOACTIVATE | SWP_NOZORDER);
+	return true;
+}
+
+static bool DrawStartupSplash(const DRAWITEMSTRUCT* drawInfo)
+{
+	if (!drawInfo || !logoBitmap || drawInfo->CtlID != IDC_STATIC_LOGO)
+		return false;
+
+	BITMAP imageInfo = {};
+	if (!GetObject(logoBitmap, sizeof(imageInfo), &imageInfo))
+		return false;
+
+	HDC sourceDC = CreateCompatibleDC(drawInfo->hDC);
+	if (!sourceDC)
+		return false;
+
+	HGDIOBJ previousBitmap = SelectObject(sourceDC, logoBitmap);
+	const int previousMode = SetStretchBltMode(drawInfo->hDC, HALFTONE);
+	POINT previousOrigin = {};
+	SetBrushOrgEx(drawInfo->hDC, 0, 0, &previousOrigin);
+
+	const int width = drawInfo->rcItem.right - drawInfo->rcItem.left;
+	const int height = drawInfo->rcItem.bottom - drawInfo->rcItem.top;
+	const BOOL drawn = StretchBlt(
+		drawInfo->hDC, drawInfo->rcItem.left, drawInfo->rcItem.top, width, height,
+		sourceDC, 0, 0, imageInfo.bmWidth, imageInfo.bmHeight, SRCCOPY);
+
+	SetBrushOrgEx(drawInfo->hDC, previousOrigin.x, previousOrigin.y, NULL);
+	SetStretchBltMode(drawInfo->hDC, previousMode);
+	SelectObject(sourceDC, previousBitmap);
+	DeleteDC(sourceDC);
+	return drawn == TRUE;
+}
+
 static INT_PTR CALLBACK logDlgProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
 {
 	switch (msg)
 	{
 	case WM_DESTROY:
+		if (logoBitmap)
+		{
+			DeleteObject(logoBitmap);
+			logoBitmap = NULL;
+		}
 		break;
+	case WM_DRAWITEM:
+		return DrawStartupSplash(reinterpret_cast<const DRAWITEMSTRUCT*>(lp)) ? TRUE : FALSE;
 	case WM_CLOSE:
 		DestroyWindow(hw);
 		break;
@@ -1104,16 +1179,16 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 	// Title window
 	logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
 
-	HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);
-	RECT logoRect;
-	GetWindowRect(logoPicture, &logoRect);
-	int splashW = logoRect.right - logoRect.left;
-	int splashH = logoRect.bottom - logoRect.top;
-
 	u32 screenW, screenH;
 	int monX, monY;
 	GetMonitorResolution(screenW, screenH);
 	GetMonitorPosition(monX, monY);
+
+	HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);
+	int splashW = 500;
+	int splashH = 281;
+	PrepareStartupSplash(logoPicture, screenW, screenH, splashW, splashH);
+
 	int x = monX + (screenW - splashW) / 2;
 	int y = monY + (screenH - splashH) / 2;
 
@@ -1131,6 +1206,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 		SWP_SHOWWINDOW
 	);
 
+	RedrawWindow(logoWindow, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
 	UpdateWindow(logoWindow);
 
 	// AVI
