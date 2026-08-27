@@ -266,12 +266,11 @@ void CRender::Render()
 		}
 		else if (RImplementation.o.ssfx_sss)
 		{
-			// SSS is temporal and intentionally remains main-view only. Its light
-			// shaders still sample these shared targets during PiP, so neutralize
-			// them instead of reusing shadows projected by the main camera.
-			FLOAT NeutralSSS[4] = { 1, 1, 1, 1 };
-			HW.pContext->ClearRenderTargetView(Target->rt_ssfx_sss->pRT, NeutralSSS);
-			HW.pContext->ClearRenderTargetView(Target->rt_ssfx_sss_tmp->pRT, NeutralSSS);
+			// The local-light composite is not a temporal owner and must be neutral
+			// for the lens camera. Keep rt_ssfx_sss intact: it is the presented
+			// main view's directional-shadow history and an SVP clear corrupts it.
+			FLOAT NeutralLocalSSS[4] = { 1, 1, 1, 1 };
+			HW.pContext->ClearRenderTargetView(Target->rt_ssfx_sss_tmp->pRT, NeutralLocalSSS);
 		}
 	}
 

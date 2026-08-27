@@ -4718,3 +4718,63 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   Aimpoint/Docter/E0T2/RMR; enabled versus folded E0T2/UH-1 magnifiers;
   magnified and thermal PiP optics; analogous G28/FN2000/AUG/G36 variants;
   rapid scope/weapon switching and quickload.
+
+## 2026-08-27 - v130 thermal reticle policy and global shadow history
+
+### Verified causes
+
+- The v127 deferred-reticle condition depended only on an active head thermal
+  post-process. It redrew the 3DSS grid after HeatVision even when
+  `scope_lense_allow_thermal = 0` had correctly denied the SecondVP. The MCM
+  option and device bridge were working; the late renderer pass bypassed their
+  result.
+- The v126 SVP isolation path cleared both `rt_ssfx_sss` and
+  `rt_ssfx_sss_tmp`. `rt_ssfx_sss` is the presented main camera's temporal
+  directional-shadow history. Every PiP capture therefore replaced that
+  history with white, and the next main frame blended back from contaminated
+  data. This could produce global shadow instability and trails outside the
+  lens, especially at backlit edges.
+- The active near/far sun shaders already isolate SVP through `ssfx_issvp`, so
+  the directional history clear was redundant. The local-light combined mask
+  has no equivalent SVP shader gate and remains neutralized in the lens frame.
+- Grass rendering itself was enabled, but the active profile explicitly had
+  `r__enable_grass_shadow off`. The existing SSS MCM value
+  `ssfx_grass_shadows (0, 0.35, 30, 0)` is the low/near-cascade preset, not a
+  request for expensive distant or local-light grass shadows.
+
+### Changes
+
+- The HeatVision reticle is now deferred and restored only when thermal use is
+  allowed and an actually active SecondVP is thermal. With the MCM option off,
+  the pre-HeatVision grid is overwritten together with the denied lens view;
+  with it on, the thermal PiP grid remains visible.
+- SVP no longer clears `rt_ssfx_sss`. It still clears only
+  `rt_ssfx_sss_tmp`, preserving local-light isolation without corrupting the
+  global directional-shadow history.
+- The HARD profile now uses `r__enable_grass_shadow on` while retaining quality
+  tier 0 and 35% distance. This restores only the closest standard Anomaly
+  grass-shadow cascade and avoids the high/ultra local-light path.
+- `Anthology Visual - SSS Temporal Stability` remains at its original winning
+  MO2 priority above ScreenSpaceShaders. Its shader and SHA-256
+  `53D548CBEF4D0A4612AB78090EC4EE45A3052BD38B8751990F8A9F5B5EA870A6`
+  are unchanged. No shader file, localization file, module 1.1 script or shader
+  cache entry was edited.
+
+### Build, deployment and recovery
+
+- Branch: `anthology-v130-thermal-reticle-global-shadows`, based directly on
+  accepted v129 commit `76b69fa2a4`. `git diff --check` passes and both
+  `DX11|x64` and `DX11-AVX|x64` compile and link successfully. The existing
+  duplicate `lj_vm.obj` linker warning remains; there is no new build error.
+- Build and installed hashes match:
+  - DX11 EXE `0622E3AD585AF23A5D7FC2C6CD8EA94024437F98FE2E992EF2D7E8D87BCD043D`;
+  - DX11 PDB `633C5DB5D667D3DBDFAC6BBC8682FD9C038612C3F6728E765E2C2BD9D8F54ADC`;
+  - DX11-AVX EXE `10DA9701F902E9578A9FF4D6FC924690CDB9306E2433F9EBC682D5C6C67B1F8D`;
+  - DX11-AVX PDB `4B6BCF871C8160CF4F8A3BA125ED84E563E95EAC3C97E3E2C9FD07BAFA5C6AD0`.
+- Pre-v130 binaries, profile settings and relevant SSS files are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260827_042819_v130_pre_thermal_reticle_global_shadows`.
+  The shader cache was not read, deleted, moved or modified.
+- No new game is required. Live matrix: head thermal plus PiP with allow off
+  and on; thermal toggled during ADS and after re-ADS; normal and authored
+  thermal optics; repeated PiP captures while rotating across backlit shadow
+  edges; grass shadows in direct sun at near range; a control run without ADS.

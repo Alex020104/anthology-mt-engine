@@ -537,7 +537,9 @@ void CRenderTarget::phase_combine()
 	// composited reticle. On a presented head-thermal frame defer the single
 	// reticle pass until after HeatVision, otherwise its grid is overwritten.
 	const bool defer_reticle_after_head_heatvision =
-		scope_3D_fake_enabled && !svp_frame && ps_r2_heatvision > 0;
+		scope_3D_fake_enabled && !svp_frame && ps_r2_heatvision > 0 &&
+		ps_scope_lense_allow_thermal != 0 && Device.m_SecondViewport.IsSVPActive() &&
+		Device.m_SecondViewport.IsSVPThermal();
 	if (scope_3D_fake_enabled && !defer_reticle_after_head_heatvision)
 	{
 		phase_3DSSReticle(); // Redotix99: for 3D Shader Based Scopes
