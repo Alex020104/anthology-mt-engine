@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <AnthologyUpscalerSdkRoot Condition="'$(AnthologyUpscalerSdkRoot)'=='' and '$(ANTHOLOGY_UPSCALER_SDK_ROOT)'!=''">$(ANTHOLOGY_UPSCALER_SDK_ROOT)</AnthologyUpscalerSdkRoot>
+    <AnthologyUpscalerSdkRoot Condition="'$(AnthologyUpscalerSdkRoot)'==''">D:\ANTHOLOGY_DEV\sdk\upscalers</AnthologyUpscalerSdkRoot>
+    <AnthologyFsrSdk>$(AnthologyUpscalerSdkRoot)\IXRay.FSR3-DX11.3.1.2</AnthologyFsrSdk>
+    <AnthologyDlssSdk>$(AnthologyUpscalerSdkRoot)\IXRay.DLSS.310.4.0</AnthologyDlssSdk>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(AnthologyFsrSdk)\include;$(AnthologyDlssSdk)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <Target Name="ValidateAnthologyUpscalerSdk" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(AnthologyFsrSdk)\include\FidelityFX\host\ffx_fsr3upscaler.h')" Text="Anthology FSR 3.1.2 SDK not found at $(AnthologyFsrSdk). Set AnthologyUpscalerSdkRoot." />
+    <Error Condition="!Exists('$(AnthologyDlssSdk)\include\ngx\nvsdk_ngx.h')" Text="Anthology DLSS SDK not found at $(AnthologyDlssSdk). Set AnthologyUpscalerSdkRoot." />
+  </Target>
+</Project>

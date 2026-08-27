@@ -407,6 +407,33 @@ float hud_fov_aim_factor = 0;
 Fvector4 ps_ssfx_floravariation = { 0.025, 0.1, 0.025, 0.05 }; // Grass Int, Grass Freq, Foliage Int, Foliage Freq ( 0.025, 0.1, 0.03, 0.05 )
 Fvector4 ps_ssfx_motionblur = { 6, 0, 0, 0 }; // Samples, Intensity, Only HUD, -
 Fvector4 ps_ssfx_taa = { 1, 0.5f, 0.6f, 0 }; // Enable, Jitter, Sharpness, -
+Fvector2 g_main_taa_jitter_pixels = { 0.f, 0.f };
+Fvector2 g_main_taa_render_size = { 1.f, 1.f };
+bool g_main_temporal_upscaler_active = false;
+
+u32 ps_r4_upscaler = 0;
+u32 ps_r4_upscaler_quality = 1;
+float ps_r4_upscaler_custom_scale = 0.67f;
+float ps_r4_upscaler_sharpness = 0.2f;
+
+xr_token r4_upscaler_token[] =
+{
+	{ "off", 0 },
+	{ "fsr3", 1 },
+	{ "dlss", 2 },
+	{ nullptr, 0 }
+};
+
+xr_token r4_upscaler_quality_token[] =
+{
+	{ "native", 0 },
+	{ "quality", 1 },
+	{ "balanced", 2 },
+	{ "performance", 3 },
+	{ "ultra_performance", 4 },
+	{ "custom", 5 },
+	{ nullptr, 0 }
+};
 Fvector4 ps_ssfx_fog = { 8, 1.3f, 0.1f, 0 }; // Height, Density, SunColor, -
 float ps_ssfx_fog_scattering = 0.6f; // Fog scattering intensity
 
@@ -1272,6 +1299,11 @@ void xrRender_initconsole()
 	CMD4(CCC_Float, "r2_tnmp_exposure", &ps_r2_tnmp_exposure, 0.0f, 20.0f);
 	CMD4(CCC_Float, "r2_tnmp_gamma", &ps_r2_tnmp_gamma, 0.0f, 20.0f);
 	CMD4(CCC_Float, "r2_tnmp_onoff", &ps_r2_tnmp_onoff, 0.0f, 1.0f);
+
+	CMD3(CCC_Token, "r4_upscaler", &ps_r4_upscaler, r4_upscaler_token);
+	CMD3(CCC_Token, "r4_upscaler_quality", &ps_r4_upscaler_quality, r4_upscaler_quality_token);
+	CMD4(CCC_Float, "r4_upscaler_custom_scale", &ps_r4_upscaler_custom_scale, 0.33f, 1.0f);
+	CMD4(CCC_Float, "r4_upscaler_sharpness", &ps_r4_upscaler_sharpness, 0.0f, 1.0f);
 
     CMD4(CCC_Float,   "r4_hdr10_whitepoint_nits", &ps_r4_hdr10_whitepoint_nits,  10.0f, 10000.0f);
     CMD4(CCC_Float,   "r4_hdr10_ui_nits", 		  &ps_r4_hdr10_ui_nits, 	     10.0f, 10000.0f);

@@ -24,6 +24,8 @@
 #include "blender_pp_bloom.h"
 #include "blender_nightvision.h"
 #include "blender_lut.h"
+#include "blender_upscale.h"
+#include "UpscalerRuntime.h"
 
 // HDR10
 #include "blender_hdr10_bloom.h"
@@ -210,8 +212,8 @@ void CRenderTarget::u_stencil_optimize(eStencilOptimizeMode eSOM)
 	VERIFY(RImplementation.o.nvstencil);
 	//RCache.set_ColorWriteEnable	(FALSE);
 	u32 Offset;
-	float _w = float(Device.dwWidth);
-	float _h = float(Device.dwHeight);
+	float _w = float(m_renderWidth);
+	float _h = float(m_renderHeight);
 	u32 C = color_rgba(255, 255, 255, 255);
 	float eps = 0;
 	float _dw = 0.5f;
@@ -277,8 +279,8 @@ void CRenderTarget::u_compute_texgen_jitter(Fmatrix& m_Texgen_J)
 	m_Texgen_J.mul(m_TexelAdjust, RCache.xforms.m_wvp);
 
 	// rescale - tile it
-	float scale_X = float(Device.dwWidth) / float(TEX_jitter);
-	float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
+	float scale_X = float(m_renderWidth) / float(TEX_jitter);
+	float scale_Y = float(m_renderHeight) / float(TEX_jitter);
 	//float	offset			= (.5f / float(TEX_jitter));
 	m_TexelAdjust.scale(scale_X, scale_Y, 1.f);
 	//m_TexelAdjust.translate_over(offset,	offset,	0	);
@@ -377,6 +379,37 @@ CRenderTarget::CRenderTarget()
 	CTimer startupTimer;
 	startupTimer.Start();
 	u32 SampleCount = 1;
+	m_renderWidth = Device.dwWidth;
+	m_renderHeight = Device.dwHeight;
+	m_upscalerActive = false;
+	m_upscalerResetHistory = true;
+
+	if (ps_r4_upscaler != AnthologyUpscalerOff && RImplementation.o.dx10_msaa)
+	{
+		Msg("! [UPSCALER] MSAA is enabled; native fallback selected");
+		ps_r4_upscaler = AnthologyUpscalerOff;
+	}
+	if (ps_r4_upscaler != AnthologyUpscalerOff && !RImplementation.o.ssfx_motionvectors)
+	{
+		Msg("! [UPSCALER] SSS motion-vector shaders are missing; native fallback selected");
+		ps_r4_upscaler = AnthologyUpscalerOff;
+	}
+
+	if (g_AnthologyUpscaler.ProbeAndResolveMode())
+	{
+		const float scale = g_AnthologyUpscaler.ResolveRenderScale();
+		const u32 requestedWidth = _max(320u, (u32(float(Device.dwWidth) * scale)) & ~1u);
+		const u32 requestedHeight = _max(180u, (u32(float(Device.dwHeight) * scale)) & ~1u);
+		m_upscalerActive = g_AnthologyUpscaler.Initialize(
+			requestedWidth, requestedHeight, Device.dwWidth, Device.dwHeight);
+		if (m_upscalerActive)
+		{
+			m_renderWidth = requestedWidth;
+			m_renderHeight = requestedHeight;
+		}
+	}
+	g_main_temporal_upscaler_active = m_upscalerActive;
+	g_main_taa_render_size.set(float(m_renderWidth), float(m_renderHeight));
 
 	if (ps_r_ssao_mode != 2/*hdao*/)
 		ps_r_ssao = _min(ps_r_ssao, 3);
@@ -444,6 +477,7 @@ CRenderTarget::CRenderTarget()
 	b_heatvision = xr_new<CBlender_heatvision>(); //--DSR-- HeatVision
 	b_lut = xr_new<CBlender_lut>();
 	b_smaa = xr_new<CBlender_smaa>();
+	b_upscale = xr_new<CBlender_upscale>();
 
 	// HDR10
 	b_hdr10_bloom_downsample = xr_new<CBlender_hdr10_bloom_downsample>();
@@ -514,7 +548,9 @@ CRenderTarget::CRenderTarget()
 	}
 	//	NORMAL
 	{
-		u32 w = Device.dwWidth, h = Device.dwHeight;
+		u32 w = m_renderWidth, h = m_renderHeight;
+		if (m_upscalerActive)
+			rt_Depth.create(r2_RT_depth, w, h, D3DFMT_D24S8, SampleCount);
 		rt_Position.create(r2_RT_P, w, h, D3DFMT_A16B16G16R16F, SampleCount);
 
 		if (RImplementation.o.dx10_msaa)
@@ -581,13 +617,13 @@ CRenderTarget::CRenderTarget()
 		rt_dof.create(r2_RT_dof, w, h, RImplementation.o.dx11_hdr10 ? D3DFMT_A16B16G16R16F : D3DFMT_A8R8G8B8);
 
 		if (RImplementation.o.dx11_hdr10) {
-			rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A2R10G10B10, 1); //--#SM+#-- +SecondVP+ // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
-			rt_secondVP_capture.create(r2_RT_secondVP_capture, w, h, D3DFMT_A2R10G10B10, 1);
-			rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A2R10G10B10); // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
+			rt_secondVP.create(r2_RT_secondVP, Device.dwWidth, Device.dwHeight, D3DFMT_A2R10G10B10, 1); //--#SM+#-- +SecondVP+ // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
+			rt_secondVP_capture.create(r2_RT_secondVP_capture, Device.dwWidth, Device.dwHeight, D3DFMT_A2R10G10B10, 1);
+			rt_ui_pda.create(r2_RT_ui, Device.dwWidth, Device.dwHeight, D3DFMT_A2R10G10B10); // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
 		} else {
-			rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A8R8G8B8, 1); //--#SM+#-- +SecondVP+
-			rt_secondVP_capture.create(r2_RT_secondVP_capture, w, h, D3DFMT_A8R8G8B8, 1);
-			rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A8R8G8B8);
+			rt_secondVP.create(r2_RT_secondVP, Device.dwWidth, Device.dwHeight, D3DFMT_A8R8G8B8, 1); //--#SM+#-- +SecondVP+
+			rt_secondVP_capture.create(r2_RT_secondVP_capture, Device.dwWidth, Device.dwHeight, D3DFMT_A8R8G8B8, 1);
+			rt_ui_pda.create(r2_RT_ui, Device.dwWidth, Device.dwHeight, D3DFMT_A8R8G8B8);
 		}
 		Device.m_SecondViewport.InvalidateSVPContent();
 		Device.mMainHudCamSaved = false;
@@ -689,6 +725,13 @@ CRenderTarget::CRenderTarget()
 		//	temp: for higher quality blends
 		if (RImplementation.o.advancedpp)
 			rt_Generic_2.create(r2_RT_generic2, w, h, D3DFMT_A16B16G16R16F, SampleCount);
+
+		if (m_upscalerActive)
+		{
+			rt_UpscaleInput.create(r4_RT_upscale_input, w, h, D3DFMT_A16B16G16R16F, 1);
+			rt_UpscaleOutput.create(r4_RT_upscale_output, Device.dwWidth, Device.dwHeight,
+				D3DFMT_A16B16G16R16F, 1, true);
+		}
 	}
 
 	const u32 initialTargetsMs = startupTimer.GetElapsed_ms();
@@ -928,8 +971,8 @@ CRenderTarget::CRenderTarget()
 
 	//SMAA
 	{
-		u32 w = Device.dwWidth;
-		u32 h = Device.dwHeight;
+		u32 w = m_renderWidth;
+		u32 h = m_renderHeight;
 
 		rt_smaa_edgetex.create(r2_RT_smaa_edgetex, w, h, D3DFMT_A8R8G8B8);
 		rt_smaa_blendtex.create(r2_RT_smaa_blendtex, w, h, D3DFMT_A8R8G8B8);
@@ -967,13 +1010,13 @@ CRenderTarget::CRenderTarget()
 		u32 h = 0;
 		if (RImplementation.o.ssao_half_data)
 		{
-			w = Device.dwWidth / 2;
-			h = Device.dwHeight / 2;
+			w = m_renderWidth / 2;
+			h = m_renderHeight / 2;
 		}
 		else
 		{
-			w = Device.dwWidth;
-			h = Device.dwHeight;
+			w = m_renderWidth;
+			h = m_renderHeight;
 		}
 
 		D3DFORMAT fmt = HW.Caps.id_vendor == 0x10DE ? D3DFMT_R32F : D3DFMT_R16F;
@@ -1002,7 +1045,7 @@ CRenderTarget::CRenderTarget()
 	// HDAO
 	if (RImplementation.o.ssao_hdao && RImplementation.o.ssao_ultra)
 	{
-		u32 w = Device.dwWidth, h = Device.dwHeight;
+		u32 w = m_renderWidth, h = m_renderHeight;
 		rt_ssao_temp.create(r2_RT_ssao_temp, w, h, D3DFMT_R16F, 1, true);
 		startup_shader_tasks.run([this]()
 		{
@@ -1328,6 +1371,8 @@ CRenderTarget::CRenderTarget()
 
 	// PP
 	s_postprocess.create("postprocess");
+	if (m_upscalerActive)
+		s_upscale.create(b_upscale, "r2\\upscale");
 	g_postprocess.create(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR | D3DFVF_TEX3, RCache.Vertex.Buffer(),
 	                     RCache.QuadIB);
 
@@ -1339,8 +1384,11 @@ CRenderTarget::CRenderTarget()
 	const u32 shaderWaitMs = startupTimer.GetElapsed_ms() - initialTargetsMs - overlappedWorkMs;
 
 	//
-	dwWidth = Device.dwWidth;
-	dwHeight = Device.dwHeight;
+	dwWidth = m_renderWidth;
+	dwHeight = m_renderHeight;
+	Msg("* [UPSCALER/RT] mode=%s core=%ux%u display=%ux%u",
+		m_upscalerActive ? (g_AnthologyUpscaler.Mode() == AnthologyUpscalerFSR3 ? "FSR3" : "DLSS") : "native",
+		m_renderWidth, m_renderHeight, Device.dwWidth, Device.dwHeight);
 	Msg("* [STARTUP/RENDER TARGET] mode=%s initial=%u overlap=%u shader-wait=%u total=%u ms",
 		parallelStartupShaders ? "parallel" : "serial",
 		initialTargetsMs, overlappedWorkMs, shaderWaitMs, startupTimer.GetElapsed_ms());
@@ -1348,6 +1396,9 @@ CRenderTarget::CRenderTarget()
 
 CRenderTarget::~CRenderTarget()
 {
+	g_main_temporal_upscaler_active = false;
+	g_main_taa_render_size.set(float(Device.dwWidth), float(Device.dwHeight));
+	g_AnthologyUpscaler.Shutdown();
 	_RELEASE(t_ss_async);
 
 	// Textures
@@ -1426,6 +1477,7 @@ CRenderTarget::~CRenderTarget()
 	xr_delete(b_heatvision); //--DSR-- HeatVision
 	xr_delete(b_lut);
 	xr_delete(b_smaa);
+	xr_delete(b_upscale);
 
 	// [ SSS Stuff ]
 	xr_delete(b_ssfx_fog_scattering); // SSS MotionBlur
@@ -1493,8 +1545,8 @@ void CRenderTarget::reset_light_marker(bool bResetStencil)
 	if (bResetStencil)
 	{
 		u32 Offset;
-		float _w = float(Device.dwWidth);
-		float _h = float(Device.dwHeight);
+		float _w = float(m_renderWidth);
+		float _h = float(m_renderHeight);
 		u32 C = color_rgba(255, 255, 255, 255);
 		float eps = 0;
 		float _dw = 0.5f;

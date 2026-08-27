@@ -124,8 +124,10 @@ static class cl_pos_decompress_params : public R_constant_setup
 		float VertTan = -1.0f * tanf(deg2rad(Device.fFOV / 2.0f));
 		float HorzTan = - VertTan / Device.fASPECT;
 
-		RCache.set_c(C, HorzTan, VertTan, (2.0f * HorzTan) / (float)Device.dwWidth,
-		             (2.0f * VertTan) / (float)Device.dwHeight);
+		const float width = RImplementation.Target ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
+		const float height = RImplementation.Target ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
+		RCache.set_c(C, HorzTan, VertTan, (2.0f * HorzTan) / width,
+		             (2.0f * VertTan) / height);
 	}
 } binder_pos_decompress_params;
 
@@ -133,8 +135,9 @@ static class cl_pos_decompress_params2 : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, (float)Device.dwWidth, (float)Device.dwHeight, 1.0f / (float)Device.dwWidth,
-		             1.0f / (float)Device.dwHeight);
+		const float width = RImplementation.Target ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
+		const float height = RImplementation.Target ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
+		RCache.set_c(C, width, height, 1.0f / width, 1.0f / height);
 	}
 } binder_pos_decompress_params2;
 
@@ -561,7 +564,7 @@ void CRender::create()
 	//	FluidManager.Initialize( 100, 100, 100 );
 	const u32 fluidMs = startupTimer.GetElapsed_ms() - setupMs - targetMs - modelsMs - particlesMs - occlusionMs -
 		viewportMs - geometryMs;
-	FluidManager.SetScreenSize(Device.dwWidth, Device.dwHeight);
+	FluidManager.SetScreenSize(Target->get_core_width(), Target->get_core_height());
 
 	Device.ModelDefferClear = xr_make_delegate(Models, &CModelPool::DeleteQueuedDeffer);
 	const u32 supportMs = startupTimer.GetElapsed_ms() - setupMs - targetMs;
@@ -625,7 +628,7 @@ void CRender::reset_end()
 	}
 	//-AVO
 
-	FluidManager.SetScreenSize(Device.dwWidth, Device.dwHeight);
+	FluidManager.SetScreenSize(Target->get_core_width(), Target->get_core_height());
 
 	// Set this flag true to skip the first render frame,
 	// that some data is not ready in the first frame (for example device camera position)

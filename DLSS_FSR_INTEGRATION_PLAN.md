@@ -1,5 +1,24 @@
 # Anthology DLSS / FSR integration plan
 
+## Current implementation status (v134, 2026-08-28)
+
+- The renderer-scale foundation and the first auditable FSR 3.1.2/DLSS Super
+  Resolution paths are implemented together on
+  `anthology-v134-upscale-foundation` for live testing.
+- `r4_upscaler off` remains the engine default and preserves the native v133
+  path. The owner's installed RTX 5070 test profile currently selects DLSS
+  Quality; unsupported hardware, missing runtime DLLs, MSAA, or missing SSS
+  motion-vector shaders fall back to native rendering.
+- World color/depth/motion resources render at the selected internal size. HUD,
+  menus, PDA, loading UI and the final backbuffer remain display-sized.
+- The main camera owns the temporal jitter/history. The old SSS TAA resolve is
+  skipped while a vendor upscaler is active, PiP/SVP frames use only a spatial
+  present and never advance main history, and load precache keeps history in a
+  reset state until normal gameplay resumes.
+- FSR frame generation is deliberately not enabled. Reactive masks, additional
+  camera-cut resets, runtime MCM controls and broader GPU/HDR validation remain
+  stabilization work for the following versions.
+
 ## Source audit (2026-08-27)
 
 - `SSS UPDATE 24 - ALPHA7 (1)` ships two replacement engine binaries, NVIDIA
@@ -10,7 +29,7 @@
   - `e729e443df`: render scaling and FSR2 foundation;
   - `0f79e73160`: direct NVIDIA NGX/DLSS integration;
   - `5b1b7a319c`: depth-upscale support;
-  - `cc05ff7967`: FSR2 replacement with FSR 3.1.2.
+  - `b11fee6be`: FSR2 replacement with FSR 3.1.2.
 - These commits are IX-Ray-side architecture, not drop-in patches for the
   current Monolith-derived renderer. Code is to be adapted subsystem by
   subsystem; no foreign EXE will replace the Anthology engine.
@@ -42,10 +61,10 @@
 - Validate native mode first; it is the rollback/reference path for every next
   stage.
 
-## v135: FSR 3.1.2 upscaling
+## v135: FSR 3.1.2 stabilization
 
-- Adapt the `cc05ff7967` wrapper and SDK/CMake layout to the existing VS2022
-  solution and DX11 device lifetime.
+- Stabilize the adapted FSR 3.1.2 wrapper and DX11 device lifetime after live
+  v134 testing.
 - Feed low-resolution HDR color, linear depth and motion vectors; add reactive
   and transparency/composition masks for particles, weapon glass and water.
 - Reset the context on load, teleport, camera effector discontinuity,
@@ -53,11 +72,11 @@
 - Keep frame generation disabled until upscaling is stable and frame pacing is
   measured independently.
 
-## v136: DLSS upscaling
+## v136: DLSS stabilization
 
-- Start from the auditable direct-NGX path (`0f79e73160`) rather than loading
-  Alpha7's opaque replacement EXE. Update the wrapper/API only after the render
-  inputs are verified with FSR.
+- Continue from the auditable direct-NGX path (`0f79e73160`) already adapted in
+  v134 rather than loading Alpha7's opaque replacement EXE. Finalize the
+  wrapper/API after the shared render inputs are verified with FSR.
 - Probe availability and driver requirements at runtime; expose only supported
   modes. Package `nvngx_dlss.dll` beside the engine without making it a hard
   dependency for AMD/Intel users.

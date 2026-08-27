@@ -125,7 +125,7 @@ void CRenderTarget::phase_combine()
 	{
 		HW.pContext->ClearRenderTargetView(rt_Generic_0->pRT, ColorRGBA);
 		HW.pContext->ClearRenderTargetView(rt_Generic_1->pRT, ColorRGBA);
-		u_setrt(rt_Generic_0, rt_Generic_1, rt_Heat, HW.pBaseZB);	//--DSR-- HeatVision
+		u_setrt(rt_Generic_0, rt_Generic_1, rt_Heat, main_depth());	//--DSR-- HeatVision
 	}
 	else
 	{
@@ -251,8 +251,8 @@ void CRenderTarget::phase_combine()
 		*/
 
 		// Fill VB
-		float scale_X = float(Device.dwWidth) / float(TEX_jitter);
-		float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
+		float scale_X = float(m_renderWidth) / float(TEX_jitter);
+		float scale_Y = float(m_renderHeight) / float(TEX_jitter);
 
 		// Fill vertex buffer
 		FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
@@ -344,8 +344,8 @@ void CRenderTarget::phase_combine()
 		else
 			u_setrt(rt_ssfx_temp, 0, 0, 0);
 
-		float w = float(Device.dwWidth);
-		float h = float(Device.dwHeight);
+		float w = float(m_renderWidth);
+		float h = float(m_renderHeight);
 
 		// Render Scale
 		set_viewport_size(HW.pContext, w / ps_ssfx_water.x, h / ps_ssfx_water.x);
@@ -374,7 +374,7 @@ void CRenderTarget::phase_combine()
 	}
 
 	if (!RImplementation.o.dx10_msaa)
-		u_setrt(rt_Generic_0, 0, 0, HW.pBaseZB);
+		u_setrt(rt_Generic_0, 0, 0, main_depth());
 	else
 		u_setrt(rt_Generic_0_r, 0, 0, rt_MSAADepth->pZRT);
 
@@ -391,7 +391,7 @@ void CRenderTarget::phase_combine()
 			phase_ssfx_rain(); // Render a small color buffer to do the refraction and more
 
 			if (!RImplementation.o.dx10_msaa)
-				u_setrt(rt_Generic_0, 0, rt_ssfx_motion_vectors, HW.pBaseZB);
+				u_setrt(rt_Generic_0, 0, rt_ssfx_motion_vectors, main_depth());
 			else
 				u_setrt(rt_Generic_0_r, 0, rt_ssfx_motion_vectors, rt_MSAADepth->pZRT);
 		}
@@ -417,7 +417,7 @@ void CRenderTarget::phase_combine()
 
 		//--DSR-- HeatVision_start
 		if (!RImplementation.o.dx10_msaa)
-			u_setrt(rt_Generic_0, rt_Heat, rt_ssfx_motion_vectors, HW.pBaseZB); // LDR RT
+			u_setrt(rt_Generic_0, rt_Heat, rt_ssfx_motion_vectors, main_depth()); // LDR RT
 		else
 			u_setrt(rt_Generic_0_r, rt_Heat, rt_ssfx_motion_vectors, RImplementation.Target->rt_MSAADepth->pZRT); // LDR RT
 		//--DSR-- HeatVision_end
@@ -478,7 +478,7 @@ void CRenderTarget::phase_combine()
 			FLOAT ColorRGBA[4] = {127.0f / 255.0f, 127.0f / 255.0f, 0.0f, 127.0f / 255.0f};
 			if (!RImplementation.o.dx10_msaa)
 			{
-				u_setrt(rt_Generic_1, 0, 0, HW.pBaseZB); // Now RT is a distortion mask
+				u_setrt(rt_Generic_1, 0, 0, main_depth()); // Now RT is a distortion mask
 				HW.pContext->ClearRenderTargetView(rt_Generic_1->pRT, ColorRGBA);
 			}
 			else
@@ -609,7 +609,7 @@ void CRenderTarget::phase_combine()
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !svp_frame)
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !svp_frame && !m_upscalerActive)
 	{
 		phase_ssfx_taa();
 		ssfx_PrevPos_Requiered = true;
@@ -629,12 +629,12 @@ void CRenderTarget::phase_combine()
 	// Combine everything + perform AA
 	if (RImplementation.o.dx10_msaa)
 	{
-		if (PP_Complex) u_setrt(rt_Generic, 0, 0, HW.pBaseZB); // LDR RT
+		if (PP_Complex) u_setrt(rt_Generic, 0, 0, main_depth()); // LDR RT
 		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
 	else
 	{
-		if (PP_Complex) u_setrt(rt_Color, 0, 0, HW.pBaseZB); // LDR RT
+		if (PP_Complex) u_setrt(rt_Color, 0, 0, main_depth()); // LDR RT
 		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
 	//. u_setrt				( Device.dwWidth,Device.dwHeight,HW.pBaseRT,NULL,NULL,HW.pBaseZB);
@@ -658,8 +658,8 @@ void CRenderTarget::phase_combine()
 			Fvector4 uv6;
 		};
 
-		float _w = float(Device.dwWidth);
-		float _h = float(Device.dwHeight);
+		float _w = float(m_renderWidth);
+		float _h = float(m_renderHeight);
 		float ddw = 1.f / _w;
 		float ddh = 1.f / _h;
 		p0.set(.5f / _w, .5f / _h);
@@ -776,6 +776,8 @@ void CRenderTarget::phase_combine()
 		PIX_EVENT(phase_pp);
 		phase_pp();
 	}
+	if (m_upscalerActive)
+		phase_upscale(!svp_frame);
 
 	//	Re-adapt luminance
 	RCache.set_Stencil(FALSE);
@@ -827,8 +829,8 @@ void CRenderTarget::phase_combine()
 	/*
 	if (0)		{
 		u32		C					= color_rgba	(255,255,255,255);
-		float	_w					= float(Device.dwWidth)/3;
-		float	_h					= float(Device.dwHeight)/3;
+		float	_w					= float(m_renderWidth)/3;
+		float	_h					= float(m_renderHeight)/3;
 
 		// draw light-spheres
 #ifdef DEBUG
@@ -899,7 +901,7 @@ void CRenderTarget::phase_wallmarks()
 	RCache.set_RT(NULL, 2);
 	RCache.set_RT(NULL, 1);
 	if (!RImplementation.o.dx10_msaa)
-		u_setrt(rt_Color,NULL,NULL, HW.pBaseZB);
+		u_setrt(rt_Color,NULL,NULL, main_depth());
 	else
 		u_setrt(rt_Color,NULL,NULL, rt_MSAADepth->pZRT);
 	// Stencil	- draw only where stencil >= 0x1
@@ -918,7 +920,7 @@ void CRenderTarget::phase_combine_volumetric()
 
 	//u_setrt(rt_Generic_0,0,0,HW.pBaseZB );			// LDR RT
 	if (!RImplementation.o.dx10_msaa)
-		u_setrt(rt_Generic_0, rt_Generic_1, 0, HW.pBaseZB);
+		u_setrt(rt_Generic_0, rt_Generic_1, 0, main_depth());
 	else
 		u_setrt(rt_Generic_0_r, rt_Generic_1_r, 0, RImplementation.Target->rt_MSAADepth->pZRT);
 	//	Sets limits to both render targets

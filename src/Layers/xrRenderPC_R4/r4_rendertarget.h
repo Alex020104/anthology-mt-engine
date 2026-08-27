@@ -16,6 +16,10 @@ class CRenderTarget : public IRender_Target
 private:
 	u32 dwWidth;
 	u32 dwHeight;
+	u32 m_renderWidth;
+	u32 m_renderHeight;
+	bool m_upscalerActive;
+	bool m_upscalerResetHistory;
 	u32 dwAccumulatorClearMark;
 public:
 	enum eStencilOptimizeMode
@@ -72,6 +76,7 @@ public:
 	IBlender* b_heatvision; //--DSR-- HeatVision
 	IBlender* b_lut;
 	IBlender* b_smaa;
+	IBlender* b_upscale;
 	// compute shader for hdao
 	IBlender* b_hdao_cs;
 	IBlender* b_hdao_msaa_cs;
@@ -104,6 +109,8 @@ public:
 
 	// MRT-path
 	ref_rt rt_Depth; // Z-buffer like - initial depth
+	ref_rt rt_UpscaleInput; // low-resolution post-process result
+	ref_rt rt_UpscaleOutput; // full-resolution FSR/DLSS result
 	ref_rt rt_MSAADepth; // z-buffer for MSAA deferred shading
 	ref_rt rt_Generic_0_r; // MRT generic 0
 	ref_rt rt_Generic_1_r; // MRT generic 1
@@ -278,6 +285,7 @@ private:
 	ref_shader s_svp_quality;
 	ref_shader s_heatvision; //--DSR-- HeatVision
 	ref_shader s_smaa;
+	ref_shader s_upscale;
 
 	ref_shader s_lut;
 	//	generate min/max
@@ -508,6 +516,7 @@ public:
 	void phase_combine();
 	void phase_combine_volumetric();
 	void phase_pp();
+	void phase_upscale(bool temporal);
 
 	virtual void set_blur(float f) { param_blur = f; }
 	virtual void set_gray(float f) { param_gray = f; }
@@ -522,6 +531,10 @@ public:
 
 	virtual u32 get_width() { return dwWidth; }
 	virtual u32 get_height() { return dwHeight; }
+	u32 get_core_width() const { return m_renderWidth; }
+	u32 get_core_height() const { return m_renderHeight; }
+	bool upscaler_active() const { return m_upscalerActive; }
+	ID3DDepthStencilView* main_depth() const { return m_upscalerActive ? rt_Depth->pZRT : HW.pBaseZB; }
 
 	virtual void set_cm_imfluence(float f) { param_color_map_influence = f; }
 	virtual void set_cm_interpolate(float f) { param_color_map_interpolate = f; }

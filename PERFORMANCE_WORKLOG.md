@@ -4898,3 +4898,66 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - No new game is required. Live checks: reproduce the two reference SSS images
   at the same time/weather; compare PiP 100/75/50/25 while panning; verify normal,
   NVG and thermal scopes; rapidly enter/leave ADS and quickload.
+
+## 2026-08-28 - v134 DLSS / FSR first playable integration
+
+### Adapted renderer path
+
+- Added auditable direct integrations for NVIDIA DLSS Super Resolution 310.4
+  and AMD FidelityFX FSR 3.1.2 Upscaling. The implementation adapts the IX-Ray
+  render-scale, direct-NGX, depth-input and FSR 3.1.2 architecture to the current
+  Anthology R4 renderer; no Alpha7 replacement EXE or Streamline interposer was
+  copied into the engine.
+- Display size and world-render size are now separate. The world G-buffer,
+  lighting, post-process input, motion vectors and depth are created at the
+  selected internal size, while HUD, menu, PDA, loading UI, PiP capture target
+  and final backbuffer remain at display resolution.
+- Added console controls `r4_upscaler off|fsr3|dlss`,
+  `r4_upscaler_quality native|quality|balanced|performance|ultra_performance|custom`,
+  `r4_upscaler_custom_scale 0.33..1.00` and
+  `r4_upscaler_sharpness 0.00..1.00`. A mode/quality change requires
+  `vid_restart` because world render targets must be recreated.
+
+### Temporal and compatibility guards
+
+- Vendor upscaling uses an FSR-compatible temporal jitter sequence in unit
+  render pixels and the existing SSS world/HUD jitter hooks. The old SSS TAA
+  resolve is skipped while DLSS/FSR is active, preventing a second temporal
+  reconstruction pass and its extra blur/ghosting.
+- Only the presented main camera advances vendor temporal history. PiP/SVP
+  renders use a spatial full-screen present and do not update or reset the main
+  DLSS/FSR context. The existing v133 full-rate PiP quality behavior is kept.
+- Save/load precache holds temporal history in reset state until the normal
+  presented frames resume. A failed vendor dispatch keeps reset pending and
+  falls back to the low-resolution spatial present instead of asserting.
+- MSAA, missing SSS motion-vector shaders, unsupported DLSS hardware/driver,
+  missing FSR DLLs and failed backend creation all select the native path with a
+  clear log message. `r4_upscaler off` remains the engine default and retains
+  the v133 native render path.
+- Frame generation is not enabled in v134. Reactive/transparency masks and
+  broader HDR/GPU validation remain follow-up stabilization work.
+
+### Build, installation and recovery
+
+- Branch: `anthology-v134-upscale-foundation`, based directly on accepted v133.
+  Both `DX11|x64` and `DX11-AVX|x64` compile and link successfully. The existing
+  duplicate `lj_vm.obj` warning remains; `git diff --check` reports no errors.
+- The official runtime files installed beside both engines are
+  `ffx_backend_dx11_x64.dll`, `ffx_fsr3upscaler_x64.dll` and `nvngx_dlss.dll`.
+  The only resource addon is `Anthology Upscaler Runtime v134`, stored at
+  `D:/ANTHOLOGY_DEV/addons` and enabled through an MO2 junction in both profiles.
+- The owner's RTX 5070 test configuration selects DLSS Quality with MSAA off.
+  No new game is required. The shader cache was not read, deleted, moved or
+  rewritten; therefore runtime startup was intentionally left for the owner's
+  normal MO2 launch.
+- Installed hashes:
+  - DX11 EXE `DD262BAA13A2FF6E3ED9D5ACD0EEE45E646EA65733EB6E63508A416B911F6A37`;
+  - DX11 PDB `F36B1911EF31F5C8FF628A809188FDDC67BE4CEC9C6F5F356F3830FBA35AE52F`;
+  - DX11-AVX EXE `59305C01DA6DB9260500CBEFCA193F2E23539A06D41768F73EA876F018BA24A4`;
+  - DX11-AVX PDB `84BB753969C5D9C28F0F884DBA01B7AF01BB4450CB4BC48740B997AB7AFAF27C`;
+  - FSR DX11 backend `B9EEA14FE0444236A0D493D1FF5B965D3DA88F9E38256CA2EBE24AB46C0A6DBB`;
+  - FSR 3.1.2 upscaler `D2A08178C8F3217D58CA06156E0788CE8FEDB4A9FF552C611CB287333AEAA20B`;
+  - NVIDIA DLSS `E88A27B9629C1CD3A51BF25C605DEF1798C44D038267C520830E23D5959C985B`;
+  - present shader `EC7526A5928786D4C41905B04D4BBC3680BB4AB54397D98887B37C8A12830433`.
+- Pre-v134 binaries, profile, PiP module and SSS addon are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260827_v134_pre_dlss_fsr`.

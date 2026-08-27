@@ -6,6 +6,18 @@
 extern ECORE_API float ps_ssfx_fog_scattering;
 extern ECORE_API Fvector4 ps_ssfx_motionblur;
 extern ECORE_API Fvector4 ps_ssfx_taa;
+extern ECORE_API Fvector2 g_main_taa_jitter_pixels;
+extern ECORE_API Fvector2 g_main_taa_render_size;
+extern ECORE_API bool g_main_temporal_upscaler_active;
+
+// Anthology temporal upscalers. Changes require vid_restart because the
+// world render targets are recreated at the selected internal resolution.
+extern ECORE_API u32 ps_r4_upscaler;
+extern ECORE_API u32 ps_r4_upscaler_quality;
+extern ECORE_API float ps_r4_upscaler_custom_scale;
+extern ECORE_API float ps_r4_upscaler_sharpness;
+extern ECORE_API xr_token r4_upscaler_token[];
+extern ECORE_API xr_token r4_upscaler_quality_token[];
 
 extern ECORE_API Fvector4 ps_ssfx_rain_drops_setup;
 extern ECORE_API int ps_ssfx_terrain_grass_align;

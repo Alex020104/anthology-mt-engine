@@ -7,6 +7,7 @@
 #include "../../xrParticles/ParticlesAsyncManager.h"
 
 #include "../xrRender/QueryHelper.h"
+#include "UpscalerRuntime.h"
 
 void CRender::render_menu()
 {
@@ -18,20 +19,21 @@ void CRender::render_menu()
 
 	// Main Render
 	{
-		Target->u_setrt(Target->rt_Generic_0, 0, 0, HW.pBaseZB); // LDR RT
+		Target->u_setrt(Target->rt_Generic_0, 0, 0, Target->main_depth()); // LDR RT
 		g_pGamePersistent->OnRenderPPUI_main(); // PP-UI
 	}
 
 	// Distort
 	{
 		FLOAT ColorRGBA[4] = {127.0f / 255.0f, 127.0f / 255.0f, 0.0f, 127.0f / 255.0f};
-		Target->u_setrt(Target->rt_Generic_1, 0, 0, HW.pBaseZB); // Now RT is a distortion mask
+		Target->u_setrt(Target->rt_Generic_1, 0, 0, Target->main_depth()); // Now RT is a distortion mask
 		HW.pContext->ClearRenderTargetView(Target->rt_Generic_1->pRT, ColorRGBA);
 		g_pGamePersistent->OnRenderPPUI_PP(); // PP-UI
 	}
 
 	// Actual Display
 	Target->u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+	rmNormal();
 	RCache.set_Shader(Target->s_menu);
 	RCache.set_Geometry(Target->g_menu);
 
@@ -92,6 +94,9 @@ void CRender::Render()
 		return;
 	}
 
+	if (Target->upscaler_active() && !Device.m_SecondViewport.IsSVPFrame())
+		g_AnthologyUpscaler.UpdateJitter(Device.dwFrame);
+
 	//.	VERIFY					(g_pGameLevel && g_pGameLevel->pHUD);
 
 	// Configure
@@ -131,7 +136,7 @@ void CRender::Render()
 
     if (RImplementation.o.ssfx_motionvectors)
     {
-        Target->u_setrt(Device.dwWidth, Device.dwHeight, 0, 0, Target->rt_ssfx_motion_vectors->pRT, 0);
+		Target->u_setrt(Target->get_core_width(), Target->get_core_height(), 0, 0, Target->rt_ssfx_motion_vectors->pRT, 0);
 
         FLOAT ColorRGBA[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
         HW.pContext->ClearRenderTargetView(Target->rt_ssfx_motion_vectors->pRT, ColorRGBA);
@@ -147,7 +152,8 @@ void CRender::Render()
 
 	if (ps_r2_ls_flags.test(R2FLAG_TERRAIN_PREPASS))
 	{
-		Target->u_setrt(Device.dwWidth, Device.dwHeight, NULL, NULL, NULL, !RImplementation.o.dx10_msaa ? HW.pBaseZB : Target->rt_MSAADepth->pZRT);
+		Target->u_setrt(Target->get_core_width(), Target->get_core_height(), NULL, NULL, NULL,
+			!RImplementation.o.dx10_msaa ? Target->main_depth() : Target->rt_MSAADepth->pZRT);
 	}
 
 	//******* Main render :: PART-0	-- first
@@ -164,7 +170,7 @@ void CRender::Render()
 	if (scope_3D_fake_enabled)
 	{
 		ID3D11Resource* zbuffer_res;
-		HW.pBaseZB->GetResource(&zbuffer_res);
+		Target->main_depth()->GetResource(&zbuffer_res);
 		HW.pContext->CopyResource(RImplementation.Target->rt_tempzb->pSurface, zbuffer_res);
 	}
 
@@ -310,7 +316,8 @@ void CRender::Render()
 		// Render Emissive on `rt_ssfx_bloom_emissive`
 		FLOAT ColorRGBA[4] = { 0,0,0,0 };
 		HW.pContext->ClearRenderTargetView(Target->rt_ssfx_bloom_emissive->pRT, ColorRGBA);
-		Target->u_setrt(Target->rt_ssfx_bloom_emissive, NULL, NULL, !RImplementation.o.dx10_msaa ? HW.pBaseZB : Target->rt_MSAADepth->pZRT);
+		Target->u_setrt(Target->rt_ssfx_bloom_emissive, NULL, NULL,
+			!RImplementation.o.dx10_msaa ? Target->main_depth() : Target->rt_MSAADepth->pZRT);
 		GMBase.r_dsgraph_render_emissive(true, true);
 	}
 

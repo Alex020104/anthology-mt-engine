@@ -1231,7 +1231,14 @@ static class ssfx_jitter : public R_constant_setup
 
 #if defined(USE_DX11)
 		const bool svp_frame = Device.m_SecondViewport.IsSVPFrame();
-		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !svp_frame)
+		if (g_main_temporal_upscaler_active && !svp_frame)
+		{
+			const float renderWidth = _max(1.f, g_main_taa_render_size.x);
+			const float renderHeight = _max(1.f, g_main_taa_render_size.y);
+			JitterX = g_main_taa_jitter_pixels.x / renderWidth;
+			JitterY = g_main_taa_jitter_pixels.y / renderHeight;
+		}
+		else if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !svp_frame)
 		{
 			static Fvector2 TAA_Offset[4] = 
 			{
@@ -1252,9 +1259,14 @@ static class ssfx_jitter : public R_constant_setup
 			JitterX = TAA_Offset[main_sequence % 4].x / Device.dwWidth;
 			JitterY = TAA_Offset[main_sequence % 4].y / Device.dwHeight;
 		}
+
+		if (!svp_frame && !g_main_temporal_upscaler_active)
+			g_main_taa_jitter_pixels.set(JitterX * Device.dwWidth * ps_ssfx_taa.y,
+				JitterY * Device.dwHeight * ps_ssfx_taa.y);
 #endif
 
-		RCache.set_c(C, JitterX * ps_ssfx_taa.y, JitterY * ps_ssfx_taa.y, ps_ssfx_taa.x, ps_ssfx_taa.w);
+		const float jitterScale = g_main_temporal_upscaler_active ? 1.f : ps_ssfx_taa.y;
+		RCache.set_c(C, JitterX * jitterScale, JitterY * jitterScale, ps_ssfx_taa.x, ps_ssfx_taa.w);
 
 	}
 }    ssfx_jitter;
