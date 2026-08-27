@@ -440,6 +440,7 @@ CRenderTarget::CRenderTarget()
 	b_gasmask_dudv = xr_new<CBlender_gasmask_dudv>();
 	b_nightvision = xr_new<CBlender_nightvision>();
 	b_fakescope = xr_new<CBlender_fakescope>(); //crookr
+	b_svp_quality = xr_new<CBlender_svp_quality>();
 	b_heatvision = xr_new<CBlender_heatvision>(); //--DSR-- HeatVision
 	b_lut = xr_new<CBlender_lut>();
 	b_smaa = xr_new<CBlender_smaa>();
@@ -581,9 +582,11 @@ CRenderTarget::CRenderTarget()
 
 		if (RImplementation.o.dx11_hdr10) {
 			rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A2R10G10B10, 1); //--#SM+#-- +SecondVP+ // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
+			rt_secondVP_capture.create(r2_RT_secondVP_capture, w, h, D3DFMT_A2R10G10B10, 1);
 			rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A2R10G10B10); // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
 		} else {
 			rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A8R8G8B8, 1); //--#SM+#-- +SecondVP+
+			rt_secondVP_capture.create(r2_RT_secondVP_capture, w, h, D3DFMT_A8R8G8B8, 1);
 			rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A8R8G8B8);
 		}
 		Device.m_SecondViewport.InvalidateSVPContent();
@@ -716,6 +719,7 @@ CRenderTarget::CRenderTarget()
 		{ s_gasmask_dudv.create_parallel(b_gasmask_dudv, "r2\\gasmask_dudv"); });
 	startup_shader_tasks.run([this]() { s_nightvision.create_parallel(b_nightvision, "r2\\nightvision"); });
 	startup_shader_tasks.run([this]() { s_fakescope.create_parallel(b_fakescope, "r2\\fakescope"); });
+	startup_shader_tasks.run([this]() { s_svp_quality.create_parallel(b_svp_quality, "r2\\svp_quality"); });
 	startup_shader_tasks.run([this]() { s_heatvision.create_parallel(b_heatvision, "r2\\heatvision"); });
 	startup_shader_tasks.run([this]() { s_lut.create_parallel(b_lut, "r2\\lut"); });
 	startup_shader_tasks.run([this]() { s_occq.create_parallel(b_occq, "r2\\occq"); });
@@ -1418,6 +1422,7 @@ CRenderTarget::~CRenderTarget()
 	xr_delete(b_gasmask_dudv);
 	xr_delete(b_nightvision);
 	xr_delete(b_fakescope); //crookr
+	xr_delete(b_svp_quality);
 	xr_delete(b_heatvision); //--DSR-- HeatVision
 	xr_delete(b_lut);
 	xr_delete(b_smaa);

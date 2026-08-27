@@ -4829,3 +4829,72 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   The pre-v132 source and v131 binaries are backed up at
   `E:/ANTHOLOGY_BACKUPS/20260827_061447_v132_pre_compact_4k_splash` with a
   SHA-256 manifest.
+
+## 2026-08-27 - v133 SSS 23.5 restore and full-rate PiP quality
+
+### Lighting / SSS diagnosis
+
+- The clean user-supplied `ScreenSpaceShaders Update 23.5 - ORIG ANTHOLOGY`
+  archive and the installed base SSS have the same `ssfx_sss.ps` SHA-256
+  (`8DDD424485416506112F32FDB0FC216305C79DD4BFDDF06EC2EEAD61CA572294`).
+- The higher-priority `Anthology Visual - SSS Temporal Stability` addon was the
+  effective shader. It reduced directional-shadow history from 95% to 80-82%,
+  multiplied world disocclusion rejection and rejected history from residual
+  world motion. That makes stochastic grass and small-geometry shadows visibly
+  brighter/noisier than the original 23.5 result shown in the reference image.
+- The modified near/far sun shaders were also compared with the clean archive.
+  Their difference is gated by `ssfx_issvp` and affects only the PiP/SVP pass,
+  not the ordinary main view. Grass shadows remain enabled in the active
+  profile.
+- The winning SSS addon now restores the original 23.5 temporal behavior:
+  95% history, original HUD-only velocity rejection and original depth
+  rejection. Its active shader SHA-256 is
+  `59D7FFC58C453990248439BB1B5D35D39278E1A1F8E7C4F5BB3D271D94B6A0C2`.
+
+### PiP quality behavior
+
+- Quality presets no longer increase `SecondVP` frame delay. The renderer uses
+  the native delay of two for every 25-100% setting: one PiP capture for every
+  presented main-view frame in the alternating render loop.
+- At 100%, the existing direct GPU copy remains unchanged. Below 100%, the
+  completed PiP frame is copied to a private source target and spatially
+  reduced to a virtual 25-99% resolution before it is exposed as
+  `$user$viewport2`. This deliberately reduces image resolution without
+  lowering update smoothness or changing the main view.
+- Existing PiP-only SSA/LOD and effect reductions remain active, so lower
+  settings reduce world detail and selected post effects as well as visibly
+  reducing lens resolution. The new shader is installed directly in module
+  1.1, not as a separate compatibility patch; repository and installed shader
+  hashes both equal
+  `F28BD0AB823B083A3BD592AADB18A2C1C1A2FCEDCC5D9E61186F540B3DAEED3C`.
+- The MCM range is now 25-100% and the English/Russian descriptions explicitly
+  state that update cadence is preserved. The Russian XML remains valid
+  Windows-1251 without a BOM.
+
+### DLSS / FSR start
+
+- Alpha7 contains opaque replacement EXEs plus NVIDIA Streamline/DLSS DLLs but
+  no matching source and no standalone FSR runtime. Those binaries were not
+  copied over the Anthology engine.
+- The repository history contains the auditable IX-Ray chain for render scale,
+  FSR, DLSS, depth upscale and FSR 3.1.2. The staged adaptation, renderer
+  invariants, PiP temporal isolation and acceptance matrix are recorded in
+  `DLSS_FSR_INTEGRATION_PLAN.md`. v133 intentionally installs no DLSS/FSR DLL;
+  the scalable main-render foundation starts on a separate v134 branch.
+
+### Build, deployment and recovery
+
+- Branch: `anthology-v133-sss-pip-fullrate`, based directly on v132. Both
+  `DX11|x64` and `DX11-AVX|x64` compile and link successfully; `git diff
+  --check` passes. The existing LuaJIT duplicate-object warning remains.
+- Build and installed hashes match:
+  - DX11 EXE `F27A060A6C6CCEC196576211FE3F4E71B5B0E4483023F5233DE580286ADC9A39`;
+  - DX11 PDB `2F2B04B33775C4F6FF0BD9D3CA967D9D761A9D0ABFD548A093C50D02D92450C7`;
+  - DX11-AVX EXE `42E2FFED9FE8CB9B06DF8116042DB945E97F8202E2428C87AF3763C5E3C7BF6B`;
+  - DX11-AVX PDB `8EEAE669CC03280ABE80138678BB9087DE6B9B836F4C6E0CA4EB0A69DC051318`.
+- Pre-v133 module 1.1, SSS addon, profile and binaries are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260827_165720_v133_pre_sss_pip_fullrate` with a
+  SHA-256 manifest. The shader cache was not read, deleted, moved or modified.
+- No new game is required. Live checks: reproduce the two reference SSS images
+  at the same time/weather; compare PiP 100/75/50/25 while panning; verify normal,
+  NVG and thermal scopes; rapidly enter/leave ADS and quickload.

@@ -200,7 +200,7 @@ extern ECORE_API int ps_scope_lense_ads_is_pip;
 
 IC int ScopeLenseQualityTier()
 {
-	const int quality = clampr(ps_scope_lense_quality_percent, 50, 100);
+	const int quality = clampr(ps_scope_lense_quality_percent, 25, 100);
 	if (quality >= 90)
 		return 0;
 	if (quality >= 75)

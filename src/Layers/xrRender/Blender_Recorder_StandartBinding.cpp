@@ -1165,6 +1165,17 @@ static class scope_svp_active : public R_constant_setup
 	}
 } scope_svp_active;
 
+static class scope_lense_quality_setup : public R_constant_setup
+{
+	virtual void setup(R_constant* C)
+	{
+		const float quality = clampr(ps_scope_lense_quality_percent, 25, 100) * 0.01f;
+		const float virtual_width = std::max(1.0f, std::floor(float(Device.dwWidth) * quality));
+		const float virtual_height = std::max(1.0f, std::floor(float(Device.dwHeight) * quality));
+		RCache.set_c(C, quality, virtual_width, virtual_height, 0.0f);
+	}
+} scope_lense_quality;
+
 static class ssfx_bloom_1 : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
@@ -1496,6 +1507,7 @@ void CBlender_Compile::SetMapping()
 	r_Constant("m_script_params", &binder_script_params); //--#SM+#--
 	r_Constant("m_blender_mode", &binder_blend_mode);	//--#SM+#--
 	r_Constant("scope_svp", &scope_svp_active);
+	r_Constant("scope_lense_quality", &scope_lense_quality);
 	
 	// Rain
 	r_Constant("rain_params", &binder_rain_params);

@@ -28,6 +28,16 @@ public:
 	virtual ~CBlender_fakescope();
 };
 
+class CBlender_svp_quality : public IBlender
+{
+public:
+	virtual LPCSTR getComment() { return "svp_quality"; }
+	virtual BOOL canBeDetailed() { return FALSE; }
+	virtual BOOL canBeLMAPped() { return FALSE; }
+
+	virtual void Compile(CBlender_Compile& C);
+};
+
 //--DSR-- HeatVision_start
 class CBlender_heatvision : public IBlender
 {

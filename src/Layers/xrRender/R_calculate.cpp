@@ -23,7 +23,7 @@ void CRender::Calculate()
 		// Apply the same SSA/LOD budget that a linearly scaled PiP viewport would
 		// have, without resizing the shared render-target chain or touching the
 		// presented main view. At 100% the native path remains unchanged.
-		const float quality = clampr(ps_scope_lense_quality_percent, 50, 100) * 0.01f;
+		const float quality = clampr(ps_scope_lense_quality_percent, 25, 100) * 0.01f;
 		g_fSCREEN *= quality * quality;
 	}
 	r_ssaDISCARD = _sqr(ps_r__ssaDISCARD) / g_fSCREEN;

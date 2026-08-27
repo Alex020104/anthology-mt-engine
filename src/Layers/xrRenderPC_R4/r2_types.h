@@ -54,6 +54,7 @@
 #define		r2_sunmask			"sunmask"
 
 #define		r2_RT_secondVP		"$user$viewport2"		// --#SM+#-- +SecondVP+ Рендер-таргет для второго вьюпорта
+#define		r2_RT_secondVP_capture	"$user$viewport2_capture" // Full-size source for spatial PiP quality scaling
 
 #define		r2_RT_blur_h_2	"$user$blur_h_2"
 #define		r2_RT_blur_2	"$user$blur_2"

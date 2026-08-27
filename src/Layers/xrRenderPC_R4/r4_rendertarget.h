@@ -68,6 +68,7 @@ public:
 	IBlender* b_gasmask_dudv;
 	IBlender* b_nightvision;
 	IBlender* b_fakescope; //crookr
+	IBlender* b_svp_quality;
 	IBlender* b_heatvision; //--DSR-- HeatVision
 	IBlender* b_lut;
 	IBlender* b_smaa;
@@ -125,6 +126,7 @@ public:
 	resptr_core<CRT, resptrcode_crt> rt_Generic_temp;
 
 	ref_rt rt_secondVP;	// 32bit		(r,g,b,a) --//#SM+#-- +SecondVP+
+	ref_rt rt_secondVP_capture;
 
 
 	ref_rt rt_fakescope;	// crookr fakescope
@@ -273,6 +275,7 @@ private:
 	ref_shader s_gasmask_dudv;
 	ref_shader s_nightvision;
 	ref_shader s_fakescope; //crookr
+	ref_shader s_svp_quality;
 	ref_shader s_heatvision; //--DSR-- HeatVision
 	ref_shader s_smaa;
 
@@ -428,6 +431,7 @@ public:
 	void phase_gasmask_dudv();
 	void phase_nightvision();
 	void phase_fakescope(); //crookr
+	void phase_svp_quality(ID3D11Texture2D* source);
 	void phase_heatvision(); //--DSR-- HeatVision
 	void phase_3DSSReticle(); // Redotix99: for 3D Shader Based Scopes
 	void phase_lut();

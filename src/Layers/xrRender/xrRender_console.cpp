@@ -1338,7 +1338,7 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "scope_lense_frame_delay_add", &ps_scope_lense_frame_delay_add_compat, 0, 4);
 	CMD4(CCC_Integer, "scope_lense_render_quality", &ps_scope_lense_render_quality, 0, 3);
 	CMD4(CCC_Integer, "scope_lense_quality_preset", &ps_scope_lense_quality_preset, 0, 3);
-	CMD4(CCC_Integer, "scope_lense_quality_percent", &ps_scope_lense_quality_percent, 50, 100);
+	CMD4(CCC_Integer, "scope_lense_quality_percent", &ps_scope_lense_quality_percent, 25, 100);
 	CMD4(CCC_Float, "scope_lense_aim_sensitivity", &ps_scope_lense_aim_sensitivity, 0.25f, 2.0f);
 	CMD4(CCC_Integer, "scope_lense_allow_nvg", &ps_scope_lense_allow_nvg, 0, 1);
 	CMD4(CCC_Integer, "scope_lense_allow_thermal", &ps_scope_lense_allow_thermal, 0, 1);

@@ -110,6 +110,16 @@ void CBlender_fakescope::Compile(CBlender_Compile& C) //crookr
 
 }
 
+void CBlender_svp_quality::Compile(CBlender_Compile& C)
+{
+	IBlender::Compile(C);
+
+	C.r_Pass("stub_screen_space", "svp_quality", FALSE, FALSE, FALSE);
+	C.r_dx10Texture("s_image", r2_RT_secondVP_capture);
+	C.r_dx10Sampler("smp_nofilter");
+	C.r_End();
+}
+
 //--DSR-- HeatVision_start
 void CBlender_heatvision::Compile(CBlender_Compile& C) 
 {

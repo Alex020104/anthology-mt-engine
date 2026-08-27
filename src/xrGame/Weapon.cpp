@@ -3629,11 +3629,11 @@ void CWeapon::UpdateSecondVP()
 
 	const bool svp_requested = svp_base_requested && m_zoom_params.m_bSecondVPPolicyAllowed;
 	const int scope_quality = ScopeLenseQualityTier();
-	u8 effective_frame_delay = std::max<u8>(m_zoom_params.m_u8SecondVPFrameDelay, 2);
-	if (scope_quality == 2)
-		effective_frame_delay = std::max<u8>(effective_frame_delay, 3);
-	else if (scope_quality >= 3)
-		effective_frame_delay = std::max<u8>(effective_frame_delay, 4);
+	// PiP quality controls spatial detail only. A lower preset must not turn
+	// into a visibly choppy scope by skipping additional viewport captures.
+	// A delay of two is the native SecondVP cadence: one scope pass for every
+	// presented main-view frame in the alternating renderer.
+	const u8 effective_frame_delay = 2;
 	Device.m_SecondViewport.SetSVPFrameDelay(effective_frame_delay);
 	if (svp_requested)
 	{

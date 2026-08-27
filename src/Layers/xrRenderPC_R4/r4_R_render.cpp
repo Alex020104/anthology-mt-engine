@@ -389,6 +389,32 @@ void CRender::render_Reticle()
 	RImplementation.o.distortion = FALSE;
 }
 
+void CRenderTarget::phase_svp_quality(ID3D11Texture2D* source)
+{
+	HW.pContext->CopyResource(rt_secondVP_capture->pTexture->surface_get(), source);
+
+	u32 offset = 0;
+	const u32 color = color_rgba(255, 255, 255, 255);
+	const float width = float(rt_secondVP->dwWidth);
+	const float height = float(rt_secondVP->dwHeight);
+
+	u_setrt(rt_secondVP, nullptr, nullptr, nullptr);
+	RImplementation.rmNormal();
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+
+	FVF::TL* vertices = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, offset);
+	vertices->set(0.0f, height, EPS_S, 1.0f, color, 0.0f, 1.0f); ++vertices;
+	vertices->set(0.0f, 0.0f, EPS_S, 1.0f, color, 0.0f, 0.0f); ++vertices;
+	vertices->set(width, height, EPS_S, 1.0f, color, 1.0f, 1.0f); ++vertices;
+	vertices->set(width, 0.0f, EPS_S, 1.0f, color, 1.0f, 0.0f);
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+
+	RCache.set_Element(s_svp_quality->E[0]);
+	RCache.set_Geometry(g_combine);
+	RCache.Render(D3DPT_TRIANGLELIST, offset, 0, 4, 0, 2);
+}
+
 void CRender::RenderToTarget(RRT target)
 {
 	ref_rt* RT = nullptr;
@@ -408,7 +434,10 @@ void CRender::RenderToTarget(RRT target)
 
 	ID3DTexture2D* pBuffer = nullptr;
 	HW.m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBuffer);
-	HW.pContext->CopyResource((*RT)->pSurface, pBuffer);
+	if (target == rtSVP && ps_scope_lense_quality_percent < 100)
+		Target->phase_svp_quality(pBuffer);
+	else
+		HW.pContext->CopyResource((*RT)->pSurface, pBuffer);
 	pBuffer->Release();
 
 	if (target == rtSVP && RImplementation.o.ssfx_water)

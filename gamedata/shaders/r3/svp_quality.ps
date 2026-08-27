@@ -1,0 +1,13 @@
+#include "common.h"
+
+Texture2D s_image;
+float4 scope_lense_quality; // x: scale, yz: virtual PiP resolution
+
+float4 main(p_screen I) : SV_Target
+{
+	float2 virtual_size = max(scope_lense_quality.yz, float2(1.0f, 1.0f));
+	float2 source_tc = saturate(I.tc0);
+	float2 cell = min(floor(source_tc * virtual_size), virtual_size - 1.0f);
+	float2 snapped_tc = (cell + 0.5f) / virtual_size;
+	return s_image.Sample(smp_nofilter, snapped_tc);
+}
