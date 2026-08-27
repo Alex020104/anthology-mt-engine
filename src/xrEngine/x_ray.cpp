@@ -786,20 +786,19 @@ static bool PrepareStartupSplash(HWND picture, u32 screenW, u32 screenH, int& sp
 		return false;
 	}
 
-	// Keep a comfortable border around the splash on every monitor while using
-	// the complete 4K source. Never upscale: high-resolution screens display the
-	// authored pixels, lower-resolution screens get one HALFTONE downsample.
-	const float maxWidth = static_cast<float>(screenW) * 0.84f;
-	const float maxHeight = static_cast<float>(screenH) * 0.84f;
-	float scale = maxWidth / static_cast<float>(imageInfo.bmWidth);
-	const float heightScale = maxHeight / static_cast<float>(imageInfo.bmHeight);
-	if (heightScale < scale)
-		scale = heightScale;
-	if (scale > 1.f)
-		scale = 1.f;
-
-	splashW = static_cast<int>(static_cast<float>(imageInfo.bmWidth) * scale + 0.5f);
-	splashH = static_cast<int>(static_cast<float>(imageInfo.bmHeight) * scale + 0.5f);
+	// Match the compact legacy startup footprint while retaining the complete
+	// lossless 4K source for a clean HALFTONE downsample. Only exceptionally
+	// small displays reduce it further so the window always remains visible.
+	splashW = 500;
+	splashH = 281;
+	const float widthFit = static_cast<float>(screenW) * 0.9f / static_cast<float>(splashW);
+	const float heightFit = static_cast<float>(screenH) * 0.9f / static_cast<float>(splashH);
+	float fit = widthFit < heightFit ? widthFit : heightFit;
+	if (fit < 1.f)
+	{
+		splashW = static_cast<int>(static_cast<float>(splashW) * fit + 0.5f);
+		splashH = static_cast<int>(static_cast<float>(splashH) * fit + 0.5f);
+	}
 	if (splashW <= 0 || splashH <= 0)
 		return false;
 

@@ -4808,3 +4808,24 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   The pre-v131 source and installed binaries are backed up at
   `E:/ANTHOLOGY_BACKUPS/20260827_055435_v131_pre_4k_startup_splash` with a
   SHA-256 manifest. The shader cache was not touched.
+
+## 2026-08-27 - v132 compact 4K startup splash
+
+- Restored the startup window to the legacy 500x281 footprint after the v131
+  84%-of-monitor presentation proved too large in live use.
+- The supplied 3840x2160, 24-bit RGB source and owner-drawn `HALFTONE` path are
+  retained, so the smaller window is a high-quality downsample rather than the
+  former 500x281 source bitmap. Aspect, title and all three panels remain fully
+  visible.
+- Only exceptionally small displays clamp the window below 500x281. Loading,
+  renderer, PiP, SSS, gameplay, user settings and shader cache are unchanged.
+- Both `DX11|x64` and `DX11-AVX|x64` build and install successfully; candidate
+  and installed hashes match:
+  - DX11 EXE `3997DE3E09B2E53CCBC395643D9595FB76AE12443A75647BF63984E6F36AF00E`;
+  - DX11 PDB `E87AA4168F0F8E13C1ABBA900B935CD7A98EF3305505DE131F6AB73396DEFF40`;
+  - DX11-AVX EXE `45907D61D5330223EB6B5DD38C3A687786C705CD5A8419236F50E7240366C178`;
+  - DX11-AVX PDB `4B9F973B43C5EBB33DC64485F3C7C9093050873EB9F93BF07587582521ED81CF`.
+- Branch: `anthology-v132-compact-4k-startup-splash`, based directly on v131.
+  The pre-v132 source and v131 binaries are backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260827_061447_v132_pre_compact_4k_splash` with a
+  SHA-256 manifest.
