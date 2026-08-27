@@ -222,6 +222,11 @@ IC int ScopeLenseQualityTier()
 	return 3;
 }
 
+IC float ScopeLenseRenderScale()
+{
+	return clampr(ps_scope_lense_quality_percent, 25, 100) * 0.01f;
+}
+
 extern ECORE_API int ps_r2_heatvision;			//--DSR-- HeatVision
 extern ECORE_API float heat_vision_mode;		//--DSR-- HeatVision palette (colour/greyscale)
 extern ECORE_API int heat_vision_cooldown;		//--DSR-- HeatVision

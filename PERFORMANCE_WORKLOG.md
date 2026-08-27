@@ -5022,3 +5022,33 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Pre-fix repository and addon files are backed up at
   `E:/ANTHOLOGY_BACKUPS/20260828_v1352_pre_localization_encoding_fix`. The game
   and shader cache were not launched, read or modified.
+
+## 2026-08-28 - v136 DX11 upscaler activation and real PiP resolution
+
+- Diagnosed the in-game upscaler reset from the fresh runtime log. FSR 3.1.2
+  returned `FFX_ERROR_BACKEND_API_ERROR` during context creation, after which
+  the safety fallback correctly wrote `r4_upscaler off`.
+- Reproduced the same failure in an isolated DX11 probe using the installed
+  FSR DLLs when the device was forced to feature level 11.0. The same probe
+  succeeds on the owner's RTX 5070 when feature level 11.1 is requested.
+- Removed the engine's artificial 11.0-only device request. Modern hardware is
+  now offered 11.1 first; an `E_INVALIDARG` retry with 11.0 preserves the older
+  Windows/platform-update compatibility path. This also makes the existing
+  DLSS 11.1 capability check reachable instead of guaranteeing a reset.
+- `scope_lense_quality_percent` now changes the actual second-view viewport,
+  not only SSA/LOD thresholds and a final pixelation pass. A 50% linear setting
+  renders approximately 25% of the PiP pixels; 75% renders approximately 56%.
+  The reduced frame is resolved over the full lens with nearest sampling, so
+  lower quality deliberately reduces image detail while preserving the native
+  PiP update cadence.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. The new
+  EXEs/PDBs and the module 1.1 PiP shader are installed for testing. Hashes:
+  - DX11 EXE `AB84D6341EC2D2EC90FD4832F94EF347C72202A4696144C3C3A03B0732E08608`;
+  - DX11 PDB `97655B512C6F5F267940C64EF503CB81AFE2C6FCB98C6516F5C43CB9EC9666EA`;
+  - DX11-AVX EXE `BD15ADA732A1760859826212D7DE4F3F6246D182692E10F34EEC265C006222E6`;
+  - DX11-AVX PDB `A7226732E68E53F46C61541D15AEEC360F8FD0C91D07F3F313F185FD2E1C972D`;
+  - installed PiP shader `9D99E884653C203152F9749D5EB9634E54C70D9BA67B18DCD24C979E094F59EF`.
+- Pre-v136 binaries, module shader and user settings are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v136_pre_dx11_upscaler_pip_resolution`.
+  The game was not launched and the shader cache was not read, deleted, moved
+  or rewritten.

@@ -4,9 +4,13 @@ float4 scope_lense_quality; // x: scale, yz: virtual PiP resolution
 
 float4 main(p_screen I) : SV_Target
 {
+	float quality = max(scope_lense_quality.x, 0.25f);
 	float2 virtual_size = max(scope_lense_quality.yz, float2(1.0f, 1.0f));
 	float2 source_tc = saturate(I.tc0);
 	float2 cell = min(floor(source_tc * virtual_size), virtual_size - 1.0f);
-	float2 snapped_tc = (cell + 0.5f) / virtual_size;
+	// Reduced PiP frames occupy the upper-left quality-sized rectangle of the
+	// full backbuffer. Expand that real low-resolution image over the lens while
+	// keeping the native two-frame alternating cadence unchanged.
+	float2 snapped_tc = ((cell + 0.5f) * quality) / virtual_size;
 	return s_image.Sample(smp_nofilter, snapped_tc);
 }

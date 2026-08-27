@@ -407,6 +407,10 @@ void CRenderTarget::phase_svp_quality(ID3D11Texture2D* source)
 
 	u_setrt(rt_secondVP, nullptr, nullptr, nullptr);
 	RImplementation.rmNormal();
+	// The scene is rendered into the upper-left scaled viewport. The resolve
+	// itself must cover the complete persistent lens texture.
+	D3D_VIEWPORT resolve_viewport = {0.0f, 0.0f, width, height, 0.0f, 1.0f};
+	HW.pContext->RSSetViewports(1, &resolve_viewport);
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
 
