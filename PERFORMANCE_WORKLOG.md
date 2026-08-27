@@ -5003,3 +5003,22 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The failing log and previous shader are backed up at
   `E:/ANTHOLOGY_BACKUPS/20260828_v1351_pre_svp_shader_fix`. The shader cache was
   not read, removed or rewritten by the fix.
+
+## 2026-08-28 - v135.2 Modded Exes localization encoding hotfix
+
+- Fixed corrupted Cyrillic in the new DLSS/FSR page. The v135 standalone
+  localization files were incorrectly packaged as UTF-8, while this Modded
+  Exes localization loader expects Windows-1251.
+- Converted both Russian and English `ui_mm_anthology_upscaler.xml` tables to
+  Windows-1251 without a BOM and changed their XML declarations accordingly.
+  No existing Modded Exes localization table was rewritten.
+- The repository and installed v135 addon are byte-identical. Both XML files
+  parse using their declared encoding; the Russian table decodes correctly.
+  Current hashes:
+  - Russian strings
+    `690BD46A16D600D2D8F81450A8AF88ACD5EACB3993AB2F4F59ED786F445A977D`;
+  - English strings
+    `B9BEB242E74805C99D3DAF6D50CC1F9447E4EA19D6431B877FBB195B9D594C44`.
+- Pre-fix repository and addon files are backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1352_pre_localization_encoding_fix`. The game
+  and shader cache were not launched, read or modified.

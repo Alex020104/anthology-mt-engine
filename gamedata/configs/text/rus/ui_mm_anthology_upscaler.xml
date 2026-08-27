@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="windows-1251"?>
 
 <string_table>
 	<string id="ui_mm_upscaler_modded_exes">
@@ -6,13 +6,13 @@
 	</string>
 
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler">
-		<text>РўРµС…РЅРѕР»РѕРіРёСЏ РјР°СЃС€С‚Р°Р±РёСЂРѕРІР°РЅРёСЏ</text>
+		<text>Технология масштабирования</text>
 	</string>
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_desc">
-		<text>Р’С‹РєР»СЋС‡РµРЅРѕ СЃРѕС…СЂР°РЅСЏРµС‚ РЅР°С‚РёРІРЅС‹Р№ СЂРµРЅРґРµСЂ. DLSS СЂР°Р±РѕС‚Р°РµС‚ РЅР° NVIDIA RTX, FSR 3.1.2 вЂ” РЅР° СЃРѕРІРјРµСЃС‚РёРјС‹С… РІРёРґРµРѕРєР°СЂС‚Р°С…. Р”Р»СЏ DLSS/FSR РЅРµРѕР±С…РѕРґРёРјРѕ РѕС‚РєР»СЋС‡РёС‚СЊ MSAA. РР·РјРµРЅРµРЅРёРµ РїСЂРёРјРµРЅСЏРµС‚СЃСЏ С‡РµСЂРµР· РїРµСЂРµР·Р°РїСѓСЃРє СЂРµРЅРґРµСЂР°.</text>
+		<text>Выключено сохраняет нативный рендер. DLSS работает на NVIDIA RTX, FSR 3.1.2 — на совместимых видеокартах. Для DLSS/FSR необходимо отключить MSAA. Изменение применяется через перезапуск рендера.</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_off">
-		<text>Р’С‹РєР»СЋС‡РµРЅРѕ</text>
+		<text>Выключено</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_fsr3">
 		<text>AMD FSR 3.1.2</text>
@@ -22,41 +22,41 @@
 	</string>
 
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_quality">
-		<text>РљР°С‡РµСЃС‚РІРѕ РјР°СЃС€С‚Р°Р±РёСЂРѕРІР°РЅРёСЏ</text>
+		<text>Качество масштабирования</text>
 	</string>
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_quality_desc">
-		<text>РћРїСЂРµРґРµР»СЏРµС‚ РІРЅСѓС‚СЂРµРЅРЅРµРµ СЂР°Р·СЂРµС€РµРЅРёРµ РјРёСЂР°. РљР°С‡РµСЃС‚РІРѕ РґР°С‘С‚ Р»СѓС‡С€СѓСЋ РєР°СЂС‚РёРЅРєСѓ, РџСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚СЊ вЂ” Р±РѕР»СЊС€Рµ FPS. РќР°С‚РёРІРЅРѕРµ РЅРµ СЃРЅРёР¶Р°РµС‚ СЂР°Р·СЂРµС€РµРЅРёРµ Рё РёСЃРїРѕР»СЊР·СѓРµС‚ temporal AA; РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ СЂРµР¶РёРј РёСЃРїРѕР»СЊР·СѓРµС‚ РїРѕР»Р·СѓРЅРѕРє РјР°СЃС€С‚Р°Р±Р°.</text>
+		<text>Определяет внутреннее разрешение мира. Качество даёт лучшую картинку, Производительность — больше FPS. Нативное не снижает разрешение и использует temporal AA; пользовательский режим использует ползунок масштаба.</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_quality_native">
-		<text>РќР°С‚РёРІРЅРѕРµ / DLAA</text>
+		<text>Нативное / DLAA</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_quality_quality">
-		<text>РљР°С‡РµСЃС‚РІРѕ</text>
+		<text>Качество</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_quality_balanced">
-		<text>Р‘Р°Р»Р°РЅСЃ</text>
+		<text>Баланс</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_quality_performance">
-		<text>РџСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚СЊ</text>
+		<text>Производительность</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_quality_ultra_performance">
-		<text>РЈР»СЊС‚СЂР°РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЊРЅРѕСЃС‚СЊ</text>
+		<text>Ультрапроизводительность</text>
 	</string>
 	<string id="ui_mm_lst_upscaler_quality_custom">
-		<text>РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРѕРµ</text>
+		<text>Пользовательское</text>
 	</string>
 
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_custom_scale">
-		<text>РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ РјР°СЃС€С‚Р°Р± СЂРµРЅРґРµСЂР°</text>
+		<text>Пользовательский масштаб рендера</text>
 	</string>
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_custom_scale_desc">
-		<text>Р”РѕР»СЏ СЂР°Р·СЂРµС€РµРЅРёСЏ СЌРєСЂР°РЅР°, РІ РєРѕС‚РѕСЂРѕР№ СЂРµРЅРґРµСЂРёС‚СЃСЏ РјРёСЂ РїСЂРё РІС‹Р±СЂР°РЅРЅРѕРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРѕРј РєР°С‡РµСЃС‚РІРµ. РњРµРЅСЊС€Рµ Р·РЅР°С‡РµРЅРёРµ вЂ” РІС‹С€Рµ FPS Рё РЅРёР¶Рµ РґРµС‚Р°Р»РёР·Р°С†РёСЏ. РР·РјРµРЅРµРЅРёРµ РїСЂРёРјРµРЅСЏРµС‚СЃСЏ С‡РµСЂРµР· РїРµСЂРµР·Р°РїСѓСЃРє СЂРµРЅРґРµСЂР°.</text>
+		<text>Доля разрешения экрана, в которой рендерится мир при выбранном пользовательском качестве. Меньше значение — выше FPS и ниже детализация. Изменение применяется через перезапуск рендера.</text>
 	</string>
 
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_sharpness">
-		<text>Р РµР·РєРѕСЃС‚СЊ РјР°СЃС€С‚Р°Р±РёСЂРѕРІР°РЅРёСЏ</text>
+		<text>Резкость масштабирования</text>
 	</string>
 	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_sharpness_desc">
-		<text>Р РµРіСѓР»РёСЂСѓРµС‚ СЂРµР·РєРѕСЃС‚СЊ FSR. Р”Р»СЏ DLSS Р·РЅР°С‡РµРЅРёРµ СЃРѕС…СЂР°РЅСЏРµС‚СЃСЏ РґР»СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё, РЅРѕ С‚РµРєСѓС‰РёР№ DLSS РёСЃРїРѕР»СЊР·СѓРµС‚ СЃРѕР±СЃС‚РІРµРЅРЅСѓСЋ temporal-СЂРµРєРѕРЅСЃС‚СЂСѓРєС†РёСЋ Р±РµР· РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕРіРѕ sharpening-РїСЂРѕС…РѕРґР°.</text>
+		<text>Регулирует резкость FSR. Для DLSS значение сохраняется для совместимости, но текущий DLSS использует собственную temporal-реконструкцию без дополнительного sharpening-прохода.</text>
 	</string>
 </string_table>
