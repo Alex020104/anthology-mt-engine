@@ -5052,3 +5052,22 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   `E:/ANTHOLOGY_BACKUPS/20260828_v136_pre_dx11_upscaler_pip_resolution`.
   The game was not launched and the shader cache was not read, deleted, moved
   or rewritten.
+
+## 2026-08-28 - v136.1 DX11.1 shader-profile hotfix
+
+- The first v136 owner launch exposed a legacy strict feature-level check in
+  the R4 shader compiler. A real 11.1 device did not match `== 11.0`, leaving
+  the original `ps_2_0` target unchanged. Consequently the otherwise valid
+  SSS `ssfx_water_ssr.ps` failed on `FOG` and `SV_Position` semantics.
+- Shader model selection now treats feature level 11.0 and newer uniformly for
+  vertex, pixel, geometry and compute shaders, selecting the expected 5.0
+  profiles. No SSS or shader source was changed for this compatibility fix.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. The
+  installed outputs match the build artifacts:
+  - DX11 EXE `D2F77965011C96CC8C85AE7A7D0EFA90CD3C4BEE100517B7EBD7BA27A216818A`;
+  - DX11 PDB `60B633C6C70F7D9B3AA78F816CD231C4260BA5D5AFF851CFB8E781C467E8B07D`;
+  - DX11-AVX EXE `D1F81D669BD6C300E2C6EEE3A6C07BEAF956858C80363D0F7D67DDB8D8F692E7`;
+  - DX11-AVX PDB `BE02EB591FA2D7367DEABE694AB27F566E916345C1BC2FF555B1D8CD1A445E8C`.
+- The v136 binaries are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1361_pre_shader_profile_hotfix`. The game was
+  not launched and the shader cache was not read, deleted, moved or rewritten.
