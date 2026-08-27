@@ -150,6 +150,7 @@ CWeapon::CWeapon()
 	m_zoom_params.m_fZoomRotationFactor = 0.f;
 	m_zoom_params.m_pVision = NULL;
 	m_zoom_params.m_pNight_vision = NULL;
+	m_zoom_params.m_bSecondVPEnabled = false;
 	m_zoom_params.m_fSecondVPFovFactor = 0.0f;
 	m_zoom_params.m_fSecondVPBaseFov = 0.0f;
 	m_zoom_params.m_fSecondVPCurrentFov = g_fov;
@@ -3425,6 +3426,11 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		const float alias_value = READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lens_fov_base", fallback);
 		return READ_IF_EXISTS(pSettings, r_float, lens_section, "scope_lense_fov_base", alias_value);
 	};
+	auto read_lens_enabled = [](LPCSTR lens_section, bool fallback) -> bool
+	{
+		const bool alias_value = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lens_enabled", fallback);
+		return READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_enabled", alias_value);
+	};
 	auto read_thermal_mode = [](LPCSTR lens_section, int fallback) -> int
 	{
 		int alias_value = READ_IF_EXISTS(pSettings, r_s32, lens_section, "scope_lens_thermal_mode", fallback);
@@ -3433,6 +3439,7 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		return alias_value;
 	};
 
+	m_zoom_params.m_bSecondVPEnabled = read_lens_enabled(base_section, true);
 	m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(base_section, 0.0f);
 	m_zoom_params.m_fSecondVPBaseFov = read_lens_base_fov(base_section, m_zoom_params.m_fSecondVPFovFactor);
 	m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, base_section, "scope_lense_zoom_only", false);
@@ -3440,8 +3447,9 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 	m_zoom_params.m_iSecondVPThermalMode = read_thermal_mode(base_section, 0);
 	m_zoom_params.m_u8SecondVPFrameDelay = READ_IF_EXISTS(pSettings, r_u8, base_section, "scope_lense_frame_delay", 2);
 
-	auto apply_lens_section = [this, read_lens_fov, read_lens_base_fov, read_thermal_mode](LPCSTR lens_section)
+	auto apply_lens_section = [this, read_lens_fov, read_lens_base_fov, read_lens_enabled, read_thermal_mode](LPCSTR lens_section)
 	{
+		m_zoom_params.m_bSecondVPEnabled = read_lens_enabled(lens_section, m_zoom_params.m_bSecondVPEnabled);
 		m_zoom_params.m_fSecondVPFovFactor = read_lens_fov(lens_section, m_zoom_params.m_fSecondVPFovFactor);
 		m_zoom_params.m_fSecondVPBaseFov = read_lens_base_fov(lens_section, m_zoom_params.m_fSecondVPBaseFov);
 		m_zoom_params.m_bSecondVPLensZoomOnly = READ_IF_EXISTS(pSettings, r_bool, lens_section, "scope_lense_zoom_only", m_zoom_params.m_bSecondVPLensZoomOnly);
@@ -3458,11 +3466,70 @@ void CWeapon::LoadSecondVPParams(LPCSTR section)
 		}
 	};
 
+	// Permanent R.A.K scope variants are concrete weapon sections and do not
+	// populate m_scopes. Resolve their authored optic token so a collimator can
+	// explicitly opt out of PiP instead of inheriting the base weapon's lens.
+	// Requiring 1icon_layer keeps ordinary integrated-scope base sections out of
+	// this path. The longest suffix distinguishes *_magd_off from *_magd.
+	auto resolve_permanent_scope_policy = [this](LPCSTR weapon_section) -> shared_str
+	{
+		if (m_eScopeStatus != ALife::eAddonPermanent ||
+			!pSettings->line_exist(weapon_section, "1icon_layer"))
+			return {};
+
+		shared_str resolved_section;
+		size_t longest_token = 0;
+		if (pSettings->line_exist(weapon_section, "scopes"))
+		{
+			LPCSTR scopes = pSettings->r_string(weapon_section, "scopes");
+			const size_t weapon_length = xr_strlen(weapon_section);
+			for (int i = 0, count = _GetItemCount(scopes); i < count; ++i)
+			{
+				string128 token;
+				_GetItem(scopes, i, token);
+				const size_t token_length = xr_strlen(token);
+				if (!token_length || token_length <= longest_token || weapon_length <= token_length + 1)
+					continue;
+
+				const size_t token_offset = weapon_length - token_length;
+				if (weapon_section[token_offset - 1] != '_' || xr_strcmp(weapon_section + token_offset, token) != 0)
+					continue;
+				if (!pSettings->section_exist(token))
+					continue;
+
+				resolved_section = token;
+				longest_token = token_length;
+			}
+		}
+
+		if (resolved_section.size())
+			return resolved_section;
+
+		LPCSTR icon_layer = pSettings->r_string(weapon_section, "1icon_layer");
+		return pSettings->section_exist(icon_layer) ? shared_str(icon_layer) : shared_str();
+	};
+
 	if (IsScopeAttached() && m_scopes.size())
 	{
 		scope_section = GetScopeName();
 		if (scope_section.size())
 			apply_lens_section(scope_section.c_str());
+	}
+	else if (m_eScopeStatus == ALife::eAddonPermanent)
+	{
+		scope_section = resolve_permanent_scope_policy(base_section);
+		if (scope_section.size())
+			m_zoom_params.m_bSecondVPEnabled = read_lens_enabled(scope_section.c_str(), m_zoom_params.m_bSecondVPEnabled);
+	}
+
+	if (!m_zoom_params.m_bSecondVPEnabled)
+	{
+		m_zoom_params.m_fSecondVPFovFactor = 0.0f;
+		m_zoom_params.m_fSecondVPBaseFov = 0.0f;
+		m_zoom_params.m_fSecondVPCurrentFov = g_fov;
+		m_zoom_params.m_bSecondVPLensZoomOnly = false;
+		m_zoom_params.m_bSecondVPThermal = false;
+		m_zoom_params.m_iSecondVPThermalMode = 0;
 	}
 
 	if (IsSecondVPDynamicLensZoom())

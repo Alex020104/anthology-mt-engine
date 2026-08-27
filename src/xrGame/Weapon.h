@@ -96,7 +96,7 @@ public:
 	IC float GetSecondVPZoomFactor() const { return m_zoom_params.m_fSecondVPFovFactor; }
 	IC float GetSecondVPReticleZoomFactor() const { return m_zoom_params.m_fSecondVPRenderZoomFactor; }
 	IC float GetSecondVPBaseFov() const { return m_zoom_params.m_fSecondVPBaseFov; }
-	IC float IsSecondVPZoomPresent() const { return GetSecondVPZoomFactor() > 0.005f; }
+	IC bool IsSecondVPZoomPresent() const { return m_zoom_params.m_bSecondVPEnabled && GetSecondVPZoomFactor() > 0.005f; }
 	IC bool IsSecondVPLensZoomOnly() const { return m_zoom_params.m_bSecondVPLensZoomOnly && IsSecondVPZoomPresent(); }
 	IC bool IsSecondVPDynamicLensZoom() const { return IsSecondVPLensZoomOnly() && !!m_zoom_params.m_bUseDynamicZoom; }
 
@@ -394,6 +394,7 @@ protected:
 		float m_fBaseZoomFactor;
 		float m_fScopeZoomFactor;
 		float m_fZoomRotationFactor;
+		bool m_bSecondVPEnabled;
 		float m_fSecondVPFovFactor;
 		float m_fSecondVPBaseFov;
 		float m_fSecondVPCurrentFov;

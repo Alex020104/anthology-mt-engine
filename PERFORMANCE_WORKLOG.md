@@ -4653,3 +4653,68 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   allow-thermal on/off; palette switch; authored thermal optic without a head
   device; ordinary and thermal Gauss optics; rapid ADS/scope/weapon switching;
   SR-25 primary PiP versus alternate collimator sensitivity.
+
+## 2026-08-27 - v129 explicit PiP optic classification
+
+### Root cause and engine contract
+
+- Permanent R.A.K scope variants such as `wpn_sr25_aimpoint` are concrete
+  weapon sections with `scope_status = 1`. They inherit the PiP FOV and
+  `scope_lense_zoom_only` fields authored on the base `wpn_sr25`, but they do
+  not populate `m_scopes`. The v128 `m_zoomtype == 0` guard therefore still
+  treated a primary non-PiP collimator as an active SecondVP and multiplied its
+  mouse input by the inherited lens FOV ratio.
+- A config-derived `scope_lense_enabled` policy was added, with
+  `scope_lens_enabled` accepted as an alias. The backward-compatible default
+  is enabled. `IsSecondVPZoomPresent()` now requires both this policy and a
+  valid lens FOV, so an excluded collimator disables the viewport, the PiP ADS
+  bridge state and the PiP sensitivity multiplier together.
+- For attachable scopes the policy follows the existing `GetScopeName()`
+  path. For permanent variants the engine resolves the actual optic from the
+  weapon's authored scope list, using the longest exact section suffix and
+  `1icon_layer` as a fallback. The longest match distinguishes
+  `e0t2_magd_off` from `e0t2_magd` and `uh1_magd_off` from `uh1_magd`.
+  Only the policy is read from the generic optic section; per-weapon FOV,
+  dynamic zoom and thermal tuning remain authoritative.
+- A disabled policy clears only SecondVP-specific runtime state. Ordinary
+  camera FOV, normal mouse sensitivity, weapon zoom values and alternate aim
+  behavior are unchanged.
+
+### Module 1.1 classification
+
+- The active module 1.1 now contains
+  `gamedata/configs/mod_system_pip_scope_policy.ltx`. It explicitly classifies
+  47 PiP/magnified/thermal optics as enabled and 39 collimators or folded
+  magnifiers as disabled. Five bare rail descendants
+  (`wpn_aug_a3`, `wpn_g36_camo`, `wpn_g36k`, `wpn_g36_nimble` and
+  `wpn_mg36`) are also disabled until a classified PiP optic variant is
+  selected.
+- The same fix therefore covers the affected SR-25, G28, FN2000 Nimble, AUG A3
+  and G36-family variants instead of hard-coding one weapon. Existing PiP
+  optics, combo-scope primary modes, thermal optics and Gauss policy remain
+  enabled. A static resolver audit reports zero unresolved or unclassified
+  variants across all 62 SR-25, 62 G28 and 62 FN2000 Nimble permanent scope
+  variants, including both folded-magnifier states. The policy file SHA-256 is
+  `EA53950DED604A10E7640A284697844EC375A3141E41D0D0FD39695D8BEFCD22`.
+- The pre-existing scope parameter file was restored byte-for-byte after the
+  classification was isolated; its SHA-256 remains
+  `F2ADC82BC58D0785EE50D5005E5E2F7FBC79CB9A8695708DD1B2CDE0B6184D96`.
+  No localization, shader or script encoding was changed.
+
+### Build, deployment and recovery
+
+- Branch: `anthology-v129-pip-scope-classification`, based directly on the
+  accepted v128 commit `c4a23e800d`. Both `DX11|x64` and
+  `DX11-AVX|x64` compile and link successfully; `git diff --check` passes.
+- Build and installed hashes match:
+  - DX11 EXE `6A404D7D3B18DF29780C9AA98607DF0F0E2E8A0E1C127016EE699A7C2A6E7EB5`;
+  - DX11 PDB `DE269D8BF52951188057DA80540BAC59AFC64AA8AC1B631060EADC3514DD0F2D`;
+  - DX11-AVX EXE `94D602E81DD52A38971215A3AB8CACACE3C6B54CB060A2881E39ED99F10CFF02`;
+  - DX11-AVX PDB `891264BD0F7D7916E5D5E70770A660107A860A44F6D524A5A577F2C63993AA9C`.
+- Pre-v129 binaries, module 1.1 and HARD profile are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260827_030511_v129_pre_pip_scope_classification`.
+  The shader cache was not read, deleted, moved or modified.
+- No new game is required. Live matrix: SR-25 integrated PiP versus
+  Aimpoint/Docter/E0T2/RMR; enabled versus folded E0T2/UH-1 magnifiers;
+  magnified and thermal PiP optics; analogous G28/FN2000/AUG/G36 variants;
+  rapid scope/weapon switching and quickload.
