@@ -4988,3 +4988,18 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Pre-v135 addon, profile state and user settings are recoverable at
   `E:/ANTHOLOGY_BACKUPS/20260828_v135_pre_upscaler_menu`. The game and shader
   cache were not launched or modified during packaging.
+
+## 2026-08-28 - v135.1 PiP shader compilation hotfix
+
+- The first owner launch stopped while compiling `svp_quality.ps`, not the new
+  DLSS/FSR present shader. `xray_chenc.log` reported
+  `(3,11-17): error X3003: redefinition of 's_image'`.
+- The active SSS `common.h` already owns the shared `s_image` texture. Removed
+  only the redundant local `Texture2D s_image` declaration from the existing
+  module 1.1 PiP shader; sampling, virtual-resolution quantization and PiP
+  cadence are unchanged.
+- Repository and installed module 1.1 shader hashes match at
+  `15DF57933BD8F0E814557C10EE48292401E240027F43D200B96741A12C4BDD8E`.
+- The failing log and previous shader are backed up at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1351_pre_svp_shader_fix`. The shader cache was
+  not read, removed or rewritten by the fix.
