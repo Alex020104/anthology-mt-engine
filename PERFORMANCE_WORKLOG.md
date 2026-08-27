@@ -4961,3 +4961,30 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - present shader `EC7526A5928786D4C41905B04D4BBC3680BB4AB54397D98887B37C8A12830433`.
 - Pre-v134 binaries, profile, PiP module and SSS addon are recoverable at
   `E:/ANTHOLOGY_BACKUPS/20260827_v134_pre_dlss_fsr`.
+
+## 2026-08-28 - v135 in-game DLSS / FSR controls
+
+- Added an `DLSS / FSR` section to `Settings -> Modded Exes -> Visual ->
+  Graphics`. It exposes the engine-backed technology, quality preset, custom
+  render scale and sharpness controls without a console workflow.
+- Technology, quality and custom scale use the existing options-menu
+  `vid_restart` path when Apply is pressed. FSR sharpness is applied live.
+  Unsupported commands are filtered out, so the page remains safe if its
+  resource addon is accidentally paired with an older engine.
+- Added standalone UTF-8 Russian and English string tables instead of
+  rewriting the legacy Windows-1251 Modded Exes localization. The menu also
+  documents the RTX requirement for DLSS and the requirement to disable MSAA.
+- Packaged as `D:/ANTHOLOGY_DEV/addons/Anthology Upscaler Runtime v135` and
+  enabled in both HARD and Standard MO2 profiles. v134 is explicitly disabled
+  in both profiles; the shader and v134 engine binaries are unchanged.
+- Lua 5.1 syntax validation and XML parsing pass. Repository and packaged file
+  hashes match:
+  - graphics options script
+    `54B17C256A39ECF20BD79711B412DD6F0FF11C52E9A261B6AA79C16A007EF3FD`;
+  - Russian strings
+    `E92ACFAFEAE0299D445E321DEFC10BB8B523F138FCE02F5E7488F18E32A73B7D`;
+  - English strings
+    `07A8C8433B03AE01C3A4C77243F0317718BEA313ADD6B38A788A4D13C2EB2698`.
+- Pre-v135 addon, profile state and user settings are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v135_pre_upscaler_menu`. The game and shader
+  cache were not launched or modified during packaging.

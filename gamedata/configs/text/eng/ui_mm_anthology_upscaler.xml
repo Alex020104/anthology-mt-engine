@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<string_table>
+	<string id="ui_mm_upscaler_modded_exes">
+		<text>DLSS / FSR</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler">
+		<text>Upscaling technology</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_desc">
+		<text>Off preserves native rendering. DLSS requires NVIDIA RTX; FSR 3.1.2 supports compatible GPUs. MSAA must be disabled for DLSS/FSR. Changes apply through a renderer restart.</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_off">
+		<text>Off</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_fsr3">
+		<text>AMD FSR 3.1.2</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_dlss">
+		<text>NVIDIA DLSS</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_quality">
+		<text>Upscaling quality</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_quality_desc">
+		<text>Controls the world's internal render resolution. Quality favors image detail; Performance favors FPS. Native keeps display resolution and uses temporal AA. Custom uses the render-scale slider.</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_native">
+		<text>Native / DLAA</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_quality">
+		<text>Quality</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_balanced">
+		<text>Balanced</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_performance">
+		<text>Performance</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_ultra_performance">
+		<text>Ultra Performance</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_custom">
+		<text>Custom</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_custom_scale">
+		<text>Custom render scale</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_custom_scale_desc">
+		<text>Fraction of display resolution used to render the world with the Custom quality preset. Lower values improve FPS at the cost of detail. Changes apply through a renderer restart.</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_sharpness">
+		<text>Upscaler sharpness</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_sharpness_desc">
+		<text>Controls FSR sharpening. DLSS preserves the value for compatibility, while the current DLSS path uses its own temporal reconstruction without an additional sharpening pass.</text>
+	</string>
+</string_table>

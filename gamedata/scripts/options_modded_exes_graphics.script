@@ -5,6 +5,42 @@ options_builder.import_into(this)
 
 PAGE = filter_false(page {
 	{ id = "graphics" },
+	slide { id = "upscaler" },
+	get_item_if_exists(list {
+		id = "r4_upscaler",
+		content = {
+			{"off", "upscaler_off"},
+			{"fsr3", "upscaler_fsr3"},
+			{"dlss", "upscaler_dlss"},
+		},
+		vid = true,
+	}),
+	get_item_if_exists(list {
+		id = "r4_upscaler_quality",
+		content = {
+			{"native", "upscaler_quality_native"},
+			{"quality", "upscaler_quality_quality"},
+			{"balanced", "upscaler_quality_balanced"},
+			{"performance", "upscaler_quality_performance"},
+			{"ultra_performance", "upscaler_quality_ultra_performance"},
+			{"custom", "upscaler_quality_custom"},
+		},
+		vid = true,
+	}),
+	get_item_if_exists(track {
+		id = "r4_upscaler_custom_scale",
+		def = 0.67,
+		step = 0.01,
+		vid = true,
+	}),
+	get_item_if_exists(track {
+		id = "r4_upscaler_sharpness",
+		def = 0.2,
+		step = 0.01,
+	}),
+
+	line {},
+
 	get_item_if_exists(track {
 		id = "g_wallmark_range_static",
 		def = 100,

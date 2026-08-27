@@ -1,10 +1,14 @@
 # Anthology DLSS / FSR integration plan
 
-## Current implementation status (v134, 2026-08-28)
+## Current implementation status (v135, 2026-08-28)
 
 - The renderer-scale foundation and the first auditable FSR 3.1.2/DLSS Super
   Resolution paths are implemented together on
   `anthology-v134-upscale-foundation` for live testing.
+- v135 adds the four runtime controls to the existing Modded Exes graphics
+  page: technology, quality preset, custom render scale and FSR sharpness.
+  Technology, quality and scale request `vid_restart` through the normal Apply
+  flow; sharpness remains live. The v134 renderer binaries are unchanged.
 - `r4_upscaler off` remains the engine default and preserves the native v133
   path. The owner's installed RTX 5070 test profile currently selects DLSS
   Quality; unsupported hardware, missing runtime DLLs, MSAA, or missing SSS

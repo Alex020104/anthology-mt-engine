@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<string_table>
+	<string id="ui_mm_upscaler_modded_exes">
+		<text>DLSS / FSR</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler">
+		<text>Технология масштабирования</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_desc">
+		<text>Выключено сохраняет нативный рендер. DLSS работает на NVIDIA RTX, FSR 3.1.2 — на совместимых видеокартах. Для DLSS/FSR необходимо отключить MSAA. Изменение применяется через перезапуск рендера.</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_off">
+		<text>Выключено</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_fsr3">
+		<text>AMD FSR 3.1.2</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_dlss">
+		<text>NVIDIA DLSS</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_quality">
+		<text>Качество масштабирования</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_quality_desc">
+		<text>Определяет внутреннее разрешение мира. Качество даёт лучшую картинку, Производительность — больше FPS. Нативное не снижает разрешение и использует temporal AA; пользовательский режим использует ползунок масштаба.</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_native">
+		<text>Нативное / DLAA</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_quality">
+		<text>Качество</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_balanced">
+		<text>Баланс</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_performance">
+		<text>Производительность</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_ultra_performance">
+		<text>Ультрапроизводительность</text>
+	</string>
+	<string id="ui_mm_lst_upscaler_quality_custom">
+		<text>Пользовательское</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_custom_scale">
+		<text>Пользовательский масштаб рендера</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_custom_scale_desc">
+		<text>Доля разрешения экрана, в которой рендерится мир при выбранном пользовательском качестве. Меньше значение — выше FPS и ниже детализация. Изменение применяется через перезапуск рендера.</text>
+	</string>
+
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_sharpness">
+		<text>Резкость масштабирования</text>
+	</string>
+	<string id="ui_mm_modded_exes_visual_graphics_r4_upscaler_sharpness_desc">
+		<text>Регулирует резкость FSR. Для DLSS значение сохраняется для совместимости, но текущий DLSS использует собственную temporal-реконструкцию без дополнительного sharpening-прохода.</text>
+	</string>
+</string_table>
