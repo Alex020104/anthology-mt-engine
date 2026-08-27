@@ -222,14 +222,19 @@ void CBackend::set_Textures(STextureList* _T)
 	int _last_cs = -1;
 #	endif
 #endif	//	USE_DX10
-	STextureList::iterator _it = _T->begin();
-	STextureList::iterator _end = _T->end();
-
-	for (; _it != _end; _it++)
+	// A null list explicitly means "unbind every shader resource". This is
+	// required before external DX11 compute/upscale dispatches so their inputs
+	// are not still bound through the engine's cached SRV state.
+	if (_T)
 	{
-		std::pair<u32, ref_texture>& loader = *_it;
-		u32 load_id = loader.first;
-		CTexture* load_surf = &*loader.second;
+		STextureList::iterator _it = _T->begin();
+		STextureList::iterator _end = _T->end();
+
+		for (; _it != _end; _it++)
+		{
+			std::pair<u32, ref_texture>& loader = *_it;
+			u32 load_id = loader.first;
+			CTexture* load_surf = &*loader.second;
 		//		if (load_id < 256)		{
 		if (load_id < CTexture::rstVertex)
 		{
@@ -367,9 +372,10 @@ void CBackend::set_Textures(STextureList* _T)
 				}
 			}
 #endif
-			else
-				VERIFY("Invalid enum");
+				else
+					VERIFY("Invalid enum");
 #endif	//	UDE_DX10
+		}
 	}
 
 

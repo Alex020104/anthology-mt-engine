@@ -13,6 +13,9 @@ void CRenderTarget::phase_upscale(bool temporal)
         RCache.set_RT(nullptr, 3);
         RCache.set_ZB(nullptr);
         RCache.set_Textures(nullptr);
+        // set_Textures updates the engine-side SRV cache. External NGX/FSR
+        // dispatches bypass RCache, so commit the null bindings immediately.
+        SRVSManager.Apply();
         const bool resetHistory = m_upscalerResetHistory || Device.dwPrecacheFrame > 0;
         resolved = g_AnthologyUpscaler.Dispatch(
             rt_UpscaleInput->pTexture->surface_get(),

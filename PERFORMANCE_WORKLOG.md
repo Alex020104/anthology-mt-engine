@@ -5071,3 +5071,27 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The v136 binaries are recoverable at
   `E:/ANTHOLOGY_BACKUPS/20260828_v1361_pre_shader_profile_hotfix`. The game was
   not launched and the shader cache was not read, deleted, moved or rewritten.
+
+## 2026-08-28 - v136.2 upscaler SRV-unbind crash hotfix
+
+- The first successful DLSS level load crashed before the vendor dispatch in
+  `CBackend::set_Textures`. `phase_upscale` intentionally passed a null texture
+  list to unbind engine SRVs, but the legacy backend unconditionally evaluated
+  `_T->begin()`.
+- The minidump proves a null dereference rather than a bad DLSS texture:
+  exception `C0000005`, read address `0x18`, null `_T` argument, and the faulting
+  instruction reads the vector field at `[rdi+18h]`. Execution never reached
+  the color, motion-vector, depth or output resources.
+- A null texture list now has explicit engine semantics: skip list traversal and
+  let the existing tail loops clear every cached PS/VS/GS/HS/DS/CS resource
+  slot. `SRVSManager.Apply()` commits those null bindings before the external
+  NGX/FSR dispatch, avoiding delayed-cache resource hazards.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. Installed
+  hashes match their build artifacts:
+  - DX11 EXE `EB68B8FA84D992316CB757188E77C1C423946506988405DEADBFA7132FBC7ECE`;
+  - DX11 PDB `0870E9E58576DD31AFFD429F4BD57B8317D21C54C2FDAA6AB763F3989B8FDC64`;
+  - DX11-AVX EXE `8EC44276E3C6183EB7DA6852896EDD753C4DA1A045706DDCE12AC4834E66E702`;
+  - DX11-AVX PDB `CF4A738127161B49A3665CC0ABC430BD780A6D808E48979F6BACFC04942BE77A`.
+- The v136.1 binaries, failing log and minidump are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1362_pre_upscaler_srv_unbind_hotfix`.
+  The shader cache was not read, deleted, moved or rewritten.
