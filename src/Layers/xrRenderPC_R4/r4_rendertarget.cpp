@@ -374,6 +374,130 @@ void generate_jitter(DWORD* dest, u32 elem_count)
 		*dest = color_rgba(samples[2 * it].x, samples[2 * it].y, samples[2 * it + 1].y, samples[2 * it + 1].x);
 }
 
+void CRenderTarget::unbind_svp_resources()
+{
+	RCache.set_RT(nullptr, 0);
+	RCache.set_RT(nullptr, 1);
+	RCache.set_RT(nullptr, 2);
+	RCache.set_RT(nullptr, 3);
+	RCache.set_ZB(nullptr);
+	RCache.set_Textures(nullptr);
+	SRVSManager.Apply();
+	ID3D11ShaderResourceView* nullSrvs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+	ID3D11UnorderedAccessView* nullUavs[D3D11_PS_CS_UAV_REGISTER_COUNT] = {};
+	HW.pContext->CSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSrvs);
+	HW.pContext->CSSetUnorderedAccessViews(0, D3D11_PS_CS_UAV_REGISTER_COUNT, nullUavs, nullptr);
+}
+
+void CRenderTarget::add_svp_rt(ref_rt& target, LPCSTR suffix, u32 width, u32 height)
+{
+	if (!target || !target->valid())
+		return;
+
+	D3D11_TEXTURE2D_DESC desc = {};
+	target->pSurface->GetDesc(&desc);
+	const u32 scaledWidth = _max(1u, u32((u64(target->dwWidth) * width + m_renderWidth - 1) / m_renderWidth));
+	const u32 scaledHeight = _max(1u, u32((u64(target->dwHeight) * height + m_renderHeight - 1) / m_renderHeight));
+	string128 name;
+	xr_sprintf(name, "$user$svp_q_%s_%ux%u", suffix, scaledWidth, scaledHeight);
+	SvpRtPair pair = { &target, ref_rt() };
+	pair.reduced.create(name, scaledWidth, scaledHeight, target->fmt, desc.SampleDesc.Count,
+		target->pUAView != nullptr);
+	m_svpRtBank.push_back(pair);
+}
+
+void CRenderTarget::create_svp_rt_bank(u32 width, u32 height)
+{
+	m_svpRtBank.clear();
+	m_svpDepth.destroy();
+	m_svpRtBankWidth = width;
+	m_svpRtBankHeight = height;
+
+#define ADD_SVP_RT(rt) add_svp_rt(rt, #rt, width, height)
+	ADD_SVP_RT(rt_Position); ADD_SVP_RT(rt_Color); ADD_SVP_RT(rt_Accumulator); ADD_SVP_RT(rt_Accumulator_temp);
+	ADD_SVP_RT(rt_MSAADepth); ADD_SVP_RT(rt_tempzb); ADD_SVP_RT(rt_Generic_0); ADD_SVP_RT(rt_Generic_1);
+	ADD_SVP_RT(rt_Generic); ADD_SVP_RT(rt_Generic_0_r); ADD_SVP_RT(rt_Generic_1_r); ADD_SVP_RT(rt_Generic_temp);
+	ADD_SVP_RT(rt_Generic_2); ADD_SVP_RT(rt_Heat); ADD_SVP_RT(rt_fakescope); ADD_SVP_RT(rt_dof);
+	ADD_SVP_RT(rt_sunshafts_0); ADD_SVP_RT(rt_sunshafts_1);
+	ADD_SVP_RT(rt_blur_h_2); ADD_SVP_RT(rt_blur_2); ADD_SVP_RT(rt_blur_h_4); ADD_SVP_RT(rt_blur_4);
+	ADD_SVP_RT(rt_blur_h_8); ADD_SVP_RT(rt_blur_8); ADD_SVP_RT(rt_pp_bloom);
+	ADD_SVP_RT(rt_HDR10_HalfRes[0]); ADD_SVP_RT(rt_HDR10_HalfRes[1]);
+	ADD_SVP_RT(rt_smaa_edgetex); ADD_SVP_RT(rt_smaa_blendtex); ADD_SVP_RT(rt_half_depth); ADD_SVP_RT(rt_ssao_temp);
+	ADD_SVP_RT(rt_ssfx_taa); ADD_SVP_RT(rt_ssfx_prev_frame); ADD_SVP_RT(rt_ssfx_motion_vectors);
+	ADD_SVP_RT(rt_ssfx); ADD_SVP_RT(rt_ssfx_temp); ADD_SVP_RT(rt_ssfx_temp2); ADD_SVP_RT(rt_ssfx_temp3);
+	ADD_SVP_RT(rt_ssfx_accum); ADD_SVP_RT(rt_ssfx_ssr); ADD_SVP_RT(rt_ssfx_water);
+	ADD_SVP_RT(rt_ssfx_ao); ADD_SVP_RT(rt_ssfx_il);
+	ADD_SVP_RT(rt_ssfx_sss); ADD_SVP_RT(rt_ssfx_sss_ext); ADD_SVP_RT(rt_ssfx_sss_ext2); ADD_SVP_RT(rt_ssfx_sss_tmp);
+	ADD_SVP_RT(rt_ssfx_bloom1); ADD_SVP_RT(rt_ssfx_bloom_emissive); ADD_SVP_RT(rt_ssfx_bloom_lens);
+	ADD_SVP_RT(rt_ssfx_bloom_tmp2); ADD_SVP_RT(rt_ssfx_bloom_tmp4); ADD_SVP_RT(rt_ssfx_bloom_tmp8);
+	ADD_SVP_RT(rt_ssfx_bloom_tmp16); ADD_SVP_RT(rt_ssfx_bloom_tmp32); ADD_SVP_RT(rt_ssfx_bloom_tmp64);
+	ADD_SVP_RT(rt_ssfx_bloom_tmp32_2); ADD_SVP_RT(rt_ssfx_bloom_tmp16_2);
+	ADD_SVP_RT(rt_ssfx_bloom_tmp8_2); ADD_SVP_RT(rt_ssfx_bloom_tmp4_2);
+	ADD_SVP_RT(rt_ssfx_volumetric); ADD_SVP_RT(rt_ssfx_volumetric_tmp); ADD_SVP_RT(rt_ssfx_rain);
+	ADD_SVP_RT(rt_ssfx_prevPos); ADD_SVP_RT(rt_UpscaleInput); ADD_SVP_RT(rt_UpscaleDepth);
+#undef ADD_SVP_RT
+
+	D3D11_TEXTURE2D_DESC positionDesc = {};
+	rt_Position->pSurface->GetDesc(&positionDesc);
+	string128 depthName;
+	xr_sprintf(depthName, "$user$svp_q_depth_%ux%u", width, height);
+	m_svpDepth.create(depthName, width, height, D3DFMT_D24S8, positionDesc.SampleDesc.Count);
+	Msg("* PiP qRT bank: %ux%u, %u paired targets", width, height, (u32)m_svpRtBank.size());
+}
+
+void CRenderTarget::swap_svp_rt_bank()
+{
+	for (SvpRtPair& pair : m_svpRtBank)
+	{
+		CRT& main = **pair.main;
+		CRT& reduced = *pair.reduced;
+		VERIFY(main.fmt == reduced.fmt);
+		main.pTexture->swap_surface_state(*reduced.pTexture);
+		std::swap(main.pSurface, reduced.pSurface);
+		std::swap(main.pRT, reduced.pRT);
+		std::swap(main.pZRT, reduced.pZRT);
+		std::swap(main.pUAView, reduced.pUAView);
+		std::swap(main.dwWidth, reduced.dwWidth);
+		std::swap(main.dwHeight, reduced.dwHeight);
+	}
+}
+
+bool CRenderTarget::begin_svp_quality_pass()
+{
+	if (!Device.m_SecondViewport.IsSVPFrame() || ps_scope_lense_quality_percent >= 100 || m_svpRtBankActive)
+		return false;
+	const u32 quality = clampr(ps_scope_lense_quality_percent, 25, 100);
+	const u32 width = _max(320u, ((m_renderWidth * quality / 100u) + 1u) & ~1u);
+	const u32 height = _max(180u, ((m_renderHeight * quality / 100u) + 1u) & ~1u);
+	if (width != m_svpRtBankWidth || height != m_svpRtBankHeight)
+		create_svp_rt_bank(width, height);
+
+	unbind_svp_resources();
+	m_svpSavedRenderWidth = m_renderWidth;
+	m_svpSavedRenderHeight = m_renderHeight;
+	swap_svp_rt_bank();
+	m_renderWidth = width;
+	m_renderHeight = height;
+	m_svpRtBankActive = true;
+	g_svp_qrt_active = true;
+	g_main_taa_render_size.set(float(width), float(height));
+	return true;
+}
+
+void CRenderTarget::end_svp_quality_pass()
+{
+	if (!m_svpRtBankActive)
+		return;
+	unbind_svp_resources();
+	swap_svp_rt_bank();
+	m_renderWidth = m_svpSavedRenderWidth;
+	m_renderHeight = m_svpSavedRenderHeight;
+	m_svpRtBankActive = false;
+	g_svp_qrt_active = false;
+	g_main_taa_render_size.set(float(m_renderWidth), float(m_renderHeight));
+	u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT, nullptr, nullptr, HW.pBaseZB);
+}
+
 CRenderTarget::CRenderTarget()
 {
 	CTimer startupTimer;

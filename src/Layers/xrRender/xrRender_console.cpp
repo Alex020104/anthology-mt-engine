@@ -409,16 +409,17 @@ Fvector4 ps_ssfx_motionblur = { 6, 0, 0, 0 }; // Samples, Intensity, Only HUD, -
 Fvector4 ps_ssfx_taa = { 1, 0.5f, 0.6f, 0 }; // Enable, Jitter, Sharpness, -
 Fvector2 g_main_taa_jitter_pixels = { 0.f, 0.f };
 Fvector2 g_main_taa_render_size = { 1.f, 1.f };
+bool g_svp_qrt_active = false;
 bool g_main_temporal_upscaler_active = false;
 
 u32 GetMainRenderWidth()
 {
-	return g_main_temporal_upscaler_active ? u32(_max(1.f, g_main_taa_render_size.x)) : Device.dwWidth;
+	return (g_main_temporal_upscaler_active || g_svp_qrt_active) ? u32(_max(1.f, g_main_taa_render_size.x)) : Device.dwWidth;
 }
 
 u32 GetMainRenderHeight()
 {
-	return g_main_temporal_upscaler_active ? u32(_max(1.f, g_main_taa_render_size.y)) : Device.dwHeight;
+	return (g_main_temporal_upscaler_active || g_svp_qrt_active) ? u32(_max(1.f, g_main_taa_render_size.y)) : Device.dwHeight;
 }
 
 u32 ps_r4_upscaler = 0;

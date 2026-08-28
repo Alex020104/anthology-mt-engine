@@ -20,6 +20,22 @@ private:
 	u32 m_renderHeight;
 	bool m_upscalerActive;
 	bool m_upscalerResetHistory;
+	struct SvpRtPair
+	{
+		ref_rt* main;
+		ref_rt reduced;
+	};
+	xr_vector<SvpRtPair> m_svpRtBank;
+	ref_rt m_svpDepth;
+	bool m_svpRtBankActive = false;
+	u32 m_svpRtBankWidth = 0;
+	u32 m_svpRtBankHeight = 0;
+	u32 m_svpSavedRenderWidth = 0;
+	u32 m_svpSavedRenderHeight = 0;
+	void create_svp_rt_bank(u32 width, u32 height);
+	void add_svp_rt(ref_rt& target, LPCSTR suffix, u32 width, u32 height);
+	void swap_svp_rt_bank();
+	void unbind_svp_resources();
 	u32 dwAccumulatorClearMark;
 public:
 	enum eStencilOptimizeMode
@@ -519,6 +535,9 @@ public:
 	void phase_combine_volumetric();
 	void phase_pp(bool upscaledSource = false);
 	void phase_upscale(bool temporal);
+	bool begin_svp_quality_pass();
+	void end_svp_quality_pass();
+	bool svp_quality_pass_active() const { return m_svpRtBankActive; }
 
 	virtual void set_blur(float f) { param_blur = f; }
 	virtual void set_gray(float f) { param_gray = f; }
@@ -537,7 +556,10 @@ public:
 	u32 get_core_height() const { return m_renderHeight; }
 	bool upscaler_active() const { return m_upscalerActive; }
 	ref_selement& upscaler_menu_element() { return s_upscale->E[2]; }
-	ID3DDepthStencilView* main_depth() const { return m_upscalerActive ? rt_Depth->pZRT : HW.pBaseZB; }
+	ID3DDepthStencilView* main_depth() const
+	{
+		return m_svpRtBankActive ? m_svpDepth->pZRT : (m_upscalerActive ? rt_Depth->pZRT : HW.pBaseZB);
+	}
 
 	virtual void set_cm_imfluence(float f) { param_color_map_influence = f; }
 	virtual void set_cm_interpolate(float f) { param_color_map_interpolate = f; }

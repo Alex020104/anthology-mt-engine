@@ -660,7 +660,7 @@ static class cl_screen_res : public R_constant_setup
 		const bool displayTarget = target && target->get_width() == RDEVICE.dwWidth &&
 			target->get_height() == RDEVICE.dwHeight;
 		const bool baseTarget = RCache.get_RT() == HW.pBaseRT;
-		const bool corePass = g_main_temporal_upscaler_active && target && !displayTarget && !baseTarget &&
+		const bool corePass = (g_main_temporal_upscaler_active || g_svp_qrt_active) && target && !displayTarget && !baseTarget &&
 			::Render->active_phase() == CRender::PHASE_NORMAL;
 		if (corePass)
 		{

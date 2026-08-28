@@ -9,6 +9,25 @@
 #include "../xrRender/QueryHelper.h"
 #include "UpscalerRuntime.h"
 
+namespace
+{
+class SvpQualityPassScope
+{
+	CRenderTarget* target;
+public:
+	explicit SvpQualityPassScope(CRenderTarget* value) : target(value && value->begin_svp_quality_pass() ? value : nullptr) {}
+	~SvpQualityPassScope() { restore(); }
+	void restore()
+	{
+		if (target)
+		{
+			target->end_svp_quality_pass();
+			target = nullptr;
+		}
+	}
+};
+}
+
 void CRender::render_menu()
 {
 	PIX_EVENT(render_menu);
@@ -121,6 +140,8 @@ void CRender::Render()
 
 	if (Target->upscaler_active() && !Device.m_SecondViewport.IsSVPFrame())
 		g_AnthologyUpscaler.UpdateJitter(Device.dwFrame);
+
+	SvpQualityPassScope svpQualityScope(Target);
 
 	//.	VERIFY					(g_pGameLevel && g_pGameLevel->pHUD);
 
@@ -388,6 +409,7 @@ void CRender::Render()
 		PIX_EVENT(DEFER_LIGHT_COMBINE);
 		Target->phase_combine();
 	}
+	svpQualityScope.restore();
 
 	if (Details)
 		Details->details_clear();
@@ -485,10 +507,7 @@ void CRender::RenderToTarget(RRT target)
 
 	ID3DTexture2D* pBuffer = nullptr;
 	HW.m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBuffer);
-	if (target == rtSVP && ps_scope_lense_quality_percent < 100)
-		Target->phase_svp_quality(pBuffer);
-	else
-		HW.pContext->CopyResource((*RT)->pSurface, pBuffer);
+	HW.pContext->CopyResource((*RT)->pSurface, pBuffer);
 	pBuffer->Release();
 
 	if (target == rtSVP && RImplementation.o.ssfx_water)

@@ -61,6 +61,10 @@ public:
 
 	void surface_set(ID3DBaseTexture* surf);
 	ID3DBaseTexture* surface_get();
+	// Swap only the already-created GPU surface state of two user render-target
+	// textures. Names, flags and bind delegates remain stable, so shaders which
+	// reference the canonical RT name transparently see the active SVP bank.
+	void swap_surface_state(CTexture& other);
 
 	IC BOOL isUser() { return flags.bUser; }
 	IC u32 get_Width()
