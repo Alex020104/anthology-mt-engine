@@ -5373,7 +5373,7 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - Analysis of `xray_mg9000 (2).log` identified a renderer/content spike rather
   than a CPU, VRAM or hardware failure: game-frame work stayed near 4 ms while
   render time rose from about 25 ms to 59 ms immediately after nineteen
-  `Wind_Leaves` particle objects were activated. The log also contained 1133
+  `Wind_Leaves` particle objects were activated. The log also contained 202
   repeated dynamic-wallmark failures. VRAM texture usage was about 3.15 GB on a
   16 GB RX 6900 XT.
 - Added three independent MO2 modules, mirrored under `modpack-patches` and
