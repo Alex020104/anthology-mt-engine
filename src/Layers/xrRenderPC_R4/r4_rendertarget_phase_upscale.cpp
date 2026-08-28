@@ -4,6 +4,28 @@
 
 void CRenderTarget::phase_upscale(bool temporal)
 {
+	// SSS keeps the complete world (sky, water, forward transparencies and HUD
+	// reticle) in the split-tonemap generic target. Convert that signal to a
+	// linear FP16 temporal input before either vendor or the spatial SVP fallback.
+	u_setrt(rt_UpscaleInput, nullptr, nullptr, nullptr);
+	RImplementation.rmNormal();
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+
+	const float prepareWidth = float(m_renderWidth);
+	const float prepareHeight = float(m_renderHeight);
+	const u32 prepareColor = color_rgba(255, 255, 255, 255);
+	u32 prepareOffset = 0;
+	FVF::TL* prepareVertices = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, prepareOffset);
+	prepareVertices->set(0.f, prepareHeight, EPS_S, 1.f, prepareColor, 0.f, 1.f); ++prepareVertices;
+	prepareVertices->set(0.f, 0.f, EPS_S, 1.f, prepareColor, 0.f, 0.f); ++prepareVertices;
+	prepareVertices->set(prepareWidth, prepareHeight, EPS_S, 1.f, prepareColor, 1.f, 1.f); ++prepareVertices;
+	prepareVertices->set(prepareWidth, 0.f, EPS_S, 1.f, prepareColor, 1.f, 0.f);
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+	RCache.set_Element(s_upscale->E[1]);
+	RCache.set_Geometry(g_combine);
+	RCache.Render(D3DPT_TRIANGLELIST, prepareOffset, 0, 4, 0, 2);
+
     bool resolved = false;
     if (temporal)
     {

@@ -57,6 +57,7 @@ public:
 	IBlender* b_bloom;
 	IBlender* b_luminance;
 	IBlender* b_combine;
+	IBlender* b_combine_upscaled;
 	IBlender* b_sunshafts;
 	IBlender* b_postprocess_msaa;
 	IBlender* b_bloom_msaa;
@@ -128,6 +129,7 @@ public:
 	ref_rt rt_UpscaleInput; // low-resolution post-process result
 	ref_rt rt_UpscaleDepth; // low-resolution R32_FLOAT hardware-depth export
 	ref_rt rt_UpscaleOutput; // full-resolution FSR/DLSS result
+	ref_rt rt_UpscalePost; // display-resolution tone map and screen-space result
 	ref_rt rt_MSAADepth; // z-buffer for MSAA deferred shading
 	ref_rt rt_Generic_0_r; // MRT generic 0
 	ref_rt rt_Generic_1_r; // MRT generic 1
@@ -389,6 +391,7 @@ private:
 	ref_shader s_combine_dbg_1;
 	ref_shader s_combine_dbg_Accumulator;
 	ref_shader s_combine;
+	ref_shader s_combine_upscaled;
 	ref_shader s_combine_msaa[8];
 	ref_shader s_combine_volumetric;
 public:
@@ -558,7 +561,9 @@ public:
 	ref_selement& upscaler_menu_element() { return s_upscale->E[2]; }
 	ID3DDepthStencilView* main_depth() const
 	{
-		return m_svpRtBankActive ? m_svpDepth->pZRT : (m_upscalerActive ? rt_Depth->pZRT : HW.pBaseZB);
+		if (m_svpRtBankActive)
+			return (rt_Depth && rt_Depth->valid()) ? rt_Depth->pZRT : m_svpDepth->pZRT;
+		return m_upscalerActive ? rt_Depth->pZRT : HW.pBaseZB;
 	}
 
 	virtual void set_cm_imfluence(float f) { param_color_map_influence = f; }

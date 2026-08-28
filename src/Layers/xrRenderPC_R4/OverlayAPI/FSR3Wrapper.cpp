@@ -32,9 +32,8 @@ bool CFSR3Wrapper::Create(const ContextParameters& params)
     m_description.maxRenderSize = params.maxRenderSize;
     m_description.maxUpscaleSize = params.displaySize;
     m_description.fpMessage = FsrMessage;
-	// Tonemapped input uses an explicit pre-exposure of 1.0.  Enabling FSR auto
-	// exposure here analyzes the already exposed image a second time and smears
-	// contrast, especially at low presets.
+	// SSS/NVG/thermal have already authored a display-referred signal. Do not
+	// advertise HDR without a true scene-color buffer and matching exposure.
 #ifdef DEBUG
     m_description.flags |= FFX_FSR3UPSCALER_ENABLE_DEBUG_CHECKING;
 #endif

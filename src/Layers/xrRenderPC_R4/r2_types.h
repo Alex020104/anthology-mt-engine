@@ -34,6 +34,7 @@
 #define     r4_RT_upscale_input "$user$anthology_upscale_input"
 #define     r4_RT_upscale_depth "$user$anthology_upscale_depth"
 #define     r4_RT_upscale_output "$user$anthology_upscale_output"
+#define     r4_RT_upscale_post "$user$anthology_upscale_post"
 
 #define		r2_RT_bloom1		"$user$bloom1"			// ---
 #define		r2_RT_bloom2		"$user$bloom2"			// ---

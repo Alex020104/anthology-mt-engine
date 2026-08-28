@@ -153,10 +153,10 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
         params.displayWidth = m_displayWidth;
         params.displayHeight = m_displayHeight;
         params.reset = resetHistory;
-		// Use one display-space CAS pass for both vendors.  Backend sharpening here
-		// would otherwise sharpen FSR twice while DLSS remained unsharpened.
-		params.sharpening = false;
-		params.sharpness = 0.f;
+		// Run RCAS inside the vendor dispatch. The old mandatory display 9-tap pass
+		// erased much of the GPU saving and reprocessed an already reconstructed image.
+		params.sharpening = ps_r4_upscaler_sharpness > EPS;
+		params.sharpness = clampr(ps_r4_upscaler_sharpness, 0.f, 1.f);
         params.frameTimeMs = _max(1.f, Device.fTimeDelta * 1000.f);
         params.nearPlane = VIEWPORT_NEAR;
         params.farPlane = g_pGamePersistent && g_pGamePersistent->Environment().CurrentEnv ?
@@ -176,8 +176,8 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
         params.renderWidth = m_renderWidth;
         params.renderHeight = m_renderHeight;
         params.reset = resetHistory;
-        params.jitterX = g_main_taa_jitter_pixels.x;
-        params.jitterY = g_main_taa_jitter_pixels.y;
+		params.jitterX = g_main_taa_jitter_pixels.x;
+		params.jitterY = g_main_taa_jitter_pixels.y;
 		return finishDispatch(m_dlss.Draw(params));
     }
     return false;

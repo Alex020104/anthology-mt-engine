@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "r4_rendertarget.h"
+#include "UpscalerRuntime.h"
 
 void CRenderTarget::u_calc_tc_noise(Fvector2& p0, Fvector2& p1)
 {
@@ -129,11 +130,10 @@ void CRenderTarget::phase_pp(bool upscaledSource)
 	//RCache.set_Element	(s_postprocess->E[bCMap ? 4 : 0]);
 	if (upscaledSource)
 	{
-		// Vendor reconstruction owns only the low-resolution scene.  Noise,
-		// colour mapping and the common CAS pass stay at display resolution so
-		// they are neither accumulated into temporal history nor blurred.
+		// combine_2 has already tone-mapped the reconstructed scene into the
+		// display-sized post target. Keep this presentation pass to one sample;
+		// vendor sharpening is cheaper than the former mandatory 9-tap filter.
 		RCache.set_Element(s_upscale->E[bCMap ? 5 : 4]);
-		RCache.set_c("anthology_upscaler_params", ps_r4_upscaler_sharpness, 0.0f, 0.0f, 0.0f);
 	}
 	else if (!RImplementation.o.dx10_msaa)
 	{
@@ -181,8 +181,14 @@ void CRenderTarget::phase_pp(bool upscaledSource)
 	// Actual rendering
 	static shared_str s_brightness = "c_brightness";
 	static shared_str s_colormap = "c_colormap";
+	static shared_str s_upscaler_params = "anthology_upscaler_params";
 	RCache.set_c(s_brightness, p_brightness.x, p_brightness.y, p_brightness.z, 0);
 	RCache.set_c(s_colormap, param_color_map_influence, param_color_map_interpolate, 0, 0);
+	// DLSS 3.10 no longer honours NGX InSharpness. FSR performs RCAS inside
+	// its own dispatch, so only DLSS requests the optional compact display pass.
+	const float displaySharpen = upscaledSource && g_AnthologyUpscaler.Mode() == AnthologyUpscalerDLSS
+		? clampr(ps_r4_upscaler_sharpness, 0.f, 1.f) : 0.f;
+	RCache.set_c(s_upscaler_params, displaySharpen, 0.f, 0.f, 0.f);
 	RCache.set_Geometry(g_postprocess);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 }

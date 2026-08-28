@@ -5269,3 +5269,37 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   No new game is required. Runtime visual/performance validation is required
   on the owner's existing save. The shader cache was not read, deleted, moved
   or rewritten.
+
+## 2026-08-28 - v137 physical PiP targets and coherent LDR reconstruction
+
+- Replaced the cosmetic PiP quality degradation with a real reduced-resolution
+  deferred/SSFX render-target bank. PiP quality now changes the amount of lens
+  raster and screen-space work while the final lens image remains composited at
+  the native display size; the 100% path retains its original dimensions.
+- The PiP target swap covers the canonical sampled depth target as well as the
+  colour, deferred, lighting and SSFX surfaces. A single-sample fallback DSV is
+  used only when the canonical target is unavailable, avoiding an MSAA depth/
+  colour mismatch during the final lens passes. Main-camera targets are restored
+  after every PiP render through the scoped target-bank guard.
+- Rebuilt the temporal-upscaler boundary around the renderer's actual signal:
+  SSS, NVG and thermal output is display-referred LDR, converted into an FP16
+  vendor input by a draw pass. DLSS and FSR no longer receive false HDR flags,
+  fabricated reverse tonemapping or a second automatic-exposure contract.
+- Kept the SDR generic targets in their original A8 format so the existing
+  LUT/DOF/NVG/thermal `CopyResource` paths remain format-compatible. Vendor
+  reconstruction now runs before the display-resolution combine/UI path, so
+  menus and HUD are not rendered at the low internal resolution.
+- Removed the mandatory full-screen nine-tap sharpening cost. FSR uses its own
+  optional RCAS dispatch; DLSS uses the compact optional display sharpen only
+  when the sharpness setting is non-zero. The upscaled combine no longer repeats
+  legacy motion blur with invalid low-resolution packed positions.
+- All five affected shaders pass standalone `ps_5_0` compilation with no new
+  warnings. Both engine configurations compile and link with zero errors before
+  the final UI-compatibility integration. The active development-addon shader
+  copies are SHA-256-identical to the repository sources. The shader cache was
+  not read, deleted, moved or rewritten.
+- This makes the PiP quality control physically meaningful, but its FPS gain is
+  necessarily scene-dependent: it reduces second-camera GPU work, not the CPU
+  cost of a second visibility traversal. Likewise DLSS/FSR can improve a
+  GPU-bound frame but cannot increase FPS on CPU/A-Life-bound bases where GPU
+  utilisation is already well below saturation.

@@ -1,0 +1,9 @@
+#include "common.h"
+
+float4 main(float2 tc : TEXCOORD0) : SV_Target
+{
+	// Convert the already display-referred SSS/NVG/thermal result to an FP16
+	// vendor input without inventing a missing exposure or reverse-tonemapping
+	// packed effect channels. This is a format conversion, not another filter.
+	return float4(s_image.SampleLevel(smp_rtlinear, tc, 0.0f).rgb, 1.0f);
+}

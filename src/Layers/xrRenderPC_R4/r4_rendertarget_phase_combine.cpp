@@ -626,6 +626,12 @@ void CRenderTarget::phase_combine()
 	// HOLGER - HACK
 	PP_Complex = TRUE;
 
+	// Reconstruct the complete low-resolution SSS world before combine_2 adds
+	// bloom, colour grading, LUT and legacy motion blur. Those display effects
+	// must execute once, after DLSS/FSR, rather than becoming temporal input.
+	if (m_upscalerActive)
+		phase_upscale(!svp_frame);
+
 	// Combine everything + perform AA
 	if (RImplementation.o.dx10_msaa)
 	{
@@ -636,13 +642,14 @@ void CRenderTarget::phase_combine()
 	{
 		if (PP_Complex)
 		{
-			// Keep the upscaler input in FP16 and avoid the old A8R8G8B8 roundtrip.
-			// Final postprocess/noise is applied after reconstruction below.
-			ref_rt& final_scene = m_upscalerActive ? rt_UpscaleInput : rt_Color;
-			u_setrt(final_scene, 0, 0, main_depth()); // LDR values, FP16 when upscaling
+			if (m_upscalerActive)
+				u_setrt(rt_UpscalePost, 0, 0, nullptr);
+			else
+				u_setrt(rt_Color, 0, 0, main_depth());
 		}
 		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
+	RImplementation.rmNormal();
 	//. u_setrt				( Device.dwWidth,Device.dwHeight,HW.pBaseRT,NULL,NULL,HW.pBaseZB);
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
@@ -664,8 +671,8 @@ void CRenderTarget::phase_combine()
 			Fvector4 uv6;
 		};
 
-		float _w = float(m_renderWidth);
-		float _h = float(m_renderHeight);
+		float _w = float(m_upscalerActive ? Device.dwWidth : m_renderWidth);
+		float _h = float(m_upscalerActive ? Device.dwHeight : m_renderHeight);
 		float ddw = 1.f / _w;
 		float ddh = 1.f / _h;
 		p0.set(.5f / _w, .5f / _h);
@@ -715,7 +722,11 @@ void CRenderTarget::phase_combine()
 
 
 		// Draw COLOR
-		if (!RImplementation.o.dx10_msaa)
+		if (m_upscalerActive)
+		{
+			RCache.set_Element(s_combine_upscaled->E[bDistort ? 1 : 0]);
+		}
+		else if (!RImplementation.o.dx10_msaa)
 		{
 			if (ps_r2_ls_flags.test(R2FLAG_AA)) RCache.set_Element(s_combine->E[bDistort ? 3 : 1]);
 				// look at blender_combine.cpp
@@ -733,6 +744,8 @@ void CRenderTarget::phase_combine()
 		RCache.set_c("m_current", Matrix_current);
 		RCache.set_c("m_previous", Matrix_previous);
 		RCache.set_c("m_blur", m_blur_scale.x, m_blur_scale.y, 0, 0);
+		RCache.set_c("anthology_core_res", float(m_renderWidth), float(m_renderHeight),
+			1.f / float(_max(1u, m_renderWidth)), 1.f / float(_max(1u, m_renderHeight)));
 		/////lvutner		
 		if (svp_frame)
 			RCache.set_c("mask_control", 0.0f, 0.0f, 0.0f, 0.0f);
@@ -776,13 +789,10 @@ void CRenderTarget::phase_combine()
 	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && !current_view_heatvision) //--DSR-- HeatVision
 		g_pGamePersistent->Environment().RenderFlares(); // lens-flares
 
-	// Upscaling must see the clean scene, not noise/color-map pixels already
-	// baked into temporal history.  Reconstruct first, then run final PP at the
-	// display resolution.  SVP uses the same spatial fallback without advancing
-	// the main camera's temporal history.
+	// Final legacy PP now performs one display-resolution presentation sample.
+	// Vendor reconstruction already happened before combine_2 above.
 	if (m_upscalerActive)
 	{
-		phase_upscale(!svp_frame);
 		PIX_EVENT(phase_pp);
 		phase_pp(true);
 	}

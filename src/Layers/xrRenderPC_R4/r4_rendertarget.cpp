@@ -414,7 +414,12 @@ void CRenderTarget::create_svp_rt_bank(u32 width, u32 height)
 	m_svpRtBankHeight = height;
 
 #define ADD_SVP_RT(rt) add_svp_rt(rt, #rt, width, height)
-	ADD_SVP_RT(rt_Position); ADD_SVP_RT(rt_Color); ADD_SVP_RT(rt_Accumulator); ADD_SVP_RT(rt_Accumulator_temp);
+	// When the main temporal upscaler owns a sampled $user$depth target, swap
+	// that canonical RT as well as the DSV. Otherwise PiP depth-reading shaders
+	// would keep sampling the stale main-camera surface while rasterizing into
+	// the reduced lens depth buffer.
+	ADD_SVP_RT(rt_Depth); ADD_SVP_RT(rt_Position); ADD_SVP_RT(rt_Color);
+	ADD_SVP_RT(rt_Accumulator); ADD_SVP_RT(rt_Accumulator_temp);
 	ADD_SVP_RT(rt_MSAADepth); ADD_SVP_RT(rt_tempzb); ADD_SVP_RT(rt_Generic_0); ADD_SVP_RT(rt_Generic_1);
 	ADD_SVP_RT(rt_Generic); ADD_SVP_RT(rt_Generic_0_r); ADD_SVP_RT(rt_Generic_1_r); ADD_SVP_RT(rt_Generic_temp);
 	ADD_SVP_RT(rt_Generic_2); ADD_SVP_RT(rt_Heat); ADD_SVP_RT(rt_fakescope); ADD_SVP_RT(rt_dof);
@@ -437,11 +442,14 @@ void CRenderTarget::create_svp_rt_bank(u32 width, u32 height)
 	ADD_SVP_RT(rt_ssfx_prevPos); ADD_SVP_RT(rt_UpscaleInput); ADD_SVP_RT(rt_UpscaleDepth);
 #undef ADD_SVP_RT
 
-	D3D11_TEXTURE2D_DESC positionDesc = {};
-	rt_Position->pSurface->GetDesc(&positionDesc);
-	string128 depthName;
-	xr_sprintf(depthName, "$user$svp_q_depth_%ux%u", width, height);
-	m_svpDepth.create(depthName, width, height, D3DFMT_D24S8, positionDesc.SampleDesc.Count);
+	if (!rt_Depth || !rt_Depth->valid())
+	{
+		string128 depthName;
+		xr_sprintf(depthName, "$user$svp_q_depth_%ux%u", width, height);
+		// The fallback is used by single-sample final/combine passes. The actual
+		// MSAA scene depth is the separately banked rt_MSAADepth target.
+		m_svpDepth.create(depthName, width, height, D3DFMT_D24S8, 1);
+	}
 	Msg("* PiP qRT bank: %ux%u, %u paired targets", width, height, (u32)m_svpRtBank.size());
 }
 
@@ -596,6 +604,7 @@ CRenderTarget::CRenderTarget()
 	}
 	b_luminance = xr_new<CBlender_luminance>();
 	b_combine = xr_new<CBlender_combine>();
+	b_combine_upscaled = xr_new<CBlender_combine_upscaled>();
 	b_ssao = xr_new<CBlender_SSAO_noMSAA>();
 	///////////////////////////////////lvutner
 	b_sunshafts = xr_new<CBlender_sunshafts>();
@@ -723,14 +732,17 @@ CRenderTarget::CRenderTarget()
 			}
 		}
 
-		// generic(LDR) RTs
-		//LV - we should change their formats into D3DFMT_A16B16G16R16F for better HDR support.
+		// generic(LDR) RTs. Keep SDR targets format-compatible with the existing
+		// LUT/DOF/NVG/thermal CopyResource chain. The upscaler converts generic0
+		// to FP16 with a draw pass into rt_UpscaleInput instead.
+		const D3DFORMAT genericSceneFormat =
+			RImplementation.o.dx11_hdr10 ? D3DFMT_A16B16G16R16F : D3DFMT_A8R8G8B8;
 		if (RImplementation.o.dx11_hdr10) {
-			rt_Generic_0.create(r2_RT_generic0, w, h, D3DFMT_A16B16G16R16F, 1);
+			rt_Generic_0.create(r2_RT_generic0, w, h, genericSceneFormat, 1);
 			rt_Generic_1.create(r2_RT_generic1, w, h, D3DFMT_A16B16G16R16F, 1);
 			rt_Generic.create(r2_RT_generic, w, h, D3DFMT_A16B16G16R16F, 1);
 		} else {
-			rt_Generic_0.create(r2_RT_generic0, w, h, D3DFMT_A8R8G8B8, 1);
+			rt_Generic_0.create(r2_RT_generic0, w, h, genericSceneFormat, 1);
 			rt_Generic_1.create(r2_RT_generic1, w, h, D3DFMT_A8R8G8B8, 1);
 			rt_Generic.create(r2_RT_generic, w, h, D3DFMT_A8R8G8B8, 1);
 		}
@@ -741,11 +753,8 @@ CRenderTarget::CRenderTarget()
 		rt_Heat.create(r2_RT_heat, w, h, D3DFMT_A8R8G8B8, SampleCount);
 		//--DSR-- HeatVision_end
 
-		if (RImplementation.o.dx11_hdr10) {
-			rt_Generic_temp.create("$user$generic_temp", w, h, D3DFMT_A16B16G16R16F, RImplementation.o.dx10_msaa ? SampleCount : 1);
-		} else {
-			rt_Generic_temp.create("$user$generic_temp", w, h, D3DFMT_A8R8G8B8, RImplementation.o.dx10_msaa ? SampleCount : 1);
-		}
+		rt_Generic_temp.create("$user$generic_temp", w, h, genericSceneFormat,
+			RImplementation.o.dx10_msaa ? SampleCount : 1);
 
 		rt_dof.create(r2_RT_dof, w, h, RImplementation.o.dx11_hdr10 ? D3DFMT_A16B16G16R16F : D3DFMT_A8R8G8B8);
 
@@ -868,6 +877,8 @@ CRenderTarget::CRenderTarget()
 			rt_UpscaleDepth.create(r4_RT_upscale_depth, w, h, D3DFMT_R32F, 1);
 			rt_UpscaleOutput.create(r4_RT_upscale_output, Device.dwWidth, Device.dwHeight,
 				D3DFMT_A16B16G16R16F, 1, true);
+			rt_UpscalePost.create(r4_RT_upscale_post, Device.dwWidth, Device.dwHeight,
+				D3DFMT_A16B16G16R16F, 1);
 		}
 	}
 
@@ -1200,6 +1211,9 @@ CRenderTarget::CRenderTarget()
 			D3DDECL_END()
 		};
 		startup_shader_tasks.run([this]() { s_combine.create_parallel(b_combine, "r2\\combine"); });
+		if (m_upscalerActive)
+			startup_shader_tasks.run([this]()
+				{ s_combine_upscaled.create_parallel(b_combine_upscaled, "r2\\combine_upscaled"); });
 		s_combine_volumetric.create("combine_volumetric");
 		s_combine_dbg_0.create("effects\\screen_set", r2_RT_smap_surf);
 		s_combine_dbg_1.create("effects\\screen_set", r2_RT_luminance_t8);
@@ -1594,6 +1608,7 @@ CRenderTarget::~CRenderTarget()
 
 	// Blenders
 	xr_delete(b_combine);
+	xr_delete(b_combine_upscaled);
 	xr_delete(b_luminance);
 	xr_delete(b_bloom);
 	xr_delete(b_accum_reflected);

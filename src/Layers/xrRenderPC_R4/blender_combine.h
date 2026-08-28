@@ -34,3 +34,19 @@ public:
 	LPCSTR Name;
 	LPCSTR Definition;
 };
+
+// Display-resolution combine used after DLSS/FSR reconstruction.  Keeping it
+// separate avoids consuming the six legacy combine elements and makes the
+// low-resolution G-buffer/display-resolution color boundary explicit.
+class CBlender_combine_upscaled : public IBlender
+{
+public:
+	virtual LPCSTR getComment() { return "INTERNAL: upscaled combiner"; }
+	virtual BOOL canBeDetailed() { return FALSE; }
+	virtual BOOL canBeLMAPped() { return FALSE; }
+
+	virtual void Compile(CBlender_Compile& C);
+
+	CBlender_combine_upscaled();
+	virtual ~CBlender_combine_upscaled();
+};

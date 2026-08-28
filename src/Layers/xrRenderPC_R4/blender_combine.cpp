@@ -9,6 +9,41 @@ CBlender_combine::~CBlender_combine()
 {
 }
 
+CBlender_combine_upscaled::CBlender_combine_upscaled() { description.CLS = 0; }
+
+CBlender_combine_upscaled::~CBlender_combine_upscaled()
+{
+}
+
+void CBlender_combine_upscaled::Compile(CBlender_Compile& C)
+{
+	IBlender::Compile(C);
+	if (C.iElement > 1)
+		return;
+
+	C.r_Pass("stub_notransform_aa_AA",
+		C.iElement == 1 ? "anthology_combine_2_upscaled_d" : "anthology_combine_2_upscaled",
+		FALSE, FALSE, FALSE);
+	C.r_dx10Texture("s_position", r2_RT_P);
+	C.r_dx10Texture("s_image", r4_RT_upscale_output);
+	C.r_dx10Texture("s_bloom", r2_RT_bloom1);
+	C.r_dx10Texture("s_bloom_new", r2_RT_pp_bloom);
+	C.r_dx10Texture("s_distort", r2_RT_generic1);
+	C.r_dx10Texture("s_blur_2", r2_RT_blur_2);
+	C.r_dx10Texture("s_blur_4", r2_RT_blur_4);
+	C.r_dx10Texture("s_blur_8", r2_RT_blur_8);
+	C.r_dx10Texture("s_motion_vectors", r2_RT_ssfx_motion_vectors);
+	C.r_dx10Texture("s_ssfx_sss", r2_RT_ssfx_sss);
+	C.r_dx10Texture("s_ssfx_bloom", r2_RT_ssfx_bloom1);
+	C.r_dx10Texture("s_lut_atlas", "shaders\\lut_atlas");
+	C.r_dx10Texture("s_lens_dirt", "shaders\\lens_dirt");
+	C.r_dx10Texture("s_noise_1", "shaders\\noise\\noise_tex");
+	C.r_dx10Sampler("smp_linear");
+	C.r_dx10Sampler("smp_nofilter");
+	C.r_dx10Sampler("smp_rtlinear");
+	C.r_End();
+}
+
 void CBlender_combine::Compile(CBlender_Compile& C)
 {
 	IBlender::Compile(C);

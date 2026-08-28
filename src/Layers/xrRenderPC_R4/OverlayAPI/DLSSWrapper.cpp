@@ -65,9 +65,9 @@ bool CDLSSWrapper::Create(const ContextParameters& params, u32 qualityPreset)
     create.Feature.InTargetWidth = params.displayWidth;
     create.Feature.InTargetHeight = params.displayHeight;
     create.Feature.InPerfQualityValue = ResolveQuality(qualityPreset);
-	// The current path supplies tonemapped values with pre-exposure 1.0.  Auto
-	// exposure on that signal causes NGX to re-normalize an already exposed image
-	// and produces severe blur/pumping, so keep the explicit LDR contract.
+	// SSS/NVG/thermal have already authored a display-referred signal here.
+	// Keep the NGX contract explicitly LDR; advertising pseudo-HDR without the
+	// renderer's real exposure value causes pumping, ghosting and extra blur.
 	create.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
 
     const NVSDK_NGX_Result result = NGX_D3D11_CREATE_DLSS_EXT(m_context, &m_handle, m_parameters, &create);
@@ -89,7 +89,9 @@ bool CDLSSWrapper::Draw(const DrawParameters& params)
     NVSDK_NGX_D3D11_DLSS_Eval_Params eval = {};
     eval.Feature.pInColor = params.unresolvedColor;
     eval.Feature.pInOutput = params.output;
-    eval.Feature.InSharpness = 0.f;
+	// NGX 3.10 no longer honours InSharpness. The optional compact display
+	// sharpen pass is used for DLSS after reconstruction instead.
+	eval.Feature.InSharpness = 0.f;
     eval.pInDepth = params.depth;
     eval.pInMotionVectors = params.motionVectors;
     eval.InRenderSubrectDimensions.Width = params.renderWidth;

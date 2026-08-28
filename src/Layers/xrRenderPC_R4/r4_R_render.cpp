@@ -37,7 +37,7 @@ void CRender::render_menu()
 	RCache.set_ColorWriteEnable();
 
 	const bool nativeMenu = Target->upscaler_active();
-	const ref_rt& menuColor = nativeMenu ? Target->rt_UpscaleOutput : Target->rt_Generic_0;
+	const ref_rt& menuColor = nativeMenu ? Target->rt_UpscalePost : Target->rt_Generic_0;
 	const ref_rt& menuDistortion = nativeMenu ? Target->rt_ui_pda : Target->rt_Generic_1;
 	ID3DDepthStencilView* menuDepth = nativeMenu ? nullptr : Target->main_depth();
 	if (nativeMenu)
