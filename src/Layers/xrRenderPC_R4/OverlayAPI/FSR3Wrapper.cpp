@@ -32,10 +32,9 @@ bool CFSR3Wrapper::Create(const ContextParameters& params)
     m_description.maxRenderSize = params.maxRenderSize;
     m_description.maxUpscaleSize = params.displaySize;
     m_description.fpMessage = FsrMessage;
-	// No explicit exposure texture is supplied by the current LDR pipeline.
-	// Let FSR build a consistent exposure instead of treating a null input as
-	// an application-controlled resource.
-	m_description.flags |= FFX_FSR3UPSCALER_ENABLE_AUTO_EXPOSURE;
+	// Tonemapped input uses an explicit pre-exposure of 1.0.  Enabling FSR auto
+	// exposure here analyzes the already exposed image a second time and smears
+	// contrast, especially at low presets.
 #ifdef DEBUG
     m_description.flags |= FFX_FSR3UPSCALER_ENABLE_DEBUG_CHECKING;
 #endif

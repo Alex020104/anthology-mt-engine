@@ -222,12 +222,20 @@ void CRender::Render()
 		GMBase.r_dsgraph_capture_hud();
 		GMBase.r_dsgraph_render_hud();
 		GMBase.r_dsgraph_render_lods(true,true);
-		if (Details) Details->Render();
+		// Details/grass are one of the largest avoidable draw-list costs in the
+		// second camera.  Balanced and Performance deliberately omit them while
+		// preserving the world geometry, lighting and the native PiP cadence.
+		const bool reduced_svp_details = Device.m_SecondViewport.IsSVPFrame() &&
+			ScopeLenseQualityTier() >= 2;
+		if (Details && !reduced_svp_details)
+			Details->Render();
 		Target->phase_scene_end();
 	}
 
 	// Wall marks
-	if (Wallmarks)
+	const bool reduced_svp_wallmarks = Device.m_SecondViewport.IsSVPFrame() &&
+		ScopeLenseQualityTier() >= 3;
+	if (Wallmarks && !reduced_svp_wallmarks)
 	{
 		PIX_EVENT(DEFER_WALLMARKS);
 		Target->phase_wallmarks();
@@ -313,6 +321,10 @@ void CRender::Render()
 	{
 		PIX_EVENT(DEFER_SUN);
 		RImplementation.stats.l_visible ++;
+		// render_sun_cascades also performs direct-light accumulation; skipping it
+		// would leave reduced-quality PiP without direct sun even when cached shadow
+		// maps exist. Keep this coherent until a separate cached-cascade accumulation
+		// path is implemented.
 		render_sun_cascades();
 		Target->increment_light_marker();
 		Target->accum_direct_blend();

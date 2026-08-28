@@ -153,8 +153,10 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
         params.displayWidth = m_displayWidth;
         params.displayHeight = m_displayHeight;
         params.reset = resetHistory;
-        params.sharpening = ps_r4_upscaler_sharpness > EPS_L;
-        params.sharpness = ps_r4_upscaler_sharpness;
+		// Use one display-space CAS pass for both vendors.  Backend sharpening here
+		// would otherwise sharpen FSR twice while DLSS remained unsharpened.
+		params.sharpening = false;
+		params.sharpness = 0.f;
         params.frameTimeMs = _max(1.f, Device.fTimeDelta * 1000.f);
         params.nearPlane = VIEWPORT_NEAR;
         params.farPlane = g_pGamePersistent && g_pGamePersistent->Environment().CurrentEnv ?

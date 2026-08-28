@@ -25,11 +25,13 @@ void CRender::Calculate()
 	g_fSCREEN = float(renderWidth * renderHeight) * fov_factor * (EPS_S + ps_r__LOD);
 	if (Device.m_SecondViewport.IsSVPFrame() && ps_scope_lense_quality_percent < 100)
 	{
-		// Apply the same SSA/LOD budget that a linearly scaled PiP viewport would
-		// have, without resizing the shared render-target chain or touching the
-		// presented main view. At 100% the native path remains unchanged.
+		// The PiP pass still uses the shared full-size deferred chain.  A quality^2
+		// multiplier made the 25% preset use 1/16 of the normal visibility budget,
+		// which removed whole pieces of the world.  A linear budget is the coherent
+		// CPU-side analogue of the quality control: it culls progressively smaller
+		// distant submissions without changing the viewport or camera projection.
 		const float quality = clampr(ps_scope_lense_quality_percent, 25, 100) * 0.01f;
-		g_fSCREEN *= quality * quality;
+		g_fSCREEN *= quality;
 	}
 	r_ssaDISCARD = _sqr(ps_r__ssaDISCARD) / g_fSCREEN;
 	r_ssaDONTSORT = _sqr(ps_r__ssaDONTSORT / 3) / g_fSCREEN;

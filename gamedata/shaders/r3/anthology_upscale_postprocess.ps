@@ -1,0 +1,66 @@
+#include "common.h"
+#include "hdr10.h"
+
+Texture2D s_base0;
+Texture2D s_base1;
+Texture2D s_noise;
+
+uniform float4 c_brightness;
+uniform float4 anthology_upscaler_params; // x: display-space CAS strength
+
+float3 sample_scene(float2 tc0, float2 tc1, int2 offset)
+{
+	float3 primary = s_base0.SampleLevel(smp_rtlinear, tc0, 0.0f, offset).rgb;
+	// Normal gameplay has no duality offset. Avoid reading the same display
+	// texture twice for all nine CAS taps; retain the second coordinate only
+	// when the gameplay duality effect is actually active.
+	[branch]
+	if (any(abs(tc0 - tc1) >= 0.000001f))
+		primary = 0.5f * (primary + s_base1.SampleLevel(smp_rtlinear, tc1, 0.0f, offset).rgb);
+	return primary;
+}
+
+float3 sharpen_scene(float2 tc0, float2 tc1)
+{
+	float3 source_center = max(sample_scene(tc0, tc1, int2(0, 0)), 0.0f);
+	float strength = saturate(anthology_upscaler_params.x);
+	if (strength <= 0.0001f)
+		return source_center;
+
+	// This pass consumes the already tone-mapped LDR scene stored in FP16.
+	// Apply CAS directly in that domain. The former x/(1+x) inverse expansion
+	// could divide by an almost-zero value on bright edges and create speckles.
+	float3 a = max(sample_scene(tc0, tc1, int2(-1, -1)), 0.0f);
+	float3 b = max(sample_scene(tc0, tc1, int2( 0, -1)), 0.0f);
+	float3 c = max(sample_scene(tc0, tc1, int2( 1, -1)), 0.0f);
+	float3 d = max(sample_scene(tc0, tc1, int2(-1,  0)), 0.0f);
+	float3 e = source_center;
+	float3 f = max(sample_scene(tc0, tc1, int2( 1,  0)), 0.0f);
+	float3 g = max(sample_scene(tc0, tc1, int2(-1,  1)), 0.0f);
+	float3 h = max(sample_scene(tc0, tc1, int2( 0,  1)), 0.0f);
+	float3 i = max(sample_scene(tc0, tc1, int2( 1,  1)), 0.0f);
+
+	float3 mn = min(min(min(d, e), min(f, b)), h);
+	mn += min(mn, min(min(a, c), min(g, i)));
+	float3 mx = max(max(max(d, e), max(f, b)), h);
+	mx += max(mx, max(max(a, c), max(g, i)));
+	float3 amp = saturate(min(mn, 2.0f - mx) * rcp(max(mx, 0.00001f)));
+	amp = rsqrt(max(amp, 0.00001f));
+	float3 weight = -rcp(amp * 5.0f);
+	float3 filtered = ((b + d + f + h) * weight + e) * rcp(4.0f * weight + 1.0f);
+	return max(lerp(e, filtered, strength), 0.0f);
+}
+
+float4 main(p_postpr I) : SV_Target
+{
+	float3 image = sharpen_scene(I.Tex0, I.Tex1);
+	float gray = dot(image, I.Gray);
+	image = lerp(gray, image, I.Gray.w);
+
+	float4 t_noise = s_noise.Sample(smp_linear, I.Tex2);
+	float3 noised = image * t_noise.rgb * 2.0f;
+	image = lerp(noised, image, I.Color.w);
+	image = (image * I.Color + c_brightness) * 2.0f;
+	image = HDR10_ToDisplay_World(image);
+	return float4(image, 1.0f);
+}

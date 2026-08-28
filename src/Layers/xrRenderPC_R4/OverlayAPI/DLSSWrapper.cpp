@@ -65,11 +65,10 @@ bool CDLSSWrapper::Create(const ContextParameters& params, u32 qualityPreset)
     create.Feature.InTargetWidth = params.displayWidth;
     create.Feature.InTargetHeight = params.displayHeight;
     create.Feature.InPerfQualityValue = ResolveQuality(qualityPreset);
-    // phase_upscale receives the already-tonemapped LDR scene. Advertising it
-    // as HDR makes NGX apply the wrong luminance contract; only request the
-    // automatic exposure path because no explicit exposure texture is bound.
-    create.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
-        NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
+	// The current path supplies tonemapped values with pre-exposure 1.0.  Auto
+	// exposure on that signal causes NGX to re-normalize an already exposed image
+	// and produces severe blur/pumping, so keep the explicit LDR contract.
+	create.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
 
     const NVSDK_NGX_Result result = NGX_D3D11_CREATE_DLSS_EXT(m_context, &m_handle, m_parameters, &create);
     if (result != NVSDK_NGX_Result_Success)

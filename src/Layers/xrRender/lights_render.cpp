@@ -51,6 +51,8 @@ IC void hud_light_restore(xr_map<light*, std::pair<Fvector, Fvector>>& saved_pos
 
 void CRender::render_lights(light_Package& LP)
 {
+	const bool reduced_svp_shadow_casters = Device.m_SecondViewport.IsSVPFrame() &&
+		ScopeLenseQualityTier() >= 2;
 	xr_map<light*, std::pair<Fvector, Fvector>> saved_pos;
 	//////////////////////////////////////////////////////////////////////////
 	// 0. apply hud_mode projection if necessary
@@ -187,7 +189,16 @@ void CRender::render_lights(light_Package& LP)
 								L->GMLight.r_dsgraph_capture_static();
 								L->m_moving_frames++;
 							}
-							L->GMLight.r_dsgraph_capture_dynamic(L->ignore_object);
+							if (reduced_svp_shadow_casters)
+							{
+								// Dynamic shadow traversal is repeated for every visible local
+								// light and is one of the heaviest CPU costs of the second camera.
+								// Reduced PiP tiers keep static shadows and the lit actors, but do
+								// not rebuild actor/particle shadow casters for the lens pass.
+								L->GMLight.RGraph.clear_dynamic<false>();
+							}
+							else
+								L->GMLight.r_dsgraph_capture_dynamic(L->ignore_object);
 						}
 					}
 
@@ -202,7 +213,8 @@ void CRender::render_lights(light_Package& LP)
 						RCache.set_xform_project(L->X.S.project);
 						L->GMLight.r_dsgraph_render_static(0, false);
 						L->GMLight.r_dsgraph_render_dynamic(0, true);
-						if (Details && Details->dtFS && check_grass_shadow(L, ViewBase) && L->flags.bShadow && !decorative_light)
+						if (!reduced_svp_shadow_casters && Details && Details->dtFS &&
+							check_grass_shadow(L, ViewBase) && L->flags.bShadow && !decorative_light)
 						{
 							Details->fade_distance = -1; // Use light position to calc "fade"
 							Details->light_position.set(L->position);

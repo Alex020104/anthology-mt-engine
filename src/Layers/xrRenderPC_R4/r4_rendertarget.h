@@ -427,7 +427,8 @@ public:
 	void u_setrt(u32 W, u32 H, ID3DRenderTargetView* _1, ID3DRenderTargetView* _2, ID3DRenderTargetView* _3,
 	             ID3DDepthStencilView* zb);
 	void u_calc_tc_noise(Fvector2& p0, Fvector2& p1);
-	void u_calc_tc_duality_ss(Fvector2& r0, Fvector2& r1, Fvector2& l0, Fvector2& l1);
+	void u_calc_tc_duality_ss(Fvector2& r0, Fvector2& r1, Fvector2& l0, Fvector2& l1,
+		bool sourceAtDisplayResolution = false);
 	BOOL u_need_PP();
 	bool u_need_CM();
 	BOOL u_DBT_enable(float zMin, float zMax);
@@ -516,7 +517,7 @@ public:
 	void phase_luminance();
 	void phase_combine();
 	void phase_combine_volumetric();
-	void phase_pp();
+	void phase_pp(bool upscaledSource = false);
 	void phase_upscale(bool temporal);
 
 	virtual void set_blur(float f) { param_blur = f; }

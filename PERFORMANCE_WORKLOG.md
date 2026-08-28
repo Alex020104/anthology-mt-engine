@@ -5211,3 +5211,61 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   upscaler runtime addons. No new game is required; runtime quality and frame
   pacing still require validation on the owner's existing save. The shader
   cache was not read, deleted, moved or rewritten.
+
+## 2026-08-28 - v136.6 PiP projection and upscaler boundary correction
+
+- Fresh v136.5 profiling separated two independent regressions. The owner's
+  broken 25% PiP captures were recorded with both temporal upscalers disabled;
+  meanwhile PiP 25%, 50% and 100% had nearly identical frame cost. The second
+  camera remained a complete CPU visibility/draw pass, while only its viewport
+  was reduced inside a shared full-size deferred chain.
+- Removed that incompatible viewport crop from `rmNear`, `rmFar`, `rmNormal`
+  and render-target viewport selection. PiP screen-space passes once again use
+  one coherent projection and full-frame UV domain. The final quality shader
+  pixelates the complete lens image instead of enlarging its upper-left corner,
+  eliminating black/missing world regions.
+- Replaced the destructive PiP `quality^2` SSA/LOD multiplier (1/16 budget at
+  25%) with a linear visibility budget. Balanced/Performance now omit PiP-only
+  grass/details, repeated dynamic local-light shadow casters and the heaviest
+  volumetric work; Performance also omits PiP wallmarks. These are real
+  second-camera CPU/draw reductions while preserving the weapon-authored
+  cadence, coherent projection and main-view renderer.
+- Corrected the smallest safe DLSS/FSR boundary without pretending it is the
+  complete IX-Ray HDR pipeline:
+  - combine output goes directly to the FP16 upscaler input instead of first
+    quantizing through the A8R8G8B8 albedo target;
+  - vendor reconstruction happens before legacy noise, duality and colour-map
+    postprocess, so those display effects no longer enter temporal history;
+  - temporal failure and SVP frames spatially reconstruct into the same FP16
+    display target without advancing main-camera history;
+  - automatic exposure is disabled for the explicitly pre-exposed LDR signal;
+  - FSR backend sharpening is disabled and both vendors share one native-size
+    contrast-adaptive sharpening/postprocess pass controlled by the existing
+    sharpness option;
+  - the legacy core-to-display blur offset is no longer forced onto an image
+    that DLSS/FSR has already reconstructed at display size;
+  - the display CAS works directly in the LDR domain, avoiding the former
+    inverse-compression singularity and its bright speckles;
+  - HDR10 explicitly falls back to the intact native chain until its separate
+    bloom/flare path is ported as one coherent upscaler boundary.
+- This stage improves reconstruction quality but cannot manufacture a large
+  FPS gain in the profiled PiP scene, where GPU load was only 44-48% and the
+  second camera's CPU traversal dominated. A full IX-style pre-tonemap HDR
+  boundary and dedicated physical PiP RT chain remain separate larger work.
+- The corrected PiP shader was installed directly into the active module 1.1,
+  as requested, and mirrored to `D:/ANTHOLOGY_DEV/addons/Anthology PiP Rework`.
+  The new post-upscale shaders are active through the existing junctioned
+  `Anthology Upscaler Runtime v135` addon.
+- `svp_quality`, normal post-upscale and colour-map post-upscale shaders pass
+  standalone `ps_5_0` compilation. Both `DX11|x64` and `DX11-AVX|x64` compile
+  and link with zero errors. Installed hashes match the build artifacts:
+  - DX11 EXE `EE8AB496B423743466F166804789EA624CA0E4F7E7575C35BF30E1BA825FFF95`;
+  - DX11 PDB `908CD9D48D250E2926EF2B7C349CF6CCE63F94815D08C14E9B8FEBCD8B11E32E`;
+  - DX11-AVX EXE `2241AF53734EBDE0392EED718AFF59E23544E1E6BF729C8EDCFA8027AE8AD175`;
+  - DX11-AVX PDB `2A9859434896B956FB597A8365F4D43B4D36AC03065DB63DEAF17EA00DB81DBD`.
+- The complete pre-v136.6 binaries, latest log and active addon files are
+  recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1366_pre_pip_upscaler_contract_fix`.
+  No new game is required. Runtime visual/performance validation is required
+  on the owner's existing save. The shader cache was not read, deleted, moved
+  or rewritten.

@@ -634,7 +634,13 @@ void CRenderTarget::phase_combine()
 	}
 	else
 	{
-		if (PP_Complex) u_setrt(rt_Color, 0, 0, main_depth()); // LDR RT
+		if (PP_Complex)
+		{
+			// Keep the upscaler input in FP16 and avoid the old A8R8G8B8 roundtrip.
+			// Final postprocess/noise is applied after reconstruction below.
+			ref_rt& final_scene = m_upscalerActive ? rt_UpscaleInput : rt_Color;
+			u_setrt(final_scene, 0, 0, main_depth()); // LDR values, FP16 when upscaling
+		}
 		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
 	//. u_setrt				( Device.dwWidth,Device.dwHeight,HW.pBaseRT,NULL,NULL,HW.pBaseZB);
@@ -770,14 +776,21 @@ void CRenderTarget::phase_combine()
 	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && !current_view_heatvision) //--DSR-- HeatVision
 		g_pGamePersistent->Environment().RenderFlares(); // lens-flares
 
-	//	PP-if required
-	if (PP_Complex)
+	// Upscaling must see the clean scene, not noise/color-map pixels already
+	// baked into temporal history.  Reconstruct first, then run final PP at the
+	// display resolution.  SVP uses the same spatial fallback without advancing
+	// the main camera's temporal history.
+	if (m_upscalerActive)
+	{
+		phase_upscale(!svp_frame);
+		PIX_EVENT(phase_pp);
+		phase_pp(true);
+	}
+	else if (PP_Complex)
 	{
 		PIX_EVENT(phase_pp);
-		phase_pp();
+		phase_pp(false);
 	}
-	if (m_upscalerActive)
-		phase_upscale(!svp_frame);
 
 	//	Re-adapt luminance
 	RCache.set_Stencil(FALSE);

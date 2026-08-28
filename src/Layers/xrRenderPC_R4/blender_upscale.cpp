@@ -10,6 +10,26 @@ void CBlender_upscale::Compile(CBlender_Compile& C)
 {
     IBlender::Compile(C);
 
+	if (C.iElement == 4 || C.iElement == 5)
+	{
+		const bool colorMap = C.iElement == 5;
+		C.r_Pass("stub_notransform_postpr",
+			colorMap ? "anthology_upscale_postprocess_cm" : "anthology_upscale_postprocess",
+			FALSE, FALSE, FALSE, FALSE, D3DBLEND_SRCALPHA, D3DBLEND_INVSRCALPHA);
+		C.r_dx10Texture("s_base0", r4_RT_upscale_output);
+		C.r_dx10Texture("s_base1", r4_RT_upscale_output);
+		C.r_dx10Texture("s_noise", "fx\\fx_noise2");
+		if (colorMap)
+		{
+			C.r_dx10Texture("s_grad0", "$user$cmap0");
+			C.r_dx10Texture("s_grad1", "$user$cmap1");
+		}
+		C.r_dx10Sampler("smp_rtlinear");
+		C.r_dx10Sampler("smp_linear");
+		C.r_End();
+		return;
+	}
+
 	if (C.iElement == 2)
 	{
 		// Native-resolution menu composition. The normal world generic targets

@@ -65,12 +65,6 @@ public:
 
 void CRenderTarget::set_viewport_size(ID3DDeviceContext * dev, float w, float h)
 {
-	if (Device.m_SecondViewport.IsSVPFrame() && RImplementation.active_phase() == CRender::PHASE_NORMAL)
-	{
-		const float scale = ScopeLenseRenderScale();
-		w = std::max(1.0f, std::floor(w * scale));
-		h = std::max(1.0f, std::floor(h * scale));
-	}
 	custom_viewport[0].Width = w;
 	custom_viewport[0].Height = h;
 	dev->RSSetViewports(1, custom_viewport);
@@ -398,6 +392,15 @@ CRenderTarget::CRenderTarget()
 	if (ps_r4_upscaler != AnthologyUpscalerOff && !RImplementation.o.ssfx_motionvectors)
 	{
 		Msg("! [UPSCALER] SSS motion-vector shaders are missing; native fallback selected");
+		ps_r4_upscaler = AnthologyUpscalerOff;
+	}
+	if (ps_r4_upscaler != AnthologyUpscalerOff && RImplementation.o.dx11_hdr10)
+	{
+		// The current temporal path reconstructs the SDR/FP16 combine result before
+		// the final display pass. HDR10 still owns a separate bloom/flare chain on
+		// rt_Color, so mixing both paths would feed stale/incomplete data to the
+		// vendor API. Fail coherently until the full HDR10 chain is ported.
+		Msg("! [UPSCALER] HDR10 is enabled; native fallback selected");
 		ps_r4_upscaler = AnthologyUpscalerOff;
 	}
 

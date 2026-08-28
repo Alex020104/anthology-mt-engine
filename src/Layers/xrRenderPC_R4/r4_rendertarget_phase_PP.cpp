@@ -34,15 +34,22 @@ void CRenderTarget::u_calc_tc_noise(Fvector2& p0, Fvector2& p1)
 	p1.set(end_u, end_v);
 }
 
-void CRenderTarget::u_calc_tc_duality_ss(Fvector2& r0, Fvector2& r1, Fvector2& l0, Fvector2& l1)
+void CRenderTarget::u_calc_tc_duality_ss(Fvector2& r0, Fvector2& r1, Fvector2& l0, Fvector2& l1,
+	bool sourceAtDisplayResolution)
 {
 	// Calculate ordinaty TCs from blur and SS
 	float tw = float(dwWidth);
 	float th = float(dwHeight);
-	if (dwHeight != m_renderHeight) param_blur = 1.f;
+	// The legacy core-to-display path used a one-pixel blur to hide spatial
+	// scaling. A temporal upscaler has already reconstructed a display-sized
+	// image, so forcing that offset here softens DLSS/FSR every frame. Keep the
+	// gameplay blur parameter intact instead of mutating it as render state.
+	float blur = param_blur;
+	if (!sourceAtDisplayResolution && dwHeight != m_renderHeight)
+		blur = 1.f;
 	Fvector2 shift, p0, p1;
 	shift.set(.5f / tw, .5f / th);
-	shift.mul(param_blur);
+	shift.mul(blur);
 	p0.set(.5f / tw, .5f / th).add(shift);
 	p1.set((tw + .5f) / tw, (th + .5f) / th).add(shift);
 
@@ -111,19 +118,24 @@ struct TL_2c3uv
 	}
 };
 
-void CRenderTarget::phase_pp()
+void CRenderTarget::phase_pp(bool upscaledSource)
 {
 	// combination/postprocess
-	if (m_upscalerActive)
-		u_setrt(rt_UpscaleInput, nullptr, nullptr, nullptr);
-	else
-		u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+	u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	RImplementation.rmNormal();
 	//	Element 0 for for normal post-process
 	//	Element 4 for color map post-process
 	bool bCMap = u_need_CM();
 	//RCache.set_Element	(s_postprocess->E[bCMap ? 4 : 0]);
-	if (!RImplementation.o.dx10_msaa)
+	if (upscaledSource)
+	{
+		// Vendor reconstruction owns only the low-resolution scene.  Noise,
+		// colour mapping and the common CAS pass stay at display resolution so
+		// they are neither accumulated into temporal history nor blurred.
+		RCache.set_Element(s_upscale->E[bCMap ? 5 : 4]);
+		RCache.set_c("anthology_upscaler_params", ps_r4_upscaler_sharpness, 0.0f, 0.0f, 0.0f);
+	}
+	else if (!RImplementation.o.dx10_msaa)
 	{
 		//		RCache.set_Shader	(s_postprocess	);
 		RCache.set_Element(s_postprocess->E[bCMap ? 4 : 0]);
@@ -150,7 +162,7 @@ void CRenderTarget::phase_pp()
 	float _h = float(dwHeight);
 
 	Fvector2 n0, n1, r0, r1, l0, l1;
-	u_calc_tc_duality_ss(r0, r1, l0, l1);
+	u_calc_tc_duality_ss(r0, r1, l0, l1, upscaledSource);
 	u_calc_tc_noise(n0, n1);
 
 	// Fill vertex buffer
