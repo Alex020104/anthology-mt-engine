@@ -534,6 +534,7 @@ public:
 	u32 get_core_width() const { return m_renderWidth; }
 	u32 get_core_height() const { return m_renderHeight; }
 	bool upscaler_active() const { return m_upscalerActive; }
+	ref_selement& upscaler_menu_element() { return s_upscale->E[2]; }
 	ID3DDepthStencilView* main_depth() const { return m_upscalerActive ? rt_Depth->pZRT : HW.pBaseZB; }
 
 	virtual void set_cm_imfluence(float f) { param_color_map_influence = f; }

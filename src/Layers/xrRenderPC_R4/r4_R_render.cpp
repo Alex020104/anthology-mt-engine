@@ -17,24 +17,49 @@ void CRender::render_menu()
 	RCache.set_Stencil(FALSE);
 	RCache.set_ColorWriteEnable();
 
+	const bool nativeMenu = Target->upscaler_active();
+	const ref_rt& menuColor = nativeMenu ? Target->rt_UpscaleOutput : Target->rt_Generic_0;
+	const ref_rt& menuDistortion = nativeMenu ? Target->rt_ui_pda : Target->rt_Generic_1;
+	ID3DDepthStencilView* menuDepth = nativeMenu ? nullptr : Target->main_depth();
+	if (nativeMenu)
+	{
+		// Both native menu targets were SRVs during the previous composition.
+		// Commit their unbind before either resource becomes an RTV again.
+		RCache.set_Textures(nullptr);
+		SRVSManager.Apply();
+	}
+
 	// Main Render
 	{
-		Target->u_setrt(Target->rt_Generic_0, 0, 0, Target->main_depth()); // LDR RT
+		// The world buffers are intentionally low resolution with DLSS/FSR, but
+		// menu text and controls must remain at the display resolution. Reuse the
+		// full-size upscale output as a private menu color target.
+		Target->u_setrt(menuColor, 0, 0, menuDepth);
+		if (nativeMenu)
+			rmNormal();
 		g_pGamePersistent->OnRenderPPUI_main(); // PP-UI
 	}
 
 	// Distort
 	{
 		FLOAT ColorRGBA[4] = {127.0f / 255.0f, 127.0f / 255.0f, 0.0f, 127.0f / 255.0f};
-		Target->u_setrt(Target->rt_Generic_1, 0, 0, Target->main_depth()); // Now RT is a distortion mask
-		HW.pContext->ClearRenderTargetView(Target->rt_Generic_1->pRT, ColorRGBA);
+		// rt_ui_pda is also display-sized and is idle while the main menu is
+		// rendered, so it can hold the native distortion/magnifier mask without
+		// allocating another permanent full-resolution render target.
+		Target->u_setrt(menuDistortion, 0, 0, menuDepth);
+		if (nativeMenu)
+			rmNormal();
+		HW.pContext->ClearRenderTargetView(menuDistortion->pRT, ColorRGBA);
 		g_pGamePersistent->OnRenderPPUI_PP(); // PP-UI
 	}
 
 	// Actual Display
 	Target->u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	rmNormal();
-	RCache.set_Shader(Target->s_menu);
+	if (nativeMenu)
+		RCache.set_Element(Target->upscaler_menu_element());
+	else
+		RCache.set_Shader(Target->s_menu);
 	RCache.set_Geometry(Target->g_menu);
 
 	Fvector2 p0, p1;
@@ -113,9 +138,12 @@ void CRender::Render()
 
 	Target->phase_scene_prepare();
 
-
 	//******* Main calc - DEFERRER RENDERER
 	phase = PHASE_NORMAL;
+	// phase_upscale leaves a display-sized viewport for the native HUD. The
+	// scene targets above are core-sized, so restore their viewport before the
+	// first world draw of the next frame.
+	rmNormal();
 	
 	/*if (RImplementation.o.ssfx_core) // SSS23: DEPRECATED
 	{

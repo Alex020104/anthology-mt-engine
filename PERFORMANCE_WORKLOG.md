@@ -5095,3 +5095,37 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
 - The v136.1 binaries, failing log and minidump are recoverable at
   `E:/ANTHOLOGY_BACKUPS/20260828_v1362_pre_upscaler_srv_unbind_hotfix`.
   The shader cache was not read, deleted, moved or rewritten.
+
+## 2026-08-28 - v136.3 native menu and upscaler presentation fix
+
+- Fixed the corrupted first in-game frame seen with DLSS: a mostly black
+  display with recursively reduced world rectangles while the HUD remained at
+  the correct resolution. At 1920x1080 the rectangle boundaries followed the
+  active 2/3 render ratio repeatedly (`1920 -> 1280 -> 853 -> 569`), proving
+  that fullscreen coordinates and the viewport were being scaled more than
+  once rather than the vendor upscaler returning an invalid image.
+- The normal world pass now restores the core-resolution viewport immediately
+  after selecting its render targets. Legacy fullscreen shaders receive core
+  `screen_res` dimensions only during non-display normal-world passes; base,
+  loading, UI and shadow passes retain the display dimensions.
+- DLSS and FSR submit work directly to the DX11 immediate context. The renderer
+  now invalidates its cached pipeline state after every external dispatch, so
+  the final fullscreen present explicitly rebinds shaders, geometry, buffers,
+  resources and viewport instead of reusing stale pre-dispatch state.
+- Loading artwork and progress UI now explicitly select a display-sized
+  viewport after binding the backbuffer.
+- Fixed the blurred main menu without disabling its distortion/magnifier
+  effect. When an upscaler is active, menu color and distortion are rendered to
+  display-sized targets and then composed to the backbuffer. The legacy path
+  remains unchanged when upscaling is off.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. The
+  installed files are byte-identical to the build outputs:
+  - DX11 EXE `53CDA51D7E93B03397B0C3D232CB8072903559C0D695C3FD830C7173306C7DF4`;
+  - DX11 PDB `52695B82E8D9FC54F53062E700A5742B3B7A7C9A68377875A18CA546629C061C`;
+  - DX11-AVX EXE `9ACDC6838A7B2D73103E208CAA89C1F0C1FA4FCEFE5FE99C6F18CE2260CB4DF8`;
+  - DX11-AVX PDB `2FBC094A3B9E209640F0FAB747429722569CB4F4CFEE3B8871823F8B07F9FB23`.
+- The installed v136.2 binaries and latest runtime log are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1363_pre_upscaler_present_menu_fix`.
+  No new game is required. Runtime visual validation is still required on the
+  owner's existing save. The shader cache was not read, deleted, moved or
+  rewritten.

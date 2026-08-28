@@ -647,8 +647,29 @@ static class cl_screen_res : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, (float)RDEVICE.dwWidth, (float)RDEVICE.dwHeight, 1.0f / (float)RDEVICE.dwWidth,
-		             1.0f / (float)RDEVICE.dwHeight);
+		float width = (float)RDEVICE.dwWidth;
+		float height = (float)RDEVICE.dwHeight;
+
+#if defined(USE_DX11)
+		// Legacy TL fullscreen shaders derive clip coordinates from screen_res.
+		// While DLSS/FSR is active their vertices are authored in full *core*
+		// pixels, even for half-resolution intermediate targets. Keep display
+		// dimensions for base/UI/shadow passes and switch only normal world
+		// passes whose logical target is not display-sized.
+		IRender_Target* target = ::Render ? ::Render->getTarget() : nullptr;
+		const bool displayTarget = target && target->get_width() == RDEVICE.dwWidth &&
+			target->get_height() == RDEVICE.dwHeight;
+		const bool baseTarget = RCache.get_RT() == HW.pBaseRT;
+		const bool corePass = g_main_temporal_upscaler_active && target && !displayTarget && !baseTarget &&
+			::Render->active_phase() == CRender::PHASE_NORMAL;
+		if (corePass)
+		{
+			width = _max(1.0f, g_main_taa_render_size.x);
+			height = _max(1.0f, g_main_taa_render_size.y);
+		}
+#endif
+
+		RCache.set_c(C, width, height, 1.0f / width, 1.0f / height);
 	}
 } binder_screen_res;
 

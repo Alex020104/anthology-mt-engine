@@ -196,6 +196,11 @@ private:
 
 	void Invalidate();
 public:
+	// Vendor upscalers submit directly to the immediate context and bypass the
+	// backend's state tracking. Expose one narrow recovery point without making
+	// the internal invalidation routine part of the general render API.
+	IC void InvalidateExternalState() { Invalidate(); }
+
 	struct _stats
 	{
 		u32 polys;

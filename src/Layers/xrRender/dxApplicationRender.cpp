@@ -65,6 +65,15 @@ void dxApplicationRender::load_draw_internal(CApplication& owner)
 	RImplementation.rmNormal();
 	RCache.set_RT(HW.pBaseRT);
 	RCache.set_ZB(HW.pBaseZB);
+	// The temporal-upscale world pass leaves a core-sized logical target while
+	// loading UI is rendered directly to the display backbuffer. Do not inherit
+	// that viewport: loading artwork and progress text are native-resolution.
+	D3D_VIEWPORT viewport = {};
+	viewport.Width = Device.dwWidth;
+	viewport.Height = Device.dwHeight;
+	viewport.MinDepth = 0.f;
+	viewport.MaxDepth = 1.f;
+	HW.pContext->RSSetViewports(1, &viewport);
 #endif	//	USE_DX10
 
 #if defined(USE_DX10) || defined(USE_DX11)

@@ -23,6 +23,11 @@ void CRenderTarget::phase_upscale(bool temporal)
             rt_Position->pTexture->surface_get(),
             rt_UpscaleOutput->pTexture->surface_get(),
             resetHistory);
+		// NGX and FidelityFX issue commands directly on the immediate context and
+		// may replace viewport, shaders, input layout, buffers and pipeline state.
+		// Force XRay to bind its complete fullscreen-present state again instead
+		// of trusting stale backend caches left from before the vendor dispatch.
+		RCache.InvalidateExternalState();
 		if (resolved && Device.dwPrecacheFrame == 0)
 			m_upscalerResetHistory = false;
     }
