@@ -5350,3 +5350,50 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   source icon is also preserved under
   `E:/ANTHOLOGY_BACKUPS/engine/pre-v1371-icon-20260828`. No new game is required
   and the shader cache was not read, deleted, moved or rewritten.
+
+## 2026-08-28 - v138 PiP budget, upscaler mip contract, CoP logic restore and render-spike quarantine
+
+- PiP reduced-quality captures now use their physical render scale during the
+  visibility/SSA/LOD calculation, rather than only shrinking the render target.
+  Reduced tiers also avoid the bloom-only emissive submission whose output is
+  discarded. The native 100% path and the smooth SecondVP capture cadence are
+  unchanged.
+- DLSS/FSR now apply the temporal-upscaler mip-bias contract as an automatic
+  offset on top of the user's `r__tf_mipbias`: `log2(render/display)-1`, clamped
+  to `[-3,0]`. Device resets and live console changes preserve the effective
+  value, while disabling/recreating the backend restores the user's unmodified
+  setting. Initialisation logs configured/effective quality, dimensions, scale
+  and all three mip-bias values.
+- DLSS Custom no longer combines a reduced-resolution input with DLAA. It is
+  mapped to the nearest supported NGX quality preset and the render dimensions
+  use the same effective preset.
+- Malformed dynamic wallmarks are quarantined after the first rendering
+  exception instead of throwing and logging on every subsequent frame. The
+  misleading hard-coded two-GPU report was also removed.
+- Analysis of `xray_mg9000 (2).log` identified a renderer/content spike rather
+  than a CPU, VRAM or hardware failure: game-frame work stayed near 4 ms while
+  render time rose from about 25 ms to 59 ms immediately after nineteen
+  `Wind_Leaves` particle objects were activated. The log also contained 1133
+  repeated dynamic-wallmark failures. VRAM texture usage was about 3.15 GB on a
+  16 GB RX 6900 XT.
+- Added three independent MO2 modules, mirrored under `modpack-patches` and
+  installed from `D:/ANTHOLOGY_DEV/addons`:
+  - `Anthology NPC Logic v138 - Retail CoP Section Restore` restores saved
+    `walker`/`animpoint`/`remark` sections through the original CoP loaded path,
+    while leaving fresh smart jobs and Exo footsteps intact;
+  - `Anthology Performance v138 - Wind Leaves GPU Budget` removes only the
+    duplicate always-active fullscreen `p_fog_light` layer;
+  - `Anthology Performance v138 - Seeds and Leaves Pacing` runs the five cover
+    ray tests at 4 Hz and avoids duplicate storm-leaf particles in calm weather.
+- Lua 5.1 parsing/runtime branch checks and UTF-8/hash identity checks pass for
+  all three modules. Both `DX11|x64` and `DX11-AVX|x64` compile and link with
+  zero errors. Installed files match the build artifacts:
+  - DX11 EXE `DBA451E01F20E8E991C04E762BD90E5CC6C36A99F90380EA3C33926A763ABC3B`;
+  - DX11 PDB `1B08C100A6739C14B904370D28ADE7A92B35EBF9C64E61658265DF9C42510CEC`;
+  - DX11-AVX EXE `62D20375565A1486453FA3EDE185730704D6704658F95D5255F079B570EE4D41`;
+  - DX11-AVX PDB `CD0BCD89F12D7DE4C1E2638E85BEFF2E066CF74C27A4AD10263B9918383A497E`.
+- The complete pre-v138 state is recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260828_v138_pre_pip_upscaler_cop_logic_render_budget`.
+  No new game is required. A save already corrupted to `remark@see` cannot
+  reveal its previous walker section, so the CoP regression test must create a
+  new save while the NPC is moving. The shader cache was not touched.
