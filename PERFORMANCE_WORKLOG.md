@@ -5303,3 +5303,22 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   cost of a second visibility traversal. Likewise DLSS/FSR can improve a
   GPU-bound frame but cannot increase FPS on CPU/A-Life-bound bases where GPU
   utilisation is already well below saturation.
+- Integrated the two exact August 2026 Modded Exes UI APIs required by the
+  current Task List Extended 1.0.1 and Smooth Scrolling 0.0.3 releases as
+  separate upstream-authored commits:
+  - `22404716b1` exposes `CUIWindow.AttachChildKeepOwner`, allowing a Lua-owned
+    task-list item to be attached to an engine-owned window without transferring
+    and later duplicating ownership;
+  - `1662b5021a` exposes `CUIScriptWnd.OnMouse` and the wheel-up/wheel-down UI
+    events needed by the inertial scrolling hook.
+  Existing callback replacement and static map-spot APIs were already present,
+  so no unrelated upstream engine changes were imported. The two addons
+  themselves were not silently installed into MO2.
+- Final `DX11|x64` and `DX11-AVX|x64` builds compile and link with zero errors.
+  Installed files are SHA-256-identical to the build artifacts:
+  - DX11 EXE `79493EABA4F4CD3C7BA9380F085729AA3F4D230E91296C6450C18AE3D7E75FBB`;
+  - DX11 PDB `89D76DC3C520546586420AB7280824CCD0EFB2C9A96A4111B85B18F3B519BF70`;
+  - DX11-AVX EXE `0CC19B408EAB5FB6725A25FF14D0D8DFD3DD43690297441D7660EB9E97E1F689`;
+  - DX11-AVX PDB `064B82D5F0BF6A422A4DF821D6EE3BDC5504A1D96DDDFE792D9322937A60EBB2`.
+  No new game is required. The pre-v137 state remains recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260828_v137_pre_physical_pip_hdr_upscaler`.
