@@ -578,8 +578,16 @@ void CWallmarksEngine::Render()
                     }
                     catch (...)
                     {
-                        Msg("! Failed to render dynamic wallmark");
+                        // A malformed skeleton wallmark used to throw again on every
+                        // frame for the rest of its lifetime. Apart from log spam,
+                        // repeated SEH/C++ unwinding can turn one bad decal into a
+                        // periodic render-thread stall. The current item is already
+                        // protected by an intrusive_ptr and the slot is locked for
+                        // this render pass, so quarantine it immediately.
+                        Msg("! Failed to render dynamic wallmark; item quarantined");
                         w_verts = w_save;
+                        slot->skeleton_items.erase(slot->skeleton_items.begin() + j);
+                        --j;
                     }
 
 #ifdef	DEBUG

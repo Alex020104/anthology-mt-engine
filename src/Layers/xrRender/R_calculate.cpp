@@ -23,6 +23,13 @@ void CRender::Calculate()
 	const u32 renderWidth = GetMainRenderWidth();
 	const u32 renderHeight = GetMainRenderHeight();
 	g_fSCREEN = float(renderWidth * renderHeight) * fov_factor * (EPS_S + ps_r__LOD);
+	// The SecondVP quality RT bank is selected after Calculate(), so its reduced
+	// dimensions are not visible to this traversal. Apply a deliberately linear
+	// PiP-only SSA/LOD budget here: the physical RT already supplies the quadratic
+	// pixel saving, while scaling traversal by area caused visible geometry loss.
+	// At 100% this path remains bit-for-bit identical to the normal calculation.
+	if (Device.m_SecondViewport.IsSVPFrame() && ps_scope_lense_quality_percent < 100)
+		g_fSCREEN *= ScopeLenseRenderScale();
 	r_ssaDISCARD = _sqr(ps_r__ssaDISCARD) / g_fSCREEN;
 	r_ssaDONTSORT = _sqr(ps_r__ssaDONTSORT / 3) / g_fSCREEN;
 	r_ssaLOD_A = _sqr(ps_r2_ssaLOD_A / 3) / g_fSCREEN;

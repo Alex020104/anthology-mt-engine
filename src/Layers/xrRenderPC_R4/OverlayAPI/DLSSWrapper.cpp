@@ -5,11 +5,14 @@ NVSDK_NGX_PerfQuality_Value CDLSSWrapper::ResolveQuality(u32 qualityPreset) cons
 {
     switch (qualityPreset)
     {
+	case 0: return NVSDK_NGX_PerfQuality_Value_DLAA;
     case 4: return NVSDK_NGX_PerfQuality_Value_UltraPerformance;
     case 3: return NVSDK_NGX_PerfQuality_Value_MaxPerf;
     case 2: return NVSDK_NGX_PerfQuality_Value_Balanced;
     case 1: return NVSDK_NGX_PerfQuality_Value_MaxQuality;
-    default: return NVSDK_NGX_PerfQuality_Value_DLAA;
+	// Runtime maps Custom to a supported 0..4 preset. Keep the defensive
+	// fallback scaled instead of ever pairing a low-resolution input with DLAA.
+	default: return NVSDK_NGX_PerfQuality_Value_MaxQuality;
     }
 }
 

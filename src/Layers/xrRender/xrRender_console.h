@@ -110,6 +110,9 @@ extern ECORE_API float ps_r__ssaDONTSORT;
 extern ECORE_API float ps_r__ssaHZBvsTEX;
 extern ECORE_API int ps_r__tf_Anisotropic;
 extern ECORE_API float ps_r__tf_Mipbias;
+extern ECORE_API float GetEffectiveTextureMipBias();
+extern ECORE_API void ApplyEffectiveTextureMipBias();
+extern ECORE_API void SetTemporalUpscalerMipBias(float automaticOffset, bool active);
 
 enum
 {

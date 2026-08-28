@@ -87,7 +87,10 @@ namespace
 
 		res = _max(res, GetATIGpuNum());
 
-		res = _max(res, 2);
+		// Do not invent a second adapter. This value is informational in the
+		// current DX11 renderer, but the old hard-coded minimum produced a false
+		// "2-GPU" diagnosis on every single-GPU AMD/NVIDIA system.
+		res = _max(res, 1u);
 
 		res = _min(res, CHWCaps::MAX_GPUS);
 
@@ -102,7 +105,7 @@ namespace
 #else
 u32 GetGpuNum()
 {
-	return 2;
+	return 1;
 }
 #endif
 }

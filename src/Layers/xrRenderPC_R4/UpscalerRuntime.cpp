@@ -5,9 +5,52 @@
 
 CAnthologyUpscalerRuntime g_AnthologyUpscaler;
 
+namespace
+{
+u32 ResolveEffectiveQuality(u32 mode)
+{
+	const u32 configured = clampr(ps_r4_upscaler_quality, 0u, 5u);
+	if (mode != AnthologyUpscalerDLSS || configured != 5)
+		return configured;
+
+	// Direct NGX has no arbitrary custom-ratio quality mode. Snap Custom to the
+	// nearest supported preset and use that preset's render size, so a low-res
+	// input can never be paired with DLAA.
+	static const float presetScales[] = {1.0f, 2.0f / 3.0f, 0.5882353f, 0.5f, 1.0f / 3.0f};
+	const float customScale = clampr(ps_r4_upscaler_custom_scale, 0.33f, 1.0f);
+	u32 nearest = 0;
+	float nearestDistance = fabsf(customScale - presetScales[0]);
+	for (u32 i = 1; i < _countof(presetScales); ++i)
+	{
+		const float distance = fabsf(customScale - presetScales[i]);
+		if (distance < nearestDistance)
+		{
+			nearest = i;
+			nearestDistance = distance;
+		}
+	}
+	return nearest;
+}
+
+LPCSTR QualityName(u32 quality)
+{
+	switch (quality)
+	{
+	case 0: return "native";
+	case 1: return "quality";
+	case 2: return "balanced";
+	case 3: return "performance";
+	case 4: return "ultra_performance";
+	case 5: return "custom";
+	default: return "unknown";
+	}
+}
+}
+
 float CAnthologyUpscalerRuntime::ResolveRenderScale() const
 {
-    switch (ps_r4_upscaler_quality)
+	const u32 quality = ResolveEffectiveQuality(m_mode);
+    switch (quality)
     {
     case 0: return 1.f;
     case 1: return 2.f / 3.f;
@@ -52,6 +95,9 @@ bool CAnthologyUpscalerRuntime::ProbeAndResolveMode()
 
 bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u32 displayWidth, u32 displayHeight)
 {
+	// A failed/recreated backend must never leave its automatic sampler bias
+	// behind. The user-owned r__tf_mipbias value itself is never modified.
+	SetTemporalUpscalerMipBias(0.0f, false);
     m_renderWidth = renderWidth;
     m_renderHeight = renderHeight;
     m_displayWidth = displayWidth;
@@ -78,7 +124,7 @@ bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u3
         params.displayHeight = displayHeight;
         params.device = HW.pDevice;
         params.context = HW.pContext;
-        created = m_dlss.Create(params, ps_r4_upscaler_quality);
+		created = m_dlss.Create(params, ResolveEffectiveQuality(m_mode));
     }
 
     if (!created)
@@ -89,9 +135,26 @@ bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u3
         return false;
     }
 
-    Msg("* [UPSCALER] backend=%s render=%ux%u display=%ux%u scale=%.3f frame_generation=off",
-        m_mode == AnthologyUpscalerFSR3 ? "FSR3.1.2" : "DLSS", renderWidth, renderHeight,
-        displayWidth, displayHeight, ResolveRenderScale());
+	const float actualScale = displayWidth ? float(renderWidth) / float(displayWidth) : 1.0f;
+	const bool scaled = actualScale < 0.999f;
+	const float automaticMipBias = scaled ? clampr(log2f(actualScale) - 1.0f, -3.0f, 0.0f) : 0.0f;
+	SetTemporalUpscalerMipBias(automaticMipBias, scaled);
+	const float effectiveMipBias = GetEffectiveTextureMipBias();
+	const u32 configuredQuality = clampr(ps_r4_upscaler_quality, 0u, 5u);
+	const u32 effectiveQuality = ResolveEffectiveQuality(m_mode);
+	string64 qualityLabel = {};
+	if (configuredQuality == effectiveQuality)
+		xr_sprintf(qualityLabel, "%s(%u)", QualityName(effectiveQuality), effectiveQuality);
+	else
+	{
+		xr_sprintf(qualityLabel, "%s(%u)->%s(%u)", QualityName(configuredQuality), configuredQuality,
+			QualityName(effectiveQuality), effectiveQuality);
+	}
+
+	Msg("* [UPSCALER] backend=%s quality=%s render=%ux%u display=%ux%u scale=%.3f "
+		"mip_bias(user=%.3f auto=%.3f effective=%.3f) frame_generation=off",
+		m_mode == AnthologyUpscalerFSR3 ? "FSR3.1.2" : "DLSS", qualityLabel, renderWidth, renderHeight,
+		displayWidth, displayHeight, actualScale, ps_r__tf_Mipbias, automaticMipBias, effectiveMipBias);
     return true;
 }
 
@@ -185,6 +248,7 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
 
 void CAnthologyUpscalerRuntime::Shutdown()
 {
+	SetTemporalUpscalerMipBias(0.0f, false);
     m_fsr3.Destroy();
     m_dlss.Shutdown();
     m_mode = AnthologyUpscalerOff;

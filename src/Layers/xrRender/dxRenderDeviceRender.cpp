@@ -102,7 +102,7 @@ void dxRenderDeviceRender::SetupStates()
 	//	TODO: DX10: Implement Resetting of render states into default mode
 	//VERIFY(!"dxRenderDeviceRender::SetupStates not implemented.");
 	SSManager.SetMaxAnisotropy(ps_r__tf_Anisotropic);
-	SSManager.SetMipLODBias(ps_r__tf_Mipbias);
+	SSManager.SetMipLODBias(GetEffectiveTextureMipBias());
 #else	//	USE_DX10
 	for (u32 i = 0; i < HW.Caps.raster.dwStages; i++)
 	{

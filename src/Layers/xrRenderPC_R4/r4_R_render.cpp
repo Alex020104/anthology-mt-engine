@@ -372,7 +372,12 @@ void CRender::Render()
 		GMBase.r_dsgraph_render_emissive(RImplementation.o.ssfx_bloom ? false : true);
 	}
 
-	if (RImplementation.o.ssfx_bloom)
+	// Tiers 2/3 deliberately skip SSFX bloom in phase_combine() and clear its
+	// output. Do not submit the bloom-only emissive geometry when it has no
+	// consumer; the regular emissive pass above is left unchanged.
+	const bool reduced_svp_bloom = Device.m_SecondViewport.IsSVPFrame() &&
+		ScopeLenseQualityTier() >= 2;
+	if (RImplementation.o.ssfx_bloom && !reduced_svp_bloom)
 	{
 		// Render Emissive on `rt_ssfx_bloom_emissive`
 		FLOAT ColorRGBA[4] = { 0,0,0,0 };

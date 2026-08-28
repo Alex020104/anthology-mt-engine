@@ -155,6 +155,41 @@ float ps_r__ssaHZBvsTEX = 96.f; //RO
 
 int ps_r__tf_Anisotropic = 8;
 float ps_r__tf_Mipbias = 0.0f;
+
+namespace
+{
+float g_temporalUpscalerMipBiasOffset = 0.0f;
+bool g_temporalUpscalerMipBiasActive = false;
+}
+
+float GetEffectiveTextureMipBias()
+{
+	if (!g_temporalUpscalerMipBiasActive)
+		return ps_r__tf_Mipbias;
+
+	return clampr(ps_r__tf_Mipbias + g_temporalUpscalerMipBiasOffset, -3.0f, 0.0f);
+}
+
+void ApplyEffectiveTextureMipBias()
+{
+	if (!HW.pDevice)
+		return;
+
+	const float effectiveBias = GetEffectiveTextureMipBias();
+#if defined(USE_DX10) || defined(USE_DX11)
+	SSManager.SetMipLODBias(effectiveBias);
+#else
+	for (u32 i = 0; i < HW.Caps.raster.dwStages; ++i)
+		CHK_DX(HW.pDevice->SetSamplerState(i, D3DSAMP_MIPMAPLODBIAS, *((LPDWORD)&effectiveBias)));
+#endif
+}
+
+void SetTemporalUpscalerMipBias(float automaticOffset, bool active)
+{
+	g_temporalUpscalerMipBiasActive = active;
+	g_temporalUpscalerMipBiasOffset = active ? clampr(automaticOffset, -3.0f, 0.0f) : 0.0f;
+	ApplyEffectiveTextureMipBias();
+}
 // R1
 float ps_r1_ssaLOD_A = 64.f;
 float ps_r1_ssaLOD_B = 48.f;
@@ -691,17 +726,7 @@ class CCC_tf_MipBias : public CCC_Float
 public:
 	void apply()
 	{
-		if (0 == HW.pDevice) return;
-
-#if defined(USE_DX10) || defined(USE_DX11)
-		//	TODO: DX10: Implement mip bias control
-		//VERIFY(!"apply not implmemented.");
-		//Done. Thanks for reminding me.
-		SSManager.SetMipLODBias(*value);
-#else	//	USE_DX10
-		for (u32 i = 0; i < HW.Caps.raster.dwStages; i++)
-			CHK_DX(HW.pDevice->SetSamplerState( i, D3DSAMP_MIPMAPLODBIAS, *((LPDWORD) value)));
-#endif	//	USE_DX10
+		ApplyEffectiveTextureMipBias();
 	}
 
 	CCC_tf_MipBias(LPCSTR N, float* v) : CCC_Float(N, v, -3.0f, +3.0f)
