@@ -5322,3 +5322,31 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   - DX11-AVX PDB `064B82D5F0BF6A422A4DF821D6EE3BDC5504A1D96DDDFE792D9322937A60EBB2`.
   No new game is required. The pre-v137 state remains recoverable from
   `E:/ANTHOLOGY_BACKUPS/20260828_v137_pre_physical_pip_hdr_upscaler`.
+
+## 2026-08-28 - v137.1 postprocess crash fix and Trilogy executable icon
+
+- Fixed the immediate post-load crash in the v137 upscaler presentation pass.
+  `sample_present` had stopped referencing `s_base1`, so the HLSL compiler
+  removed that binding and moved `s_noise` from `t2` to `t1`. The legacy
+  postprocess code still obtains the noise texture from slot 2, producing a
+  null texture in `CTexture::wait_for_loading` during `u_calc_tc_noise`.
+- The normal and colour-map presentation shaders now sample both postprocess
+  inputs through an explicit texture argument. Standalone `ps_5_0` compilation
+  confirms the required resource layout again: `s_base0=t0`, `s_base1=t1`,
+  `s_noise=t2` (with colour-map gradients following at `t3` and `t4`). The
+  active `Anthology Upscaler Runtime v135` copies were updated identically.
+- Replaced the engine application resource with
+  `A.N.T.H.O.L.O.G.Y_Trilogy_Icon_v1.ico`. It contains native 256, 128, 64,
+  48, 32 and 16 pixel, 32-bit frames. Extracted icons from the installed DX11
+  and DX11-AVX executables are identical.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. Installed
+  files are SHA-256-identical to the build artifacts:
+  - DX11 EXE `B7A85C71645D70A0946A7014612E61198E977F60B71D3859ECD31084EC37D3F3`;
+  - DX11 PDB `DE88B1736F1C62D93FA4AD903CD1A3C2B7C5D95B7C6C88A6651CD651732AEA80`;
+  - DX11-AVX EXE `278836BE98456F9C6B86F1187C7ED060028A85ABD9BB81BB1A6EC445E73E560D`;
+  - DX11-AVX PDB `D61AE076820FCF07C5309A0032672B58E1AB71F3030AE24A83F91D6E65FD72D5`.
+- The previous installed binaries are recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1371_pre_crashfix_trilogy_icon`; the previous
+  source icon is also preserved under
+  `E:/ANTHOLOGY_BACKUPS/engine/pre-v1371-icon-20260828`. No new game is required
+  and the shader cache was not read, deleted, moved or rewritten.
