@@ -65,7 +65,11 @@ bool CDLSSWrapper::Create(const ContextParameters& params, u32 qualityPreset)
     create.Feature.InTargetWidth = params.displayWidth;
     create.Feature.InTargetHeight = params.displayHeight;
     create.Feature.InPerfQualityValue = ResolveQuality(qualityPreset);
-    create.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_IsHDR;
+    // phase_upscale receives the already-tonemapped LDR scene. Advertising it
+    // as HDR makes NGX apply the wrong luminance contract; only request the
+    // automatic exposure path because no explicit exposure texture is bound.
+    create.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
+        NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
 
     const NVSDK_NGX_Result result = NGX_D3D11_CREATE_DLSS_EXT(m_context, &m_handle, m_parameters, &create);
     if (result != NVSDK_NGX_Result_Success)
@@ -94,8 +98,13 @@ bool CDLSSWrapper::Draw(const DrawParameters& params)
     eval.InJitterOffsetX = params.jitterX;
     eval.InJitterOffsetY = params.jitterY;
     eval.InReset = params.reset;
-    eval.InMVScaleX = -float(params.renderWidth) * 0.5f;
-    eval.InMVScaleY = float(params.renderHeight) * 0.5f;
+	eval.InPreExposure = 1.f;
+	eval.InExposureScale = 1.f;
+	eval.InFrameTimeDeltaInMsec = _max(1.f, Device.fTimeDelta * 1000.f);
+    // SSS stores currentUV - previousUV. NGX expects the displacement from
+    // the current pixel to its previous-frame pixel, expressed in pixels.
+    eval.InMVScaleX = -float(params.renderWidth);
+    eval.InMVScaleY = -float(params.renderHeight);
 
     const NVSDK_NGX_Result result = NGX_D3D11_EVALUATE_DLSS_EXT(m_context, m_handle, m_parameters, &eval);
     if (result != NVSDK_NGX_Result_Success)

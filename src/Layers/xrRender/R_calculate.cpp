@@ -15,9 +15,14 @@ extern float r_ssaGLOD_start, r_ssaGLOD_end;
 void CRender::Calculate()
 {
 	// Transfer to global space to avoid deep pointer access
-	IRender_Target* T = getTarget();
 	float fov_factor = _sqr(90.f / Device.fFOV);
-	g_fSCREEN = float(T->get_width() * T->get_height()) * fov_factor * (EPS_S + ps_r__LOD);
+	// The previous frame ends on the display-sized upscale target, while this
+	// calculation runs before the next core render target is selected. Using the
+	// mutable target dimensions here kept SSA/LOD submission at native resolution
+	// even when DLSS/FSR rasterized the world at a lower resolution.
+	const u32 renderWidth = GetMainRenderWidth();
+	const u32 renderHeight = GetMainRenderHeight();
+	g_fSCREEN = float(renderWidth * renderHeight) * fov_factor * (EPS_S + ps_r__LOD);
 	if (Device.m_SecondViewport.IsSVPFrame() && ps_scope_lense_quality_percent < 100)
 	{
 		// Apply the same SSA/LOD budget that a linearly scaled PiP viewport would

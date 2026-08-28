@@ -34,6 +34,7 @@ private:
     u32 m_renderHeight = 0;
     u32 m_displayWidth = 0;
     u32 m_displayHeight = 0;
+	bool m_dispatchLogged = false;
 };
 
 extern CAnthologyUpscalerRuntime g_AnthologyUpscaler;

@@ -602,7 +602,7 @@ void CRenderTarget::phase_combine()
 	// Object, grass and wind motion histories are owned by the presented main
 	// camera. Use spatial AA for every lens capture instead of reprojecting a
 	// sparse second camera through those main-view motion domains.
-	if (ps_smaa_quality || svp_frame)
+	if ((ps_smaa_quality && !m_upscalerActive) || svp_frame)
 	{
         //PIX_EVENT(SMAA);
         phase_smaa();

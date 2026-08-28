@@ -56,6 +56,7 @@ bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u3
     m_renderHeight = renderHeight;
     m_displayWidth = displayWidth;
     m_displayHeight = displayHeight;
+	m_dispatchLogged = false;
     if (!IsEnabled())
         return false;
 
@@ -117,6 +118,28 @@ void CAnthologyUpscalerRuntime::UpdateJitter(u32 frameIndex)
 bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* motion,
 	ID3D11Resource* depth, ID3D11Resource* output, bool resetHistory)
 {
+	auto finishDispatch = [this, color, motion, depth, output](bool success)
+	{
+		if (success && !m_dispatchLogged)
+		{
+			auto textureFormat = [](ID3D11Resource* resource)
+			{
+				ID3D11Texture2D* texture = nullptr;
+				if (!resource || FAILED(resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture))))
+					return DXGI_FORMAT_UNKNOWN;
+				D3D11_TEXTURE2D_DESC desc = {};
+				texture->GetDesc(&desc);
+				texture->Release();
+				return desc.Format;
+			};
+			Msg("* [UPSCALER] first vendor dispatch succeeded: color_fmt=%u motion_fmt=%u depth_fmt=%u output_fmt=%u",
+				u32(textureFormat(color)), u32(textureFormat(motion)), u32(textureFormat(depth)),
+				u32(textureFormat(output)));
+			m_dispatchLogged = true;
+		}
+		return success;
+	};
+
     if (m_mode == AnthologyUpscalerFSR3)
     {
         CFSR3Wrapper::DrawParameters params;
@@ -139,7 +162,7 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
         params.verticalFov = deg2rad(Device.fFOV);
         params.jitterX = g_main_taa_jitter_pixels.x;
         params.jitterY = g_main_taa_jitter_pixels.y;
-        return m_fsr3.Draw(params);
+		return finishDispatch(m_fsr3.Draw(params));
     }
     if (m_mode == AnthologyUpscalerDLSS)
     {
@@ -153,7 +176,7 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
         params.reset = resetHistory;
         params.jitterX = g_main_taa_jitter_pixels.x;
         params.jitterY = g_main_taa_jitter_pixels.y;
-        return m_dlss.Draw(params);
+		return finishDispatch(m_dlss.Draw(params));
     }
     return false;
 }
@@ -164,5 +187,6 @@ void CAnthologyUpscalerRuntime::Shutdown()
     m_dlss.Shutdown();
     m_mode = AnthologyUpscalerOff;
     m_renderWidth = m_renderHeight = m_displayWidth = m_displayHeight = 0;
+	m_dispatchLogged = false;
 	g_main_taa_jitter_pixels.set(0.f, 0.f);
 }

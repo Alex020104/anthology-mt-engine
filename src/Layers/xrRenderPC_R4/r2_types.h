@@ -32,6 +32,7 @@
 #define		r2_RT_generic2		"$user$generic2"		// ---	//	Igor: for volumetric lights
 #define		r2_RT_generic		"$user$generic"		// ---
 #define     r4_RT_upscale_input "$user$anthology_upscale_input"
+#define     r4_RT_upscale_depth "$user$anthology_upscale_depth"
 #define     r4_RT_upscale_output "$user$anthology_upscale_output"
 
 #define		r2_RT_bloom1		"$user$bloom1"			// ---

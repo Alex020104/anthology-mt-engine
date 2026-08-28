@@ -7,6 +7,28 @@ void CRenderTarget::phase_upscale(bool temporal)
     bool resolved = false;
     if (temporal)
     {
+		// Export the sampled D24 hardware depth into an R32_FLOAT target. The
+		// vendor APIs consume device depth, not XRay's view-space position buffer
+		// and not the packed typeless depth/stencil allocation itself.
+		u_setrt(rt_UpscaleDepth, nullptr, nullptr, nullptr);
+		RImplementation.rmNormal();
+		RCache.set_CullMode(CULL_NONE);
+		RCache.set_Stencil(FALSE);
+
+		const float depthWidth = float(m_renderWidth);
+		const float depthHeight = float(m_renderHeight);
+		const u32 depthColor = color_rgba(255, 255, 255, 255);
+		u32 depthOffset = 0;
+		FVF::TL* depthVertices = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, depthOffset);
+		depthVertices->set(0.f, depthHeight, EPS_S, 1.f, depthColor, 0.f, 1.f); ++depthVertices;
+		depthVertices->set(0.f, 0.f, EPS_S, 1.f, depthColor, 0.f, 0.f); ++depthVertices;
+		depthVertices->set(depthWidth, depthHeight, EPS_S, 1.f, depthColor, 1.f, 1.f); ++depthVertices;
+		depthVertices->set(depthWidth, 0.f, EPS_S, 1.f, depthColor, 1.f, 0.f);
+		RCache.Vertex.Unlock(4, g_combine->vb_stride);
+		RCache.set_Element(s_upscale->E[3]);
+		RCache.set_Geometry(g_combine);
+		RCache.Render(D3DPT_TRIANGLELIST, depthOffset, 0, 4, 0, 2);
+
         RCache.set_RT(nullptr, 0);
         RCache.set_RT(nullptr, 1);
         RCache.set_RT(nullptr, 2);
@@ -20,9 +42,17 @@ void CRenderTarget::phase_upscale(bool temporal)
         resolved = g_AnthologyUpscaler.Dispatch(
             rt_UpscaleInput->pSurface,
             rt_ssfx_motion_vectors->pSurface,
-            rt_Depth->pSurface,
+			rt_UpscaleDepth->pSurface,
             rt_UpscaleOutput->pSurface,
             resetHistory);
+		// Both integrations submit compute work outside RCache. Release every CS
+		// resource/UAV slot before sampling the output as a pixel-shader SRV; this
+		// also prevents stale vendor bindings from leaking into the next frame.
+		ID3D11ShaderResourceView* nullSrvs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+		ID3D11UnorderedAccessView* nullUavs[D3D11_PS_CS_UAV_REGISTER_COUNT] = {};
+		HW.pContext->CSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSrvs);
+		HW.pContext->CSSetUnorderedAccessViews(0, D3D11_PS_CS_UAV_REGISTER_COUNT, nullUavs, nullptr);
+		HW.pContext->CSSetShader(nullptr, nullptr, 0);
 		// NGX and FidelityFX issue commands directly on the immediate context and
 		// may replace viewport, shaders, input layout, buffers and pipeline state.
 		// Force XRay to bind its complete fullscreen-present state again instead

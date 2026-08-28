@@ -1256,8 +1256,12 @@ static class ssfx_jitter : public R_constant_setup
 		{
 			const float renderWidth = _max(1.f, g_main_taa_render_size.x);
 			const float renderHeight = _max(1.f, g_main_taa_render_size.y);
-			JitterX = g_main_taa_jitter_pixels.x / renderWidth;
-			JitterY = g_main_taa_jitter_pixels.y / renderHeight;
+			// Vendor APIs express jitter in render pixels, while the vertex shader
+			// adds this constant in clip space. Convert pixels to NDC exactly and
+			// account for the opposite screen-space Y direction. The raw pixel
+			// values are still passed unchanged to DLSS/FSR.
+			JitterX = 2.f * g_main_taa_jitter_pixels.x / renderWidth;
+			JitterY = -2.f * g_main_taa_jitter_pixels.y / renderHeight;
 		}
 		else if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa && !svp_frame)
 		{

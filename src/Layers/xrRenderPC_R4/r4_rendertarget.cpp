@@ -735,6 +735,10 @@ CRenderTarget::CRenderTarget()
 		if (m_upscalerActive)
 		{
 			rt_UpscaleInput.create(r4_RT_upscale_input, w, h, D3DFMT_A16B16G16R16F, 1);
+			// Preserve the main D24S8 buffer for XRay stencil work, but export its
+			// sampled hardware depth to the single-channel float format required by
+			// temporal upscalers.
+			rt_UpscaleDepth.create(r4_RT_upscale_depth, w, h, D3DFMT_R32F, 1);
 			rt_UpscaleOutput.create(r4_RT_upscale_output, Device.dwWidth, Device.dwHeight,
 				D3DFMT_A16B16G16R16F, 1, true);
 		}

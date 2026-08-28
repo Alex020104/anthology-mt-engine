@@ -110,6 +110,7 @@ public:
 	// MRT-path
 	ref_rt rt_Depth; // Z-buffer like - initial depth
 	ref_rt rt_UpscaleInput; // low-resolution post-process result
+	ref_rt rt_UpscaleDepth; // low-resolution R32_FLOAT hardware-depth export
 	ref_rt rt_UpscaleOutput; // full-resolution FSR/DLSS result
 	ref_rt rt_MSAADepth; // z-buffer for MSAA deferred shading
 	ref_rt rt_Generic_0_r; // MRT generic 0

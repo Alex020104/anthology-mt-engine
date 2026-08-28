@@ -29,34 +29,13 @@ bool CFSR3Wrapper::Create(const ContextParameters& params)
         return false;
     }
 
-    auto makeTexture = [&](DXGI_FORMAT format, bool renderTarget, ID3D11Texture2D** output)
-    {
-        D3D11_TEXTURE2D_DESC desc = {};
-        desc.Width = params.maxRenderSize.width;
-        desc.Height = params.maxRenderSize.height;
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = format;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-        if (renderTarget)
-            desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
-        return SUCCEEDED(params.device->CreateTexture2D(&desc, nullptr, output));
-    };
-
-    if (!makeTexture(DXGI_FORMAT_R32_FLOAT, true, &m_dilatedDepth) ||
-        !makeTexture(DXGI_FORMAT_R16G16_FLOAT, true, &m_dilatedMotion) ||
-        !makeTexture(DXGI_FORMAT_R32_UINT, false, &m_reconstructedPrevDepth))
-    {
-        Msg("! [UPSCALER/FSR3] shared resource creation failed");
-        Destroy();
-        return false;
-    }
-
     m_description.maxRenderSize = params.maxRenderSize;
     m_description.maxUpscaleSize = params.displaySize;
     m_description.fpMessage = FsrMessage;
+	// No explicit exposure texture is supplied by the current LDR pipeline.
+	// Let FSR build a consistent exposure instead of treating a null input as
+	// an application-controlled resource.
+	m_description.flags |= FFX_FSR3UPSCALER_ENABLE_AUTO_EXPOSURE;
 #ifdef DEBUG
     m_description.flags |= FFX_FSR3UPSCALER_ENABLE_DEBUG_CHECKING;
 #endif
@@ -68,6 +47,61 @@ bool CFSR3Wrapper::Create(const ContextParameters& params)
         Destroy();
         return false;
     }
+	m_created = true;
+
+	FfxFsr3UpscalerSharedResourceDescriptions shared = {};
+	code = ffxFsr3UpscalerGetSharedResourceDescriptions(&m_context, &shared);
+	if (code != FFX_OK)
+	{
+		Msg("! [UPSCALER/FSR3] shared resource description query failed: %d", code);
+		Destroy();
+		return false;
+	}
+
+	auto resolveFormat = [](FfxSurfaceFormat format)
+	{
+		switch (format)
+		{
+		case FFX_SURFACE_FORMAT_R32_FLOAT: return DXGI_FORMAT_R32_FLOAT;
+		case FFX_SURFACE_FORMAT_R32_UINT: return DXGI_FORMAT_R32_UINT;
+		case FFX_SURFACE_FORMAT_R16G16_FLOAT: return DXGI_FORMAT_R16G16_FLOAT;
+		case FFX_SURFACE_FORMAT_R32G32_FLOAT: return DXGI_FORMAT_R32G32_FLOAT;
+		default: return DXGI_FORMAT_UNKNOWN;
+		}
+	};
+
+	auto makeTexture = [&](const FfxCreateResourceDescription& requested, ID3D11Texture2D** output)
+	{
+		const FfxResourceDescription& resource = requested.resourceDescription;
+		const DXGI_FORMAT format = resolveFormat(resource.format);
+		if (resource.type != FFX_RESOURCE_TYPE_TEXTURE2D || format == DXGI_FORMAT_UNKNOWN ||
+			!resource.width || !resource.height)
+			return false;
+
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = resource.width;
+		desc.Height = resource.height;
+		desc.MipLevels = _max(1u, resource.mipCount);
+		desc.ArraySize = _max(1u, resource.depth);
+		desc.Format = format;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		if (resource.usage & FFX_RESOURCE_USAGE_UAV)
+			desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+		if (resource.usage & FFX_RESOURCE_USAGE_RENDERTARGET)
+			desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
+		return SUCCEEDED(params.device->CreateTexture2D(&desc, nullptr, output));
+	};
+
+	if (!makeTexture(shared.dilatedDepth, &m_dilatedDepth) ||
+		!makeTexture(shared.dilatedMotionVectors, &m_dilatedMotion) ||
+		!makeTexture(shared.reconstructedPrevNearestDepth, &m_reconstructedPrevDepth))
+	{
+		Msg("! [UPSCALER/FSR3] shared resource creation failed");
+		Destroy();
+		return false;
+	}
 
     m_created = true;
     return true;
@@ -97,7 +131,9 @@ bool CFSR3Wrapper::Draw(const DrawParameters& params)
         FFX_RESOURCE_STATE_UNORDERED_ACCESS);
 
     desc.jitterOffset = {params.jitterX, params.jitterY};
-    desc.motionVectorScale = {-float(params.renderWidth) * 0.5f, float(params.renderHeight) * 0.5f};
+    // SSS stores currentUV - previousUV. FSR expects current-to-previous
+    // displacement, so convert that UV delta to signed render pixels.
+    desc.motionVectorScale = {-float(params.renderWidth), -float(params.renderHeight)};
     desc.renderSize = {params.renderWidth, params.renderHeight};
     desc.upscaleSize = {params.displayWidth, params.displayHeight};
     desc.enableSharpening = params.sharpening;

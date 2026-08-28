@@ -5165,3 +5165,49 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   No new game is required. Runtime visual validation is still required on the
   owner's existing save. The shader cache was not read, deleted, moved or
   rewritten.
+
+## 2026-08-28 - v136.5 temporal-input and core-budget correction
+
+- Fresh v136.4 logs prove both vendor backends were dispatching at the selected
+  internal resolution, including `1280x720 -> 1920x1080` and the owner's final
+  `640x360 -> 1920x1080` FSR test. There was no backend failure or fallback.
+  The render stage became cheaper, but total frame time remained dominated by
+  CPU/game work because geometry SSA and LOD selection still used the previous
+  display-sized target left by presentation.
+- Main-world SSA/LOD now uses the stable core render dimensions. Lowering the
+  temporal quality therefore reduces geometry/LOD submission as well as pixel
+  shading, while loading, menu, HUD, final presentation and PiP retain their
+  native display-size contracts.
+- Corrected the temporal sample contract used by both vendors:
+  - raster jitter is converted from render-pixel offsets to clip space with
+    the required doubled amplitude and inverted Y;
+  - SSS `currentUV - previousUV` motion vectors are converted to
+    current-to-previous render-pixel displacement with `(-width, -height)`;
+  - DLSS and FSR enable automatic exposure instead of receiving a null exposure
+    input under an application-controlled exposure contract;
+  - DLSS no longer advertises the already-tonemapped scene input as HDR;
+  - the main temporal path bypasses the separate SMAA pass.
+- Added a core-resolution `R32_FLOAT` depth export. The vendor APIs now consume
+  a sampled copy of hardware depth rather than the packed D24S8 allocation;
+  XRay keeps the original depth/stencil surface for its normal renderer. The
+  standalone depth pixel shader also passes an offline `ps_5_0` compile, without
+  depending on the modpack's effective `common.h` override order.
+- FSR shared resources now come from
+  `ffxFsr3UpscalerGetSharedResourceDescriptions` instead of guessed formats and
+  dimensions. External compute SRV/UAV/shader bindings are explicitly cleared,
+  and the renderer's CS cache is reset before the native presentation pass.
+- Added one-shot successful-dispatch format diagnostics so the next owner log
+  can prove the actual color, motion, depth and output texture formats without
+  per-frame logging overhead.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. Installed
+  hashes are byte-identical to the build artifacts:
+  - DX11 EXE `1387DDAF9D7D9AD61E46AE108DDFAFCF090D0C27ADB770CFEDFBFE18D6BF2C66`;
+  - DX11 PDB `90F819A7EB5B3CEF5AF215E646FB3D34A41D70100E2BB644CA4D37695FE9A4DA`;
+  - DX11-AVX EXE `CCABAEA17F3E67E718CB819035B38B7FD0D5F0322849E530837AC134B3396D99`;
+  - DX11-AVX PDB `BE123ECB72D4FA291579980BDA43B01095E3228A422DA8D06C37262D2696C033`.
+- The v136.4 binaries and pre-test runtime log are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1365_pre_temporal_contract_cpu_budget_fix`.
+  The new depth-export shader is mirrored into the development and installed
+  upscaler runtime addons. No new game is required; runtime quality and frame
+  pacing still require validation on the owner's existing save. The shader
+  cache was not read, deleted, moved or rewritten.
