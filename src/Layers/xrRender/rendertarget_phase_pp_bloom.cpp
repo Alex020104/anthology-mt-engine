@@ -12,8 +12,8 @@ void CRenderTarget::phase_pp_bloom()
 	u32 C = color_rgba(0, 0, 0, 255);
 
 	//Full resolution
-	float w = float(Device.dwWidth);
-	float h = float(Device.dwHeight);	
+	float w = float(GetMainRenderWidth());
+	float h = float(GetMainRenderHeight());
 
 	Fvector2 p0, p1;
 #if defined(USE_DX10) || defined(USE_DX11)	
@@ -28,7 +28,7 @@ void CRenderTarget::phase_pp_bloom()
 ///////////////////////////////////////////////////////////////////////////////////
 ////Bloom pass
 ///////////////////////////////////////////////////////////////////////////////////
-	u_setrt(rt_pp_bloom, 0, 0, HW.pBaseZB);
+	u_setrt(rt_pp_bloom, 0, 0, nullptr);
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
 

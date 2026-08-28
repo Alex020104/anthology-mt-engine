@@ -118,6 +118,7 @@ void CRenderTarget::phase_pp()
 		u_setrt(rt_UpscaleInput, nullptr, nullptr, nullptr);
 	else
 		u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+	RImplementation.rmNormal();
 	//	Element 0 for for normal post-process
 	//	Element 4 for color map post-process
 	bool bCMap = u_need_CM();

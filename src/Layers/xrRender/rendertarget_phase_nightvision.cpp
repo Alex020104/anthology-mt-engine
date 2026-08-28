@@ -8,8 +8,8 @@ void CRenderTarget::phase_nightvision()
 
 	float d_Z = EPS_S;
 	float d_W = 1.0f;
-	float w = float(Device.dwWidth);
-	float h = float(Device.dwHeight);
+	float w = float(GetMainRenderWidth());
+	float h = float(GetMainRenderHeight());
 
 	Fvector2 p0, p1;
 #if defined(USE_DX10) || defined(USE_DX11)	
@@ -62,8 +62,8 @@ void CRenderTarget::phase_fakescope()
 
 	float d_Z = EPS_S;
 	float d_W = 1.0f;
-	float w = float(Device.dwWidth);
-	float h = float(Device.dwHeight);
+	float w = float(GetMainRenderWidth());
+	float h = float(GetMainRenderHeight());
 
 	Fvector2 p0, p1;
 #if defined(USE_DX10) || defined(USE_DX11)	
@@ -153,8 +153,8 @@ void CRenderTarget::phase_heatvision()
 
 	float d_Z = EPS_S;
 	float d_W = 1.0f;
-	float w = float(Device.dwWidth);
-	float h = float(Device.dwHeight);
+	float w = float(GetMainRenderWidth());
+	float h = float(GetMainRenderHeight());
 
 	Fvector2 p0, p1;
 #if defined(USE_DX10) || defined(USE_DX11)	
@@ -215,7 +215,7 @@ void CRenderTarget::phase_3DSSReticle()
 	// temporal pass keeps the current sharp PiP sample instead of blending it
 	// with lens history from an older camera frame.
 	u_setrt(RImplementation.Target->rt_Generic_0, RImplementation.Target->rt_Position,
-		RImplementation.Target->rt_ssfx_motion_vectors, 0, HW.pBaseZB);
+		RImplementation.Target->rt_ssfx_motion_vectors, 0, main_depth());
 
 	RCache.set_CullMode(CULL_CCW);
 	RCache.set_Stencil(FALSE);

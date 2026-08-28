@@ -15,8 +15,8 @@ void CRenderTarget::phase_sunshafts()
 		Fvector2 uv0;
 	};
 
-	float _w = float(Device.dwWidth);
-	float _h = float(Device.dwHeight);
+	float _w = float(GetMainRenderWidth());
+	float _h = float(GetMainRenderHeight());
 	//float	ddw = 1.f / _w;
 	//float	ddh = 1.f / _h;
 	p0.set(.5f / _w, .5f / _h);
@@ -34,7 +34,7 @@ void CRenderTarget::phase_sunshafts()
 	In this pass generates geometry mask
 	*/
 	// Set RT's
-	u_setrt(rt_sunshafts_0, 0, 0, HW.pBaseZB);
+	u_setrt(rt_sunshafts_0, 0, 0, nullptr);
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
 
@@ -64,7 +64,7 @@ void CRenderTarget::phase_sunshafts()
 	first blurring pass
 	*/
 	// Set RT's
-	u_setrt(rt_sunshafts_1, 0, 0, HW.pBaseZB);
+	u_setrt(rt_sunshafts_1, 0, 0, nullptr);
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
 
@@ -97,7 +97,7 @@ void CRenderTarget::phase_sunshafts()
 	second blurring pass
 	*/
 	// Set RT's
-	u_setrt(rt_sunshafts_0, 0, 0, HW.pBaseZB);
+	u_setrt(rt_sunshafts_0, 0, 0, nullptr);
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
 
@@ -130,7 +130,7 @@ void CRenderTarget::phase_sunshafts()
 	third blurring pass
 	*/
 	// Set RT's
-	u_setrt(rt_sunshafts_1, 0, 0, HW.pBaseZB);
+	u_setrt(rt_sunshafts_1, 0, 0, nullptr);
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
 
@@ -166,9 +166,9 @@ void CRenderTarget::phase_sunshafts()
 	*/
 	// Set RT's
 #if defined(USE_DX10) || defined(USE_DX11)
-	u_setrt(rt_Generic, 0, 0, HW.pBaseZB);
+	u_setrt(rt_Generic, 0, 0, nullptr);
 #else
-	u_setrt(rt_Generic_0, 0, 0, HW.pBaseZB);
+	u_setrt(rt_Generic_0, 0, 0, nullptr);
 #endif	
 	
 	RCache.set_CullMode(CULL_NONE);

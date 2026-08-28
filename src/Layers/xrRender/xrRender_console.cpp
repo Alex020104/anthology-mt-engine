@@ -411,6 +411,16 @@ Fvector2 g_main_taa_jitter_pixels = { 0.f, 0.f };
 Fvector2 g_main_taa_render_size = { 1.f, 1.f };
 bool g_main_temporal_upscaler_active = false;
 
+u32 GetMainRenderWidth()
+{
+	return g_main_temporal_upscaler_active ? u32(_max(1.f, g_main_taa_render_size.x)) : Device.dwWidth;
+}
+
+u32 GetMainRenderHeight()
+{
+	return g_main_temporal_upscaler_active ? u32(_max(1.f, g_main_taa_render_size.y)) : Device.dwHeight;
+}
+
 u32 ps_r4_upscaler = 0;
 u32 ps_r4_upscaler_quality = 1;
 float ps_r4_upscaler_custom_scale = 0.67f;

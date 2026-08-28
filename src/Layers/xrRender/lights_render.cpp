@@ -227,6 +227,7 @@ void CRender::render_lights(light_Package& LP)
 					}
 				}
 			}
+			phase = PHASE_NORMAL;
 			//		if (was_spot_shadowed)		->	accum spot shadowed
 			if (!L_spot_s.empty())
 			{
@@ -238,8 +239,8 @@ void CRender::render_lights(light_Package& LP)
 					if (L->flags.bVolumetric && RImplementation.o.advancedpp && ps_r2_ls_flags.is(R2FLAG_VOLUMETRIC_LIGHTS))
 					{
 #ifdef USE_DX11
-						float w = float(Device.dwWidth);
-						float h = float(Device.dwHeight);
+						float w = float(GetMainRenderWidth());
+						float h = float(GetMainRenderHeight());
 
 						if (RImplementation.o.ssfx_volumetric)
 							Target->set_viewport_size(HW.pContext, w / RImplementation.o.volsize, h / RImplementation.o.volsize);

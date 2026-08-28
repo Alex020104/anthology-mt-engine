@@ -331,6 +331,7 @@ void CRender::render_sun_cascade(u32 cascade_ind)
     }	
 
 	// Accumulate
+	phase = PHASE_NORMAL;
 	PROF_EVENT("Render Cascade: Accumulate");
 	Target->phase_accumulator();
 

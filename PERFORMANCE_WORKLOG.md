@@ -5129,3 +5129,39 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   No new game is required. Runtime visual validation is still required on the
   owner's existing save. The shader cache was not read, deleted, moved or
   rewritten.
+
+## 2026-08-28 - v136.4 DLSS core postprocess and depth correction
+
+- Diagnosed the v136.3 in-game mosaic from the owner's screenshot and fresh
+  runtime log. NGX initialized successfully and reported the intended
+  `1280x720 -> 1920x1080` dispatch, so the corruption happened in the engine
+  render chain before the vendor upscaler rather than inside DLSS itself.
+- Legacy world/postprocess passes still authored fullscreen geometry from the
+  display-sized `Device.dwWidth/dwHeight` while their render targets and
+  viewport were core-sized. At a 67% scale every affected pass cropped and
+  enlarged the image again, producing the repeated macroblocks while the later
+  native-resolution HUD remained sharp.
+- Added a renderer-neutral main-render-size helper and migrated the remaining
+  blur, DOF, gas-mask, LUT, night-vision, bloom, SMAA, sunshaft, volumetric-light
+  and related world passes to the coherent core dimensions. R2/R3 retain their
+  original display-size behaviour when temporal upscaling is inactive.
+- Removed the display-sized base depth-stencil binding from core-only
+  fullscreen passes, restored normal render-phase semantics before accumulated
+  light/sun/rain work, and explicitly restores the selected postprocess
+  viewport. Native menu, loading, HUD, final presentation and PiP targets remain
+  display-sized.
+- Corrected the temporal-upscaler dispatch input: the engine had supplied the
+  RGBA16F G-buffer position target as depth. DLSS/FSR now receive the actual
+  R24G8 hardware depth surface. Direct render-target surfaces are used without
+  per-frame `AddRef` leaks.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. Installed
+  hashes match the build artifacts:
+  - DX11 EXE `F81D2A6C98C323C0232A630B1E6A9D00D102A67E9299C8970ADA61786E1073F7`;
+  - DX11 PDB `06121487125943CAA522C5EE32E336CAFC324ACFA67940A7E8750F9F82F9A2A6`;
+  - DX11-AVX EXE `B85B4DB041E9E78B00B5291F50C37A697172DD34A65581E571F185C80ADDA59A`;
+  - DX11-AVX PDB `00CB0254DEAEFE02F21E69DBC550AE8B6AC236D6C0DF8CEA1BD37D35E3BD0693`.
+- The installed v136.3 binaries and failing runtime log are recoverable at
+  `E:/ANTHOLOGY_BACKUPS/20260828_v1364_pre_core_postprocess_dimensions_fix`.
+  No new game is required. Runtime visual validation is still required on the
+  owner's existing save. The shader cache was not read, deleted, moved or
+  rewritten.

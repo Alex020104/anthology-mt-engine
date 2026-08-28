@@ -8,8 +8,8 @@ void CRenderTarget::phase_dof()
 
 	float d_Z = EPS_S;
 	float d_W = 1.0f;
-	float w = float(Device.dwWidth);
-	float h = float(Device.dwHeight);
+	float w = float(GetMainRenderWidth());
+	float h = float(GetMainRenderHeight());
 
 	Fvector2 p0, p1;
 #if defined(USE_DX10) || defined(USE_DX11)	
@@ -22,14 +22,14 @@ void CRenderTarget::phase_dof()
 
 	//DoF vectors
 	Fvector2 vDofKernel;
-	vDofKernel.set(0.5f / Device.dwWidth, 0.5f / Device.dwHeight);
+	vDofKernel.set(0.5f / GetMainRenderWidth(), 0.5f / GetMainRenderHeight());
 	vDofKernel.mul(ps_r2_dof_kernel_size);
 	Fvector3 dof;
 	g_pGamePersistent->GetCurrentDof(dof);
 
 	//////////////////////////////////////////////////////////////////////////
 	//Set MSAA/NonMSAA rendertarget
-	u_setrt(rt_dof, 0, 0, HW.pBaseZB);
+	u_setrt(rt_dof, 0, 0, nullptr);
 
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);

@@ -18,10 +18,10 @@ void CRenderTarget::phase_upscale(bool temporal)
         SRVSManager.Apply();
         const bool resetHistory = m_upscalerResetHistory || Device.dwPrecacheFrame > 0;
         resolved = g_AnthologyUpscaler.Dispatch(
-            rt_UpscaleInput->pTexture->surface_get(),
-            rt_ssfx_motion_vectors->pTexture->surface_get(),
-            rt_Position->pTexture->surface_get(),
-            rt_UpscaleOutput->pTexture->surface_get(),
+            rt_UpscaleInput->pSurface,
+            rt_ssfx_motion_vectors->pSurface,
+            rt_Depth->pSurface,
+            rt_UpscaleOutput->pSurface,
             resetHistory);
 		// NGX and FidelityFX issue commands directly on the immediate context and
 		// may replace viewport, shaders, input layout, buffers and pipeline state.

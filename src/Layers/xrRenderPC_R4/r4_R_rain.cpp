@@ -240,6 +240,7 @@ void CRender::render_rain()
 	RCache.set_xform_project(Device.mProject);
 
 	// Accumulate
+	phase = PHASE_NORMAL;
 	Target->phase_rain();
 	Target->draw_rain(RainLight);
 }
