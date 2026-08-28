@@ -1,0 +1,797 @@
+--==============================================================================================
+-- Wind Leaves & Atmosphere script
+-- Original Author: Daedalus-Prime
+-- EXPEDITION WEATHERS EDIT
+-- Edited by FabioConte for Stalker Anomaly Seasons (01/03/2023)
+-- Edited by Hippobot for Stalker Anomaly: Atmospherics Version 1.54++
+-- Edited by Grok 09/03/2023, actor_on_update optimisation and map restrictions
+
+-- Edited by Ivan Danko
+-- Reworked: presets from dynamic_weather_graphs.ltx, time-of-day logic
+-- Fixed: cleanup, memory optimization, position comparison - 2025
+-- Fixes:
+--   1. stop_deffered -> stop() (method does not exist in xray-monolith)
+--   2. vector():set(0,0,0) removed from the loop
+--   3. move_to throttle — only when the actor is actually moving
+--   4. particles_object wrapped in pcall (protection against crashes if the file is not found)
+--   5. alife()/game_graph() are cached — the level is not recalculated every 100 ms
+--   6. db.actor is checked before use
+--   7. Cleanup added when unloading the level
+--   8. Optimised movement check via distance_to_sqr
+--   9. Fixed weather check for nil
+--   10. Added logging of particle loading errors
+--   11. Fallback for is_underground via leaves_maps
+--   12. Fixed %d crash with nil — replaced with tostring()
+--   13. DEBUG log moved to snowfall() to ensure printing
+--   14. Underground: 3x fogdust_00 + 1x nature\fog_foggy_00
+--   15. BUGFIX: Removed hud_mode (true) from play_at_pos for underground particles —
+--       in hud_mode, the position is interpreted in the HUD camera space, not the world space,
+--       so particles were launched out of sight. Now all particles play
+--       in the world space at the actor's position.
+--   16. BUGFIX: play_or_move_ug merged with play_or_move — unified logic.
+--   17. Added p_foggdust_00 (nature\effects\exp_pfx_foggdust_00) and
+--       p_fog_dirt (nature\effects\fog_foggy_dirt) — in dungeons and rooms.
+--   18. PERF: Removed pcall closure from level_check hot path — closure allocation
+--       caused GC pressure and microfreezes on LuaJIT. Replaced with safe nil-checks.
+--       vertex_id cached — level_name() called only when vertex actually changes.
+--   19. PERF: play_underground converted to flat array — ipairs instead of pairs,
+--       no hash table overhead per tick.
+--   20. PERF: stop_all_except rewritten — single pass, no double iteration.
+--   21. PERF: LOGIC_INTERVAL 500->1000ms, MOVE_INTERVAL 200->500ms —
+--       weather/fog changes are imperceptible at 1s granularity,
+--       particle position updates at 500ms are invisible to the player.
+-- Dead Zone edit:
+--   22. snowfall(): constant atmospheric fog outdoors regardless of weather cycle —
+--       p_fogdust_00 (nature\exp_pfx_fogdust_00). Anthology v138 removes the second
+--       fullscreen p_fog_light layer because it duplicated the same outdoor fog role.
+--       Added to active{} first, before any weather-dependent logic.
+--   23. Presets in cycle_* tables verified against dynamic_weather_graphs.ltx:
+--       cycle_clear(14), cycle_partly(14), cycle_cloudy(20), cycle_rain(13),
+--       cycle_storm(11), cycle_foggy(10). w_ccgim_original excluded (commented out in .ltx).
+--   24. grimwood/promzona/poselok_ug already present in leaves_maps as surface maps (=1).
+-- Summer edit:
+--   25. Summer time-of-day constants: night fog 01-03, leaves 18-21, insects 9-20.
+--   26. Added p_leaves_calm (nature\exp_pfx_leaves_calm) — calm daytime leaves outdoors.
+--   27. Added p_flies (nature\flies_01) — midges/insects during daytime, clear/cloudy weather.
+--   28. Added p_fog_night (nature\exp_pfx_fog_night) — dedicated night fog preset.
+--   29. Added p_storm_dust (nature\effects\fog_stormy_dust) — dust storm during storm weather.
+--   30. Added p_storm_leaves (nature\effects\fog_stormy_leaves_01) — storm leaves.
+--   31. Distant tornado during storm: rare, random, within map boundaries, no sound.
+--       Architecture mirrors distant_storm in level_weathers — position beyond actor
+--       sight distance, boundary check. Particles: fog_tornado_00, fog_tornado_01 —
+--       one random per spawn. Timer: every 3-8 in-game minutes, 40% chance.
+-- Optimization edit:
+--   32. PERF: cached_weather + cached_hour — snowfall() is skipped if weather, hour
+--       and position have not changed. Primary gain: stop_all_except over 19 particles
+--       every second replaced with no-op on the majority of ticks.
+--   33. PERF: cached_time_factor — level.get_time_factor() cached for 5 real seconds
+--       instead of being called on every get_diff_sec() invocation.
+--   34. PERF: tornado_vec — single reused vector() for tornado spawn position;
+--       no new object allocated per spawn.
+-- mt_particles fix:
+--   35. BUGFIX: All particles_object method calls (stop/play_at_pos/move_to) are now
+--       deferred via a pending queue and flushed through CreateTimeEvent(delay=1).
+--       delay=1 (one in-game second) guarantees CParticlesAsync has exited UpdateSpatial
+--       before the flush runs, eliminating the ISpatial_DB::remove race condition
+--       (Access violation c0000005 at AnomalyDX11AVX!ISpatial_DB::remove+0x34).
+--       Each CreateTimeEvent uses a unique key (wl_flush_N) to prevent silent drops
+--       when schedule_flush() is called again before the previous event fires.
+--       Each op in flush_pending is wrapped in pcall to isolate residual errors
+--       without aborting the rest of the queue.
+--       on_game_unload stop() calls use immediate stop_p_immediate() — at that point
+--       CParticlesAsync is already shut down by the engine.
+--==============================================================================================
+
+local p_flyingleaves, p_turbulentleaves, p_torchbugs
+local p_fogdust, p_nightfog, p_heatfog, p_fogdust_00
+local p_foggdust_00, p_fog_dirt
+-- Summer additions
+local p_leaves_calm   -- calm daytime leaves
+local p_flies         -- midges / insects
+local p_fog_night     -- night fog (dedicated preset)
+local p_storm_dust    -- dust storm during storm weather
+local p_storm_leaves  -- storm leaves
+
+local all_particles        = {}  -- flat array, all unique particles
+local play_inside          = {}  -- lookup: {[p]=true}
+local play_underground     = {}  -- lookup: {[p]=true}
+local play_underground_arr = {}  -- flat array for ipairs (no pairs overhead)
+
+-- underground layers
+local ug_fogdust_00_1, ug_fogdust_00_2, ug_fogdust_00_3
+local ug_fog_foggy
+
+local zero_vec    = vector():set(0, 0, 0)
+local last_pos    = vector():set(0, 0, 0)
+local tornado_vec = vector()  -- reused for tornado spawn position
+local move_timer = 0
+local MOVE_INTERVAL      = 500
+local MOVE_THRESHOLD_SQR = 0.0025
+
+-- Weather/time cache — snowfall() only rebuilds active{} when something changes
+local cached_weather     = ""
+local cached_hour        = -1
+local cached_time_factor = 1  -- level.get_time_factor() cached, changes rarely
+
+-- Summer: shifted time-of-day constants
+local NIGHT_FOG_START,          NIGHT_FOG_END          = 1,  3   -- short summer night
+local TORCHBUGS_EVENING_START,  TORCHBUGS_MORNING_END  = 18, 5   -- fireflies start later
+local EVENING_LEAVES_START,     EVENING_LEAVES_END     = 18, 21  -- evening leaves later
+local CALM_LEAVES_START,        CALM_LEAVES_END        = 10, 19  -- calm daytime leaves
+local FLIES_START,              FLIES_END               = 9,  20  -- midges during daytime
+
+-- Swamp maps — insects only on these
+local swamp_maps = {
+    ["zaton"]    = true,
+    ["k00_marsh"] = true,
+    ["l08_yantar"] = true,
+}
+
+-- Tornado: state
+local tornado_active     = false
+local tornado_particle   = nil
+local tornado_next_check = 0         -- diff_sec when next check is due
+local TORNADO_PROB       = 0.40      -- 40% spawn chance per check
+local TORNADO_MIN_INTERVAL = 180     -- min. 3 in-game minutes between checks
+local TORNADO_MAX_INTERVAL = 480     -- max. 8 in-game minutes
+local TORNADO_LIFETIME   = 60        -- lives for 60 in-game seconds
+local tornado_born_at    = 0
+local tornado_distance   = 300       -- distance from actor (world units)
+
+-- Tornado particle list — one chosen at random per spawn
+local tornado_pfx_list = {
+    "nature\\fog_tornado_00",
+    "nature\\fog_tornado_01",
+    -- "nature\\vortex_01",  -- disabled: effect does not suit tornado visuals
+}
+
+-- diff_sec comes from level_weathers via global, but we have no direct access.
+-- Computed locally: seconds since session start / time_factor.
+-- time_factor is cached — changes rarely, engine call is expensive.
+local tornado_inited_time  = nil
+local tf_cache_timer       = 0
+local TF_CACHE_INTERVAL    = 5000  -- refresh time_factor once per 5 real seconds
+local function get_diff_sec()
+    if not tornado_inited_time then
+        tornado_inited_time = game.get_game_time()
+    end
+    local tg = time_global()
+    if tg - tf_cache_timer >= TF_CACHE_INTERVAL then
+        tf_cache_timer       = tg
+        cached_time_factor   = level.get_time_factor()
+    end
+    return math.ceil(game.get_game_time():diffSec(tornado_inited_time) / cached_time_factor)
+end
+
+local cached_sim    = nil
+local cached_gg     = nil
+local cached_vertex = -1
+
+local function load_p(path)
+    local ok, obj = pcall(particles_object, path)
+    if not ok then
+        printf("![Wind_Leaves] Failed to load particle: %s", path)
+        return nil
+    end
+    printf("[Wind_Leaves] Loaded OK: %s", path)
+    return obj
+end
+
+local function init_particles()
+    p_flyingleaves    = load_p("nature\\exp_pfx_leaves")
+    p_turbulentleaves = load_p("nature\\exp_pfx_leaves_stormy")
+    p_torchbugs       = load_p("nature\\exp_pfx_torchbugs")
+    p_fogdust         = load_p("graupel\\dust")
+    p_nightfog        = load_p("nature\\exp_pfx_fog_00")
+    p_heatfog         = load_p("nature\\exp_pfx_fog_01")
+    p_fogdust_00      = load_p("nature\\exp_pfx_fogdust_00")
+    p_foggdust_00     = load_p("nature\\effects\\exp_pfx_foggdust_00")
+    p_fog_dirt        = load_p("nature\\effects\\fog_foggy_dirt")
+
+    -- Summer
+    p_leaves_calm  = load_p("nature\\exp_pfx_leaves_calm")
+    p_flies        = load_p("nature\\flies_01")
+    p_fog_night    = load_p("nature\\exp_pfx_fog_night")
+    p_storm_dust   = load_p("nature\\effects\\fog_stormy_dust")
+    p_storm_leaves = load_p("nature\\effects\\fog_stormy_leaves_01")
+
+    ug_fogdust_00_1 = load_p("nature\\exp_pfx_fogdust_00")
+    ug_fogdust_00_2 = load_p("nature\\exp_pfx_fogdust_00")
+    ug_fogdust_00_3 = load_p("nature\\exp_pfx_fogdust_00")
+    ug_fog_foggy    = load_p("nature\\fog_foggy_00")
+
+    local raw = {
+        p_flyingleaves, p_turbulentleaves, p_torchbugs,
+        p_fogdust, p_nightfog, p_heatfog, p_fogdust_00,
+        p_foggdust_00, p_fog_dirt,
+        p_leaves_calm, p_flies, p_fog_night, p_storm_dust, p_storm_leaves,
+        ug_fogdust_00_1, ug_fogdust_00_2, ug_fogdust_00_3, ug_fog_foggy
+    }
+    all_particles = {}
+    local seen = {}
+    for _, p in ipairs(raw) do
+        if p and not seen[p] then
+            all_particles[#all_particles + 1] = p
+            seen[p] = true
+        end
+    end
+    printf("[Wind_Leaves] Total unique particles loaded: %s", tostring(#all_particles))
+
+    play_inside = {}
+    if p_fogdust     then play_inside[p_fogdust]     = true end
+    if p_foggdust_00 then play_inside[p_foggdust_00] = true end
+    if p_fog_dirt    then play_inside[p_fog_dirt]    = true end
+
+    play_underground     = {}
+    play_underground_arr = {}
+    local function add_ug(p)
+        if p and not play_underground[p] then
+            play_underground[p] = true
+            play_underground_arr[#play_underground_arr + 1] = p
+        end
+    end
+    add_ug(ug_fogdust_00_1)
+    add_ug(ug_fogdust_00_2)
+    add_ug(ug_fogdust_00_3)
+    add_ug(ug_fog_foggy)
+    add_ug(p_foggdust_00)
+    add_ug(p_fog_dirt)
+    printf("[Wind_Leaves] play_underground valid particles: %s", tostring(#play_underground_arr))
+end
+
+-- leaves_maps: 1 = surface map, 0 = underground
+local leaves_maps = {
+    ["jupiter"]                 = 1,
+    ["k00_marsh"]               = 1,
+    ["k01_darkscape"]           = 1,
+    ["k02_trucks_cemetery"]     = 1,
+    ["l01_escape"]              = 1,
+    ["l02_garbage"]             = 1,
+    ["l03_agroprom"]            = 1,
+    ["l04_darkvalley"]          = 1,
+    ["l05_bar"]                 = 1,
+    ["l06_rostok"]              = 1,
+    ["l07_military"]            = 1,
+    ["l08_yantar"]              = 1,
+    ["l09_deadcity"]            = 1,
+    ["l10_radar"]               = 1,
+    ["l10_red_forest"]          = 1,
+    ["l11_pripyat"]             = 1,
+    ["l12_stancia"]             = 1,
+    ["l12_stancia_2"]           = 1,
+    ["l13_generators"]          = 1,
+    ["pripyat"]                 = 1,
+    ["promzona"]                = 1,
+    ["poselok_ug"]              = 1,
+    ["grimwood"]                = 1,
+    ["collaider"]               = 1,
+    ["y04_pole"]                = 1,
+    ["zaton"]                   = 1,
+    ["bunker_a1"]               = 0,
+    ["jupiter_underground"]     = 0,
+    ["l03u_agr_underground"]    = 0,
+    ["l04u_labx18"]             = 0,
+    ["l10_limansk"]             = 1,
+    ["l11_hospital"]            = 1,
+    ["l08u_brainlab"]           = 0,
+    ["l10u_bunker"]             = 0,
+    ["l12u_control_monolith"]   = 0,
+    ["l12u_sarcofag"]           = 0,
+    ["l13u_warlab"]             = 0,
+    ["labx8"]                   = 0,
+
+["sad"] = 1,
+["kurchatov_37"] = 1,
+["black_valley"] = 1,
+["predbannik"] = 1,
+["aver"] = 1,
+["puzir"] = 1,
+["la06_science_station"] = 1,
+["la22_forest"] = 1,
+["la09_swamp"] = 1,
+["kasiani"] = 1,
+["la19_country"] = 1,
+["la02_garbage"] = 1,
+["la04_darkdolina"] = 1,
+["la14_rostok_factory"] = 1,
+["vokzal"] = 1,
+["topi"] = 1,
+["la17_outskirts"] = 1,
+["labx5"] = 0,
+["labx14"] = 0,
+["promzona"] = 1,
+["deadlake"] = 1,
+["y05_anomles"] = 1,
+["labx27"] = 0,
+["labx7"] = 0,
+["poselok_ug"] = 1,
+["way_in_zone"] = 1,
+["prostranstvenniy_puzir"] = 1,
+["digger_stash"] = 0,
+["station_digger"] = 0,
+["la23_oldroad"] = 1,
+["okrest"] = 1,
+["grimwood"] = 1,
+["az_radar"] = 1,
+["bar_stalker"] = 0,
+["l15u_pripyat_und"] = 0,
+["lab_audron"] = 0,
+["collaider"] = 0,
+["labx2"] = 0,
+["labx3"] = 0,
+["labx6"] = 0,
+["secret_forest"] = 1,
+["kanion"] = 1,
+["okrest_und_bar"] = 0,
+["okrest_und_bunker"] = 0,
+["okrest_und_fallstation"] = 0,
+["okrest_und_lab_24"] = 0,
+["okrest_und_mtrs"] = 0,
+["office"] = 0,
+["niichaz"] = 0,
+["church"] = 1,
+["collector22"] = 0,
+["labx11"] = 0,
+}
+
+-- Map boundaries for tornado positioning (mirrors boundaries in level_weathers)
+local map_boundaries = {
+    k00_marsh           = {{-550,760},{-550,-736},{940,-737},{940,760}},
+    k01_darkscape       = {{-494,697},{-673,-485},{447,-591},{308,678}},
+    k02_trucks_cemetery = {{-386,468},{-386,-468},{386,-468},{386,468}},
+    l01_escape          = {{-464,963},{-315,-630},{403,-633},{404,965}},
+    l02_garbage         = {{-367,315},{-367,-420},{368,-420},{368,315}},
+    l03_agroprom        = {{-268,245},{-263,-373},{351,-377},{352,242}},
+    l04_darkvalley      = {{-524,499},{-517,-930},{518,-934},{516,502}},
+    l05_bar             = {{-511,511},{-511,-511},{510,-511},{511,511}},
+    l06_rostok          = {{-511,511},{-511,-511},{511,-511},{511,511}},
+    l07_military        = {{-443,508},{-443,-131},{196,-131},{195,507}},
+    l08_yantar          = {{-282,137},{-282,-431},{282,-431},{286,136}},
+    l09_deadcity        = {{-324,313},{-362,-328},{279,-328},{279,313}},
+    l10_limansk         = {{-500,582},{-500,-416},{500,-417},{500,582}},
+    l10_radar           = {{-318,557},{-318,-658},{890,-658},{890,557}},
+    l10_red_forest      = {{-317,196},{-317,-503},{381,-503},{382,196}},
+    l11_hospital        = {{-121,919},{-121,535},{-50,536},{-50,919}},
+    l11_pripyat         = {{-628,778},{-627,-520},{670,-520},{671,779}},
+    l12_stancia         = {{-600,850},{-600,-747},{1525,-747},{1728,849}},
+    l12_stancia_2       = {{-600,850},{-600,-747},{1525,-747},{1728,849}},
+    l13_generators      = {{-499,209},{-499,-853},{540,-853},{540,209}},
+    zaton               = {{0,-600},{400,-590},{580,-460},{800,-390},{800,830},{-445,820},{-490,715},{-567,607},{-620,423},{-622,-231},{-615,-470},{-568,-568},{-400,-590}},
+    jupiter             = {{-660,640},{-660,-680},{660,-680},{660,640}},
+    pripyat             = {{700,700},{-700,700},{-700,-700},{700,-700}},
+}
+
+local function inside_boundaries(level_name, x, y)
+    local vert = map_boundaries[level_name]
+    if not vert then return false end
+    local inside = false
+    local j = #vert
+    for i = 1, #vert do
+        if (vert[i][2] < y and vert[j][2] >= y or vert[j][2] < y and vert[i][2] >= y) then
+            if (vert[i][1] + (y - vert[i][2]) / (vert[j][2] - vert[i][2]) * (vert[j][1] - vert[i][1]) < x) then
+                inside = not inside
+            end
+        end
+        j = i
+    end
+    return inside
+end
+
+--==============================================================================================
+-- mt_particles safe queue
+-- All particles_object mutations (stop/play_at_pos/move_to) are collected into
+-- pending_ops during actor_on_update / update_tornado, then flushed once via
+-- CreateTimeEvent(delay=1) which fires in the game thread — safely outside
+-- CParticlesAsync. This eliminates the ISpatial_DB::remove race condition.
+--==============================================================================================
+
+local pending_ops     = {}  -- {op, p, pos} — accumulated this tick
+local flush_scheduled = false
+local flush_event_id  = 0   -- unique suffix per CreateTimeEvent call
+
+local function flush_pending()
+    flush_scheduled = false
+    local ops = pending_ops
+    pending_ops = {}
+    for i = 1, #ops do
+        local op = ops[i]
+        local p  = op.p
+        if p then
+            local ok, err
+            if op.op == "stop" then
+                ok, err = pcall(function() if p:playing() then p:stop() end end)
+            elseif op.op == "play" then
+                ok, err = pcall(function() if not p:playing() then p:play_at_pos(op.pos) end end)
+            elseif op.op == "move" then
+                ok, err = pcall(function() if p:playing() then p:move_to(op.pos, zero_vec) end end)
+            end
+            if not ok then
+                printf("![Wind_Leaves] flush_pending error op=%s: %s", tostring(op.op), tostring(err))
+            end
+        end
+    end
+    return true  -- remove the time event
+end
+
+local function schedule_flush()
+    if flush_scheduled then return end
+    flush_scheduled = true
+    flush_event_id  = flush_event_id + 1
+    CreateTimeEvent("wl_mt", "wl_flush_" .. flush_event_id, 1, flush_pending)
+end
+
+-- Enqueue stop — called instead of p:stop() directly
+local function stop_p(p)
+    if p and p:playing() then
+        pending_ops[#pending_ops + 1] = {op="stop", p=p}
+        schedule_flush()
+    end
+end
+
+-- Enqueue play or move — called instead of p:play_at_pos() / p:move_to() directly
+local function play_or_move(p, pos, need_move)
+    if not p then return end
+    if p:playing() then
+        if need_move then
+            pending_ops[#pending_ops + 1] = {op="move", p=p, pos=pos}
+            schedule_flush()
+        end
+    else
+        pending_ops[#pending_ops + 1] = {op="play", p=p, pos=pos}
+        schedule_flush()
+    end
+end
+
+-- Immediate stop used only in on_game_unload / level change —
+-- at that point CParticlesAsync is already shut down by the engine.
+local function stop_p_immediate(p)
+    if p and p:playing() then p:stop() end
+end
+
+--==============================================================================================
+
+-- Attempt to spawn a tornado away from the actor
+local function try_spawn_tornado(actor_pos, level_name)
+    if tornado_active then return end
+    if math.random() > TORNADO_PROB then return end
+
+    -- Pick a random angle and distance
+    local angle = math.rad(math.random(0, 359))
+    local dist  = tornado_distance + math.random(0, 150)
+    local tx    = actor_pos.x + math.sin(angle) * dist
+    local tz    = actor_pos.z + math.cos(angle) * dist
+
+    if not inside_boundaries(level_name, tx, tz) then
+        printf("[Wind_Leaves] Tornado: position outside boundaries, skip")
+        return
+    end
+
+    local pfx_path = tornado_pfx_list[math.random(#tornado_pfx_list)]
+    local ok, p = pcall(particles_object, pfx_path)
+    if not ok or not p then
+        printf("![Wind_Leaves] Tornado: failed to create particle %s", pfx_path)
+        return
+    end
+
+    local ty  = db.actor:position().y  -- use actor height as terrain level
+    local pos = tornado_vec:set(tx, ty, tz)
+
+    -- play_at_pos via queue — safe with mt_particles
+    pending_ops[#pending_ops + 1] = {op="play", p=p, pos=pos}
+    schedule_flush()
+
+    tornado_particle = p
+    tornado_active   = true
+    tornado_born_at  = get_diff_sec()
+    printf("[Wind_Leaves] Tornado spawned: %s at dist=%.0f angle=%.0f", pfx_path, dist, math.deg(angle))
+end
+
+local function update_tornado(is_storm, level_name)
+    local dsec = get_diff_sec()
+
+    -- Stop tornado if lifetime expired
+    if tornado_active then
+        if dsec - tornado_born_at >= TORNADO_LIFETIME then
+            -- stop via queue — safe with mt_particles
+            stop_p(tornado_particle)
+            tornado_particle = nil
+            tornado_active   = false
+            tornado_next_check = dsec + math.random(TORNADO_MIN_INTERVAL, TORNADO_MAX_INTERVAL)
+            printf("[Wind_Leaves] Tornado: lifetime expired")
+        end
+        return  -- still active — do nothing
+    end
+
+    -- Not a storm — reset timer and exit
+    if not is_storm then
+        tornado_next_check = 0
+        return
+    end
+
+    -- First check on storm entry
+    if tornado_next_check == 0 then
+        tornado_next_check = dsec + math.random(TORNADO_MIN_INTERVAL, TORNADO_MAX_INTERVAL)
+        return
+    end
+
+    -- Time to check
+    if dsec >= tornado_next_check and db.actor then
+        try_spawn_tornado(db.actor:position(), level_name)
+        -- Next interval is set on stop (if spawn succeeded), or immediately if not
+        if not tornado_active then
+            tornado_next_check = dsec + math.random(TORNADO_MIN_INTERVAL, TORNADO_MAX_INTERVAL)
+        end
+    end
+end
+
+-- Weather presets (verified against dynamic_weather_graphs.ltx)
+local cycle_clear  = {
+    w_clear1=1, w_clear2=1, w_clear3=1, w_clear4=1, w_clear5=1,
+    w_clear3_cnpp=1, w_cgim_clear_2=1, w_cgim_clear_3=1, w_clear_misery=1,
+    w_sky_nlc=1, w_gswr_addon=1, w_cgim_clear_partly=1,
+    w_paradox_white=1, w_paradox_clear=1,
+}
+local cycle_partly = {
+    w_partly1=1, w_partly2=1, w_partly3=1, w_partly4=1, w_partly5=1, w_partly6=1,
+    w_sky_alt_cold=1, w_partlymisery3=1, w_original_alpha1=1, w_original_alpha2=1,
+    w_clarity=1, w_vivid_partly=1, w_vivid_pure=1, w_partly_alt=1,
+}
+local cycle_cloudy = {
+    w_cloudy1=1, w_cloudy2_dark=1, w_cloudy3_dark=1, w_cloudy4=1, w_cloudy5=1, w_cloudy4_dark=1,
+    w_cgim_cloudy=1, w_cgim_cloudy_3=1, w_cgim_cloudy_4=1, w_cloudy_misery=1,
+    w_cloudy_misery3=1, w_cloudy_mrak=1, w_cloudy_metro=1, w_cloudy_windy=1,
+    w_ccgim_cloudy=1, w_nlc_cloudy=1, w_nlc_depressive=1, w_cgim_cloudy_dark=1,
+    w_alpha_r3=1, w_paradox_cloudy=1,
+}
+local cycle_rain   = {
+    w_rain1=1, w_rain2=1, w_rain3=1, w_rain4=1, w_rain5=1, w_rain6=1, w_rain7=1,
+    w_cloudy3=1, w_rain_sun=1, w_cloudy_rain=1, w_af1_rain=1,
+    w_skygod_rain=1, w_paradox_rain=1,
+}
+local cycle_storm  = {
+    w_storm1=1, w_storm2=1, w_storm3=1, w_storm4=1, w_storm5=1, w_storm6=1,
+    w_storm_swtc=1, w_cold_storm=1, w_original_alpha3=1,
+    w_cgim_storm=1, w_paradox_dark=1,
+}
+local cycle_foggy  = {
+    w_foggy1=1, w_foggy2=1, w_foggy3=1, w_foggy=1,
+    w_ccgim_fog=1, w_swtc_tuman=1, w_vivid_tuman=1,
+    w_sky_yntar=1, w_deaspir_foggy=1, w_cgim_foggy_sun=1,
+}
+
+local logic_timer          = 0
+local LOGIC_INTERVAL       = 1000
+local cached_level         = ""
+local cached_play_leaves   = 0
+local level_check_timer    = 0
+local LEVEL_CHECK_INTERVAL = 5000
+
+-- Ticks to skip after game load before creating particles_object instances.
+-- particles_object() registers the object in ISpatial_DB; if mt_particles is active
+-- and the async thread calls UpdateSpatial simultaneously, ISpatial_DB::remove crashes.
+-- Waiting 300 actor_on_update ticks (~5-10s depending on framerate) ensures LSS spawn
+-- and initial ISpatial population is complete before we touch the spatial database.
+local INIT_TICKS_DELAY = 300
+local init_ticks       = 0
+local particles_inited = false
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", on_game_load)
+    RegisterScriptCallback("on_level_changing",     on_game_unload)
+    RegisterScriptCallback("actor_on_update",       actor_on_update)
+end
+
+function on_game_load()
+    -- Reset state but do NOT create particles_object here —
+    -- actor_on_first_update fires before LSS finishes spawning objects.
+    particles_inited     = false
+    init_ticks           = 0
+    cached_sim           = alife()
+    cached_gg            = cached_sim and game_graph() or nil
+    cached_vertex        = -1
+    tornado_inited_time  = game.get_game_time()
+    tornado_active       = false
+    tornado_particle     = nil
+    tornado_next_check   = 0
+end
+
+function on_game_unload()
+    -- Cancel any pending deferred flush — we are stopping everything now.
+    -- Use immediate stop: on_level_changing fires after CParticlesAsync is torn down.
+    -- Each flush event has a unique key (wl_flush_N) and removes itself via return true,
+    -- so RemoveTimeEvent by static key is not needed here.
+    flush_scheduled = false
+    flush_event_id  = 0
+    pending_ops     = {}
+
+    for _, p in ipairs(all_particles) do
+        stop_p_immediate(p)
+    end
+    stop_p_immediate(tornado_particle)
+
+    tornado_particle    = nil
+    tornado_active      = false
+    tornado_next_check  = 0
+    cached_sim          = nil
+    cached_gg           = nil
+    cached_vertex       = -1
+    tornado_inited_time = nil
+    cached_weather      = ""
+    cached_hour         = -1
+    tf_cache_timer      = 0
+end
+
+function actor_on_update()
+    if not (db.actor and level) then return end
+
+    -- Defer particles_object creation until INIT_TICKS_DELAY ticks after game load.
+    -- Each tick is one actor_on_update call; at 60fps this is ~5s, plenty of time
+    -- for LSS to finish spawning and ISpatial_DB to stabilise.
+    if not particles_inited then
+        init_ticks = init_ticks + 1
+        if init_ticks < INIT_TICKS_DELAY then return end
+        init_particles()
+        particles_inited = true
+        printf("[Wind_Leaves] Particles initialized after %s ticks", tostring(init_ticks))
+    end
+
+    local tg = time_global()
+
+    if tg - level_check_timer >= LEVEL_CHECK_INTERVAL then
+        level_check_timer = tg
+        if not cached_sim then cached_sim = alife() end
+        if cached_sim and not cached_gg then cached_gg = game_graph() end
+        if cached_sim and cached_gg then
+            local actor_se = cached_sim:actor()
+            if actor_se then
+                local vid = actor_se.m_game_vertex_id
+                if vid ~= cached_vertex then
+                    cached_vertex = vid
+                    local ok, lid = pcall(function() return cached_gg:vertex(vid):level_id() end)
+                    if ok and lid then
+                        local actor_level = cached_sim:level_name(lid)
+                        if actor_level ~= cached_level then
+                            cached_level       = actor_level
+                            cached_play_leaves = leaves_maps[actor_level] or 0
+                            -- Reset tornado on level change — via queue (still in game thread)
+                            stop_p(tornado_particle)
+                            tornado_particle   = nil
+                            tornado_active     = false
+                            tornado_next_check = 0
+                            printf("[Wind_Leaves] Level changed: '%s', play_leaves=%s",
+                                tostring(cached_level), tostring(cached_play_leaves))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if tg - logic_timer < LOGIC_INTERVAL then return end
+    logic_timer = tg
+
+    local weather = level.get_weather and level.get_weather() or ""
+    if not weather then weather = "" end
+
+    local is_inside       = GetEvent("current_safe_cover") == true
+    local ug_event        = GetEvent("underground") == true
+    local ug_map_fallback = cached_level ~= "" and leaves_maps[cached_level] == 0
+    local is_underground  = ug_event or ug_map_fallback
+    local is_storm        = cycle_storm[weather] == 1
+
+    -- Update tornado (surface only, not indoors)
+    if not is_underground and not is_inside and cached_level ~= "" then
+        update_tornado(is_storm, cached_level)
+    end
+
+    local hour = math.floor(level.get_time_hours and level.get_time_hours() or 0)
+
+    -- Skip active{} rebuild if weather, hour and position have not changed
+    local weather_changed = weather ~= cached_weather
+    local hour_changed    = hour ~= cached_hour
+    if weather_changed then cached_weather = weather end
+    if hour_changed    then cached_hour    = hour    end
+
+    local pos  = db.actor:position()
+
+    local pos_moved = pos:distance_to_sqr(last_pos) > MOVE_THRESHOLD_SQR
+    local need_move = pos_moved and (tg - move_timer >= MOVE_INTERVAL)
+
+    if need_move then
+        move_timer = tg
+        last_pos:set(pos.x, pos.y, pos.z)
+    end
+
+    if not weather_changed and not hour_changed and not need_move then return end
+
+    snowfall(weather, is_inside, is_underground, cached_play_leaves, hour, pos, need_move)
+end
+
+local function stop_all_except(except, pos, need_move)
+    for _, p in ipairs(all_particles) do
+        if except[p] then
+            play_or_move(p, pos, need_move)
+        else
+            stop_p(p)
+        end
+    end
+end
+
+function snowfall(weather, is_inside, is_underground, play_leaves, hour, pos, need_move)
+    if is_underground then
+        for _, p in ipairs(play_underground_arr) do
+            play_or_move(p, pos, need_move)
+        end
+        for _, p in ipairs(all_particles) do
+            if not play_underground[p] then stop_p(p) end
+        end
+        return
+    end
+
+    if is_inside then
+        stop_all_except(play_inside, pos, need_move)
+        return
+    end
+
+    local active = {}
+
+    -- Dead Zone: constant atmospheric fog outdoors
+    if p_fogdust_00 then active[p_fogdust_00] = true end
+
+    -- Summer: night fog 01-03 (dedicated preset if available, fallback otherwise)
+    if hour >= NIGHT_FOG_START and hour < NIGHT_FOG_END then
+        if p_fog_night then
+            active[p_fog_night] = true
+        elseif p_nightfog then
+            active[p_nightfog] = true
+        end
+    end
+
+    if cycle_clear[weather] or cycle_partly[weather] or cycle_cloudy[weather] then
+        -- Fireflies evening/night (18:00 - 05:00)
+        if (hour >= TORCHBUGS_EVENING_START or hour < TORCHBUGS_MORNING_END) and p_torchbugs then
+            active[p_torchbugs] = true
+        end
+        -- Calm daytime leaves (10:00 - 19:00)
+        if hour >= CALM_LEAVES_START and hour < CALM_LEAVES_END then
+            if play_leaves == 1 and p_leaves_calm then active[p_leaves_calm] = true end
+        end
+        -- Evening leaves (18:00 - 21:00)
+        if hour >= EVENING_LEAVES_START and hour < EVENING_LEAVES_END then
+            if play_leaves == 1 and p_flyingleaves then active[p_flyingleaves] = true end
+        end
+        -- Midges daytime (9:00 - 20:00), swamp maps only
+        if hour >= FLIES_START and hour < FLIES_END and p_flies then
+            if swamp_maps[cached_level] then
+                active[p_flies] = true
+            end
+        end
+
+    elseif cycle_foggy[weather] then
+        if play_leaves == 1 and p_flyingleaves then active[p_flyingleaves] = true end
+
+    elseif cycle_rain[weather] then
+        if p_fogdust then active[p_fogdust] = true end
+        if play_leaves == 1 and p_flyingleaves then active[p_flyingleaves] = true end
+
+    elseif cycle_storm[weather] then
+        -- Dust storm + heat haze
+        if p_fogdust      then active[p_fogdust]      = true end
+        if p_heatfog      then active[p_heatfog]      = true end
+        -- Additional storm dust and leaves
+        if p_storm_dust   then active[p_storm_dust]   = true end
+        if play_leaves == 1 then
+            if p_storm_leaves    then active[p_storm_leaves]    = true end
+            if p_flyingleaves    then active[p_flyingleaves]    = true end
+            if p_turbulentleaves then active[p_turbulentleaves] = true end
+        end
+    end
+
+    for _, p in ipairs(all_particles) do
+        if active[p] then
+            play_or_move(p, pos, need_move)
+        else
+            stop_p(p)
+        end
+    end
+end

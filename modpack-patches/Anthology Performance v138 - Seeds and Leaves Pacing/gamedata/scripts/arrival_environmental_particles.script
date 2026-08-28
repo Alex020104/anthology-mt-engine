@@ -1,0 +1,330 @@
+--==============================================================================================
+--Yet Another Winter Mod snowfall script
+--Author: Daedalus-Prime
+-- Edit by demonized:
+--    	Refactor of script for easier adding and toggling of particles
+--		Check for playing particles depending on ray collision
+--		Playing particles outside of covers depending on location where actor entered the cover for muh immersion
+--		Saving entered cover position and restoring it on save/load
+-- edit by FabioConte for Anomqly Season's Redux (05.02.2023)
+-- edit by S.e.m.i.t.o.n.e. for 'The Arrival' mod
+--==============================================================================================
+function on_game_start()
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+end
+
+local ray = function(pos, dir, args)
+    local pos = pos and vector():set(pos.x or pos[1], pos.y or pos[2], pos.z or pos[3]) or device().cam_pos
+    local dir = dir and vector():set(dir.x or dir[1], dir.y or dir[2], dir.z or dir[3]) or device().cam_dir
+    local args = args or {}
+
+    local pick = ray_pick()
+    pick:set_position(pos)
+    pick:set_direction(dir)
+    pick:set_flags(args.flags or 2)
+    pick:set_range(args.range or 200)
+    if args.ignore_object then
+        pick:set_ignore_object(args.ignore_object)
+    end
+    pick:query()
+
+    return pick
+end
+
+local snow_particle_foggy = particles_object("semitone\\environmental\\seed1") --set particles to variables
+local snow_particle_foggy1 = particles_object("semitone\\environmental\\seed2")
+local snow_particle_foggy2 = particles_object("semitone\\environmental\\tree_leaves_stormy")
+local snow_particle_foggy3 = particles_object("lanforse\\fog_mist")
+
+
+-- These particles wont play inside at all
+dont_play_inside_particles = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+	}
+
+weather_to_particles = {
+    ["default"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+
+    },
+    ["w_ccgim_fog"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+
+    },
+    ["w_clear_foggy"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_clear1"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_clear2"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_cloudy1"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_cloudy2"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_cloudy2_dark"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_cloudy3"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_cloudy4"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+    ["w_deaspir_foggy"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+    },
+	["w_foggy1"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_foggy2"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_foggy3"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_indoor_agr_underground"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_indoor_ambient"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_indoor_default"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_indoor_jupiter_underground"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_indoor_sarcofag"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_partly1"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_partly2"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_partly3"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_partly4"] = {
+	[snow_particle_foggy] = true,
+	[snow_particle_foggy1] = true,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+	["w_rain1"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+    },
+	["w_rain2"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+    },
+	["w_rain3"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+    },
+	["w_storm1"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+    },
+	["w_storm2"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+    },
+	["w_swtc_tuman"] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = true,
+	[snow_particle_foggy3] = false,
+    },
+    [0] = {
+	[snow_particle_foggy] = false,
+	[snow_particle_foggy1] = false,
+	[snow_particle_foggy2] = false,
+	[snow_particle_foggy3] = false,
+    },
+}
+
+function switch_particles(particle_table, pos, is_inside)
+	local pos = pos or device().cam_pos
+	for k, v in pairs(particle_table) do
+		-- Disable particles that are in dont_play_inside_particles table if inside
+		if is_inside and dont_play_inside_particles[k] then
+			if k:playing() then
+				k:stop()
+			end
+		else
+			if v then
+				if k:playing() then
+					k:move_to(pos, VEC_ZERO)
+				else
+					k:play_at_pos(pos)
+				end
+			else
+				if k:playing() then
+					k:stop_deffered()
+				end
+			end
+		end
+	end
+end
+
+local ray_args = {
+	range = 30
+}
+local inside_pos
+local UPDATE_INTERVAL_MS = 250
+local last_update = -UPDATE_INTERVAL_MS
+function actor_on_update()
+	-- Five cover rays and particle state changes do not need frame cadence.
+	-- Particle systems keep simulating normally between these 4 Hz updates.
+	local now = time_global()
+	if now - last_update < UPDATE_INTERVAL_MS then return end
+	last_update = now
+
+	-- Check current weather
+	local weather = level.get_weather()
+
+    -- Detection of cover by rain collision
+	local cam_pos = device().cam_pos
+	local r1 = ray(cam_pos, VEC_Y, ray_args)
+	local r2 = ray(cam_pos, vector():set(VEC_Y):add(vector():set(1.5, 0, 0)), ray_args)
+	local r3 = ray(cam_pos, vector():set(VEC_Y):add(vector():set(-1.5, 0, 0)), ray_args)
+	local r4 = ray(cam_pos, vector():set(VEC_Y):add(vector():set(0, 0, 1.5)), ray_args)
+	local r5 = ray(cam_pos, vector():set(VEC_Y):add(vector():set(0, 0, -1.5)), ray_args)
+	local r = r1:get_distance() > 0
+		and r2:get_distance() > 0
+		and r3:get_distance() > 0
+		and r4:get_distance() > 0
+		and r5:get_distance() > 0
+
+    -- Set variable for whether the player is in an emission safe zone or not
+	local is_inside = GetEvent("current_safe_cover") or r
+
+    -- Set variable for whether the player is in an underground level or not
+	local is_underground = GetEvent("underground")
+
+    -- If exists saved position where actor entered cover, apply it
+	local pos
+	if is_inside then
+		if inside_pos then
+			pos = vector():set(inside_pos.x, cam_pos.y, inside_pos.z)
+		else
+			inside_pos = cam_pos
+			pos = inside_pos
+		end
+	else
+		inside_pos = nil
+	end
+	snowfall(weather, is_inside, is_underground, pos)
+end
+
+function snowfall(weather, is_inside, is_underground, inside_pos)
+	if is_underground then
+		switch_particles(weather_to_particles[0], inside_pos, is_inside)
+		UnregisterScriptCallback("actor_on_update", actor_on_update)
+		return
+	end
+
+	if (is_inside and not inside_pos) or not weather_to_particles[weather] then
+		switch_particles(weather_to_particles[0], inside_pos, is_inside)
+		return
+	end
+
+	switch_particles(weather_to_particles[weather], inside_pos, is_inside)
+end
+
+function save_state(m_data)
+	m_data.snowfall_inside_pos = inside_pos and utils_data.vector_to_string(inside_pos)
+end
+
+function load_state(m_data)
+	inside_pos = m_data.snowfall_inside_pos and utils_data.string_to_vector(m_data.snowfall_inside_pos)
+end

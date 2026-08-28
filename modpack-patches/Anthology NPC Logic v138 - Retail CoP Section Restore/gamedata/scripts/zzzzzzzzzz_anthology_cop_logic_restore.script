@@ -1,0 +1,47 @@
+local previous_setup_on_spawn = nil
+local patched_setup_on_spawn = nil
+
+local function has_loaded_logic(st, loaded)
+	return loaded == true
+		and st ~= nil
+		and type(st.loaded_ini_filename) == "string"
+		and st.loaded_ini_filename ~= ""
+		and type(st.loaded_section_logic) == "string"
+		and st.loaded_section_logic ~= ""
+		and type(st.loaded_active_section) == "string"
+		and st.loaded_active_section ~= ""
+end
+
+patched_setup_on_spawn = function(obj, st, se_obj, stype, loaded)
+	if has_loaded_logic(st, loaded) then
+		local simulation = alife()
+		local smart_id = se_obj and se_obj.m_smart_terrain_id
+		local smart = simulation and smart_id and smart_id ~= 65535 and simulation:object(smart_id)
+		local npc_info = smart and smart.npc_info and se_obj and smart.npc_info[se_obj.id]
+
+		if npc_info then
+			npc_info.begin_job = true
+		end
+
+		xr_logic.initialize_obj(obj, st, true, db.actor, stype)
+		return
+	end
+
+	return previous_setup_on_spawn(obj, st, se_obj, stype, loaded)
+end
+
+local function install_patch()
+	local current = smart_terrain and smart_terrain.setup_gulag_and_logic_on_spawn
+	if not current or current == patched_setup_on_spawn then
+		return
+	end
+
+	previous_setup_on_spawn = current
+	smart_terrain.setup_gulag_and_logic_on_spawn = patched_setup_on_spawn
+end
+
+install_patch()
+
+function on_game_start()
+	install_patch()
+end
