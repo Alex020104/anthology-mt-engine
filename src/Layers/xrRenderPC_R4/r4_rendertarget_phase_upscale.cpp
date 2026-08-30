@@ -27,7 +27,19 @@ void CRenderTarget::phase_upscale(bool temporal)
 	RCache.Render(D3DPT_TRIANGLELIST, prepareOffset, 0, 4, 0, 2);
 
     bool resolved = false;
-    if (temporal)
+	const bool temporalOutputValid = rt_UpscaleOutput->pSurface &&
+		rt_UpscaleOutput->pUAView && rt_UpscaleOutput->dwWidth == Device.dwWidth &&
+		rt_UpscaleOutput->dwHeight == Device.dwHeight;
+	if (temporal && !temporalOutputValid)
+	{
+		static bool reportedInvalidOutput = false;
+		if (!reportedInvalidOutput)
+		{
+			reportedInvalidOutput = true;
+			Msg("! [UPSCALER/RT] vendor dispatch skipped: output UAV/dimensions are invalid; spatial fallback selected");
+		}
+	}
+    if (temporal && temporalOutputValid)
     {
 		// Export the sampled D24 hardware depth into an R32_FLOAT target. The
 		// vendor APIs consume device depth, not XRay's view-space position buffer

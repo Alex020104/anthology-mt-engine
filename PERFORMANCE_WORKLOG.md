@@ -5397,3 +5397,46 @@ allocation reduction, wait/barrier fixes, and owner-thread-safe task usage.
   No new game is required. A save already corrupted to `remark@see` cannot
   reveal its previous walker section, so the CoP regression test must create a
   new save while the NPC is moving. The shader cache was not touched.
+
+## 2026-08-30 - v139 render-target lifecycle fix and base GPU attribution
+
+- Fixed a renderer resource-lifecycle defect shared by PiP quality changes and
+  DLSS/FSR mode changes. Named render targets can remain referenced by shaders
+  while `CRenderTarget` is rebuilt. The resource manager previously returned
+  that surviving object without checking its width, height, format, MSAA sample
+  count or UAV contract. A quality change could therefore keep the old physical
+  work size even though the UI and projection used the new scale.
+- `CRT::reset_end` now preserves both the MSAA sample count and the DX11 UAV
+  request. `_CreateRT` validates every descriptor of a surviving named target
+  and recreates mismatched resources before returning them. This also closes the
+  specific failure where the upscaler output lost `D3D11_BIND_UNORDERED_ACCESS`
+  after `vid_restart` and vendor dispatch received an incompatible texture.
+- The temporal output is validated at construction and immediately before
+  dispatch. The log records its real dimensions, DXGI format, bind flags and UAV
+  view. If the contract is still invalid, the engine selects the coherent
+  spatial reconstruction for that frame instead of dispatching DLSS/FSR into a
+  bad resource and producing black blocks or a crash.
+- Analysis of `xray_chenc6.log` shows that the recorded run did not exercise an
+  upscaler (`mode=native`, `1920x1080 -> 1920x1080`). Its persistent FPS collapse
+  is a separate renderer workload event: after eighteen `okr_b10` NPCs entered
+  online state, average render submission rose from 21.79 to 61.64 ms while
+  FrameMove remained 7.58 ms. Texture memory was about 2.85 GiB of 11.94 GiB;
+  there was no OOM, DXGI device removal, NVIDIA TDR or WHEA event for that run.
+- Added low-overhead R4 phase attribution under the existing
+  `mt_frame_profile 1` + `mt_frame_profile_detail 1` switches. Every 300 main
+  frames the log now reports average/max time and draw counts for visibility,
+  G-buffer, light visibility, SSS, sun cascades, local lights, combine and HUD,
+  together with static/dynamic/detail draw counts and the visible light count.
+  This separates NPC skinning/sun-shadow pressure from local lights and
+  full-screen postprocess without changing visual quality.
+- Both `DX11|x64` and `DX11-AVX|x64` compile and link with zero errors. Installed
+  files are SHA-256-identical to the build artifacts:
+  - DX11 EXE `211CBFF638F273E4BF6A6FACB38DD6346023BA504FA405CCB3A7DED4DE83DC8D`;
+  - DX11 PDB `5AE6AD293192E7687ABD5CB937A694F3369160E32FA319A9E847694EB10CF310`;
+  - DX11-AVX EXE `49FB913A2DA955DA8C85200739635C8C0791324AD834981577752237FBA417D2`;
+  - DX11-AVX PDB `B4E640FEE09760B51D8D3129631F6E19DDFAD1F1EEC8076E7915D5E42B522DD9`.
+- The previous binaries, active upscaler addon and `xray_chenc6.log` are
+  recoverable from
+  `E:/ANTHOLOGY_BACKUPS/20260830_v139_pre_rt_lifecycle_render_profile`. No new
+  game is required and the shader cache was not read, deleted, moved or
+  rewritten.

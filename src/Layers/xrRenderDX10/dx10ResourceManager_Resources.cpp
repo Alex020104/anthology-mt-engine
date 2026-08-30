@@ -668,16 +668,84 @@ CRT* CResourceManager::_CreateRT(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 Sam
 	LPSTR N = LPSTR(Name);
 	xrCriticalSectionGuard guard(creationGuard);
 	map_RT::iterator I = m_rtargets.find(N);
-	if (I != m_rtargets.end()) return I->second;
+	if (I != m_rtargets.end())
+	{
+		CRT* RT = I->second;
+		const bool descriptorMismatch = RT->dwWidth != w || RT->dwHeight != h || RT->fmt != f ||
+			RT->sampleCount != SampleCount
+#ifdef USE_DX11
+			|| RT->useUnorderedAccess != useUAV
+#endif
+			;
+
+		// RT objects can outlive CRenderTarget through shader/texture references.
+		// During vid_restart ResourceManager recreates those survivors before the
+		// new renderer asks for its current dimensions and bind flags. Returning a
+		// stale named object here used to keep the previous core resolution and,
+		// for the temporal-upscaler output, could also drop its UAV bind flag.
+		if (Device.b_is_Ready && (descriptorMismatch || !RT->pSurface))
+		{
+			if (descriptorMismatch)
+				Msg("* [RT/RESET] recreate %s: %ux%u/%u/s%u/uav%u -> %ux%u/%u/s%u/uav%u",
+					Name, RT->dwWidth, RT->dwHeight, u32(RT->fmt), RT->sampleCount,
+#ifdef USE_DX11
+					u32(RT->useUnorderedAccess),
+#else
+					0u,
+#endif
+					w, h, u32(f), SampleCount,
+#ifdef USE_DX11
+					u32(useUAV)
+#else
+					0u
+#endif
+				);
+
+			RT->destroy();
+#ifdef USE_DX11
+			RT->create(Name, w, h, f, SampleCount, useUAV);
+#else
+			RT->create(Name, w, h, f, SampleCount);
+#endif
+		}
+		else if (!Device.b_is_Ready && descriptorMismatch)
+		{
+			RT->dwWidth = w;
+			RT->dwHeight = h;
+			RT->fmt = f;
+			RT->sampleCount = SampleCount;
+#ifdef USE_DX11
+			RT->useUnorderedAccess = useUAV;
+#endif
+		}
+		return RT;
+	}
 	else
 	{
 		CRT* RT = xr_new<CRT>();
 		RT->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 		m_rtargets.insert(mk_pair(RT->set_name(Name), RT));
 #ifdef USE_DX11
-		if (Device.b_is_Ready) RT->create(Name, w, h, f, SampleCount, useUAV);
+		if (Device.b_is_Ready)
+			RT->create(Name, w, h, f, SampleCount, useUAV);
+		else
+		{
+			RT->dwWidth = w;
+			RT->dwHeight = h;
+			RT->fmt = f;
+			RT->sampleCount = SampleCount;
+			RT->useUnorderedAccess = useUAV;
+		}
 #else
-		if (Device.b_is_Ready) RT->create(Name, w, h, f, SampleCount);
+		if (Device.b_is_Ready)
+			RT->create(Name, w, h, f, SampleCount);
+		else
+		{
+			RT->dwWidth = w;
+			RT->dwHeight = h;
+			RT->fmt = f;
+			RT->sampleCount = SampleCount;
+		}
 #endif
 		return RT;
 	}

@@ -18,6 +18,11 @@ CRT::CRT()
 	dwWidth = 0;
 	dwHeight = 0;
 	fmt = D3DFMT_UNKNOWN;
+	sampleCount = 1;
+#ifdef USE_DX11
+	useUnorderedAccess = false;
+#endif
+	_order = 0;
 }
 
 CRT::~CRT()
@@ -45,6 +50,10 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount)
 	dwWidth = w;
 	dwHeight = h;
 	fmt = f;
+	sampleCount = SampleCount;
+#ifdef USE_DX11
+	useUnorderedAccess = useUAV;
+#endif
 
 	// Get caps
 	//D3DCAPS9	caps;
@@ -215,7 +224,11 @@ void CRT::reset_begin()
 
 void CRT::reset_end()
 {
-	create(*cName, dwWidth, dwHeight, fmt);
+#ifdef USE_DX11
+	create(*cName, dwWidth, dwHeight, fmt, sampleCount, useUnorderedAccess);
+#else
+	create(*cName, dwWidth, dwHeight, fmt, sampleCount);
+#endif
 }
 
 #ifdef USE_DX11

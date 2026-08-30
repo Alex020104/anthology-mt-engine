@@ -879,6 +879,17 @@ CRenderTarget::CRenderTarget()
 				D3DFMT_A16B16G16R16F, 1, true);
 			rt_UpscalePost.create(r4_RT_upscale_post, Device.dwWidth, Device.dwHeight,
 				D3DFMT_A16B16G16R16F, 1);
+
+			D3D11_TEXTURE2D_DESC outputDesc = {};
+			rt_UpscaleOutput->pSurface->GetDesc(&outputDesc);
+			const bool outputContractValid = outputDesc.Width == Device.dwWidth &&
+				outputDesc.Height == Device.dwHeight &&
+				(outputDesc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) != 0 &&
+				rt_UpscaleOutput->pUAView != nullptr;
+			Msg("%s [UPSCALER/RT] output=%ux%u format=%u bind=0x%X uav=%s",
+				outputContractValid ? "*" : "!", outputDesc.Width, outputDesc.Height,
+				u32(outputDesc.Format), outputDesc.BindFlags,
+				rt_UpscaleOutput->pUAView ? "yes" : "no");
 		}
 	}
 

@@ -3,6 +3,7 @@
 #include "../xrRender/FBasicVisual.h"
 #include "../../xrEngine/customhud.h"
 #include "../../xrEngine/xr_object.h"
+#include "../../xrEngine/EngineThreading.h"
 #include "../xrRender/SkeletonCustom.h"
 #include "../../xrParticles/ParticlesAsyncManager.h"
 
@@ -11,6 +12,118 @@
 
 namespace
 {
+enum ERenderPhaseProfile : u32
+{
+	RenderPhaseVisibility,
+	RenderPhaseGBuffer,
+	RenderPhaseLightVisibility,
+	RenderPhaseSSS,
+	RenderPhaseSun,
+	RenderPhaseLocalLights,
+	RenderPhaseCombine,
+	RenderPhaseHud,
+	RenderPhaseCount
+};
+
+struct SRenderPhaseAccumulator
+{
+	u32 frames = 0;
+	u64 ticks[RenderPhaseCount] = {};
+	u64 maxTicks[RenderPhaseCount] = {};
+	u64 drawCalls[RenderPhaseCount] = {};
+	u64 frameDrawCalls = 0;
+	u64 staticDips = 0;
+	u64 dynamicDips = 0;
+	u64 detailDips = 0;
+	u64 localLights = 0;
+};
+
+struct SRenderPhaseToken
+{
+	ERenderPhaseProfile phase;
+	u64 startedAt;
+	u32 drawCalls;
+	bool enabled;
+};
+
+SRenderPhaseAccumulator g_renderPhaseProfile;
+
+bool RenderPhaseProfileEnabled()
+{
+	return mt_FrameProfile && mt_FrameProfileDetailed && CPU::qpc_freq &&
+		!Device.dwPrecacheFrame && !Device.m_SecondViewport.IsSVPFrame();
+}
+
+SRenderPhaseToken BeginRenderPhase(ERenderPhaseProfile phase)
+{
+	const bool enabled = RenderPhaseProfileEnabled();
+	return {phase, enabled ? CPU::QPC() : 0, enabled ? RCache.stat.calls : 0, enabled};
+}
+
+void EndRenderPhase(const SRenderPhaseToken& token)
+{
+	if (!token.enabled)
+		return;
+
+	const u64 elapsed = CPU::QPC() - token.startedAt;
+	g_renderPhaseProfile.ticks[token.phase] += elapsed;
+	g_renderPhaseProfile.maxTicks[token.phase] =
+		std::max(g_renderPhaseProfile.maxTicks[token.phase], elapsed);
+	g_renderPhaseProfile.drawCalls[token.phase] += RCache.stat.calls - token.drawCalls;
+}
+
+void FinishRenderPhaseFrame(u32 localLights)
+{
+	if (!RenderPhaseProfileEnabled())
+		return;
+
+	SRenderPhaseAccumulator& profile = g_renderPhaseProfile;
+	++profile.frames;
+	profile.frameDrawCalls += RCache.stat.calls;
+	profile.staticDips += RCache.stat.r.s_static.dips;
+	profile.dynamicDips += RCache.stat.r.s_dynamic.dips;
+	profile.detailDips += RCache.stat.r.s_details.dips;
+	profile.localLights += localLights;
+
+	if (profile.frames < 300)
+		return;
+
+	const double averageMs = 1000.0 / (double(CPU::qpc_freq) * double(profile.frames));
+	const double maximumMs = 1000.0 / double(CPU::qpc_freq);
+	Msg("* [render-phase/profile] avg-ms visibility/gbuffer/light-vis/sss/sun/local/combine/hud="
+		"%.2f/%.2f/%.2f/%.2f/%.2f/%.2f/%.2f/%.2f",
+		profile.ticks[RenderPhaseVisibility] * averageMs,
+		profile.ticks[RenderPhaseGBuffer] * averageMs,
+		profile.ticks[RenderPhaseLightVisibility] * averageMs,
+		profile.ticks[RenderPhaseSSS] * averageMs,
+		profile.ticks[RenderPhaseSun] * averageMs,
+		profile.ticks[RenderPhaseLocalLights] * averageMs,
+		profile.ticks[RenderPhaseCombine] * averageMs,
+		profile.ticks[RenderPhaseHud] * averageMs);
+	Msg("* [render-phase/profile] max-ms visibility/gbuffer/light-vis/sss/sun/local/combine/hud="
+		"%.2f/%.2f/%.2f/%.2f/%.2f/%.2f/%.2f/%.2f",
+		profile.maxTicks[RenderPhaseVisibility] * maximumMs,
+		profile.maxTicks[RenderPhaseGBuffer] * maximumMs,
+		profile.maxTicks[RenderPhaseLightVisibility] * maximumMs,
+		profile.maxTicks[RenderPhaseSSS] * maximumMs,
+		profile.maxTicks[RenderPhaseSun] * maximumMs,
+		profile.maxTicks[RenderPhaseLocalLights] * maximumMs,
+		profile.maxTicks[RenderPhaseCombine] * maximumMs,
+		profile.maxTicks[RenderPhaseHud] * maximumMs);
+	Msg("* [render-phase/profile] avg-work draws/static/dynamic/details/local-lights="
+		"%.1f/%.1f/%.1f/%.1f/%.1f phase-draws(gbuffer/sun/local/combine)=%.1f/%.1f/%.1f/%.1f",
+		double(profile.frameDrawCalls) / profile.frames,
+		double(profile.staticDips) / profile.frames,
+		double(profile.dynamicDips) / profile.frames,
+		double(profile.detailDips) / profile.frames,
+		double(profile.localLights) / profile.frames,
+		double(profile.drawCalls[RenderPhaseGBuffer]) / profile.frames,
+		double(profile.drawCalls[RenderPhaseSun]) / profile.frames,
+		double(profile.drawCalls[RenderPhaseLocalLights]) / profile.frames,
+		double(profile.drawCalls[RenderPhaseCombine]) / profile.frames);
+	profile = {};
+}
+
 class SvpQualityPassScope
 {
 	CRenderTarget* target;
@@ -152,6 +265,7 @@ void CRender::Render()
 	if (o.sunstatic) bSUN = FALSE;
 	// Msg						("sstatic: %s, sun: %s",o.sunstatic?;"true":"false", bSUN?"true":"false");
 
+	const SRenderPhaseToken visibilityPhase = BeginRenderPhase(RenderPhaseVisibility);
 	// HOM
 	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
 	HOM.Enable();
@@ -182,7 +296,9 @@ void CRender::Render()
     GMBase.traverse(RImplementation.pLastSector, ViewBase, Device.vCameraPosition, Device.mFullTransform);
     GMBase.r_dsgraph_capture_static();
     GMBase.r_dsgraph_capture_dynamic();
+	EndRenderPhase(visibilityPhase);
 
+	const SRenderPhaseToken firstGBufferPhase = BeginRenderPhase(RenderPhaseGBuffer);
     if (RImplementation.o.ssfx_motionvectors)
     {
 		Target->u_setrt(Target->get_core_width(), Target->get_core_height(), 0, 0, Target->rt_ssfx_motion_vectors->pRT, 0);
@@ -214,6 +330,7 @@ void CRender::Render()
 		GMBase.r_dsgraph_render_dynamic(0);
 		Target->disable_aniso();
 	}
+	EndRenderPhase(firstGBufferPhase);
 
 	//  Redotix99: for 3D Shader Based Scopes 	
 	if (scope_3D_fake_enabled)
@@ -228,13 +345,16 @@ void CRender::Render()
 
 	{
 		PIX_EVENT(DEFER_TEST_LIGHT_VIS);
+		const SRenderPhaseToken lightVisibilityPhase = BeginRenderPhase(RenderPhaseLightVisibility);
 		//******* Occlusion testing of volume-limited light-sources
 		Target->phase_occq();
 		LP_normal.clear();
 		LP_pending.clear();
 		GMBase.r_dsgraph_capture_lights();
+		EndRenderPhase(lightVisibilityPhase);
 	}
 
+	const SRenderPhaseToken secondGBufferPhase = BeginRenderPhase(RenderPhaseGBuffer);
 	//******* Main render :: PART-1 (second)
 	{
 		PIX_EVENT(DEFER_PART1_SPLIT);
@@ -277,7 +397,9 @@ void CRender::Render()
 		PIX_EVENT(DEFER_RAIN);
 		render_rain();
 	}
+	EndRenderPhase(secondGBufferPhase);
 
+	const SRenderPhaseToken sssPhase = BeginRenderPhase(RenderPhaseSSS);
 	{
 		// Save previus and current matrices
 		{
@@ -336,8 +458,10 @@ void CRender::Render()
 			HW.pContext->ClearRenderTargetView(Target->rt_ssfx_sss_tmp->pRT, NeutralLocalSSS);
 		}
 	}
+	EndRenderPhase(sssPhase);
 
 	// Directional light - fucking sun
+	const SRenderPhaseToken sunPhase = BeginRenderPhase(RenderPhaseSun);
 	if (bSUN) //bSUN && Device.dwFrame & 1 --Delayed sun update. Worth to check it in future
 	{
 		PIX_EVENT(DEFER_SUN);
@@ -350,8 +474,10 @@ void CRender::Render()
 		Target->increment_light_marker();
 		Target->accum_direct_blend();
 	}
+	EndRenderPhase(sunPhase);
 
 	phase = PHASE_NORMAL;
+	const SRenderPhaseToken localLightPhase = BeginRenderPhase(RenderPhaseLocalLights);
 
 	{
 		PIX_EVENT(DEFER_SELF_ILLUM);
@@ -406,13 +532,16 @@ void CRender::Render()
 		if (RImplementation.o.ssfx_volumetric && !reduced_svp_volumetrics)
 			Target->phase_ssfx_volumetric_blur();
 	}
+	EndRenderPhase(localLightPhase);
 
 	phase = PHASE_NORMAL;
 
 	// Postprocess
 	{
 		PIX_EVENT(DEFER_LIGHT_COMBINE);
+		const SRenderPhaseToken combinePhase = BeginRenderPhase(RenderPhaseCombine);
 		Target->phase_combine();
+		EndRenderPhase(combinePhase);
 	}
 	svpQualityScope.restore();
 
@@ -421,11 +550,16 @@ void CRender::Render()
 
 	if (g_hud)
 	{
+		const SRenderPhaseToken hudPhase = BeginRenderPhase(RenderPhaseHud);
 		if (g_hud->RenderActiveItemUIQuery())
 			GMBase.r_dsgraph_render_hud_ui();
 		if (g_hud->RenderCamAttachedUIQuery())
 			GMBase.r_dsgraph_render_cam_ui();
+		EndRenderPhase(hudPhase);
 	}
+	FinishRenderPhaseFrame(u32(LP_normal.v_point.size() + LP_normal.v_spot.size() +
+		LP_normal.v_shadowed.size() + LP_pending.v_point.size() +
+		LP_pending.v_spot.size() + LP_pending.v_shadowed.size()));
 
 }
 #include "../xrRender/CHudInitializer.h"

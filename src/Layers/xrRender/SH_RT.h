@@ -34,6 +34,10 @@ public:
 	u32 dwWidth;
 	u32 dwHeight;
 	D3DFORMAT fmt;
+	u32 sampleCount;
+#ifdef USE_DX11
+	bool useUnorderedAccess;
+#endif
 
 	u64 _order;
 };
