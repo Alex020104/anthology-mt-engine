@@ -1042,7 +1042,9 @@ void CLevel::ProcessGameEvents()
 
 //AVO: spawn antifreeze implementation, originally by alpet, reritten by demonized
 #ifdef SPAWN_ANTIFREEZE
-			if (spawn_antifreeze && g_bootComplete)
+			// This prefetch path reads ALife objects; arena MP has no ALife simulator.
+			// Network spawns must be processed in packet order by the regular path.
+			if (spawn_antifreeze && g_bootComplete && IsGameTypeSingle())
 			{
 				// Postpone M_EVENT for postponed spawns
 				//if (M_EVENT == ID && PostponedSpawn(dest))

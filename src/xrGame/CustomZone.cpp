@@ -644,7 +644,10 @@ void CCustomZone::shedule_Update(u32 dt)
 		inherited::shedule_Update(dt);
 
 		// check "fast-mode" border
-		float act_distance = Level().CurrentControlEntity()->Position().distance_to(P) - s.R;
+		// A joining MP client runs zones before its spectator/actor arrives.
+		const CObject* control = Level().CurrentControlEntity();
+		const Fvector& observer_position = control ? control->Position() : Device.vCameraPosition;
+		float act_distance = observer_position.distance_to(P) - s.R;
 		if (act_distance > FASTMODE_DISTANCE && !m_zone_flags.test(eAlwaysFastmode))
 			o_switch_2_slow();
 		else
