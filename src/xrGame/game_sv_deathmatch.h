@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "game_sv_mp.h"
 #include "inventory_space.h"
@@ -40,6 +40,7 @@ protected:
 	u32 m_TeamEliminatedDelay;
 
 	shared_str m_sBaseWeaponCostSection;
+	xr_set<u16> m_claimedPlayerBags;
 
 	xr_vector<game_TeamState> teams; //dm,tdm,ah	
 

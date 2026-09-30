@@ -185,39 +185,29 @@ void CUIMpTradeWnd::DeleteHelperItems()
 
 void CUIMpTradeWnd::DeleteHelperItems(CUIDragDropListEx* list)
 {
-	ITEMS_vec to_sell;
-
-	for (ITEMS_vec::iterator it = m_all_items.begin();
-	     it != m_all_items.end();
-	     ++it)
+	// Remove helper cells by identity. PopChild(NULL) swaps inventory data,
+	// which could destroy a real mine from the same stack during confirmation.
+	xr_vector<CUICellItem*> detached;
+	for (int i = int(list->ItemsCount()) - 1; i >= 0; --i)
 	{
-		SBuyItemInfo* item = *it;
-
-		if (item->m_cell_item->OwnerList() != list)
-		{
+		CUICellItem* root = list->GetItemIdx(i);
+		bool has_helper = root->IsHelper();
+		for (u32 n = 0; n < root->ChildsCount(); ++n)
+			has_helper = has_helper || root->Child(n)->IsHelper();
+		if (!has_helper)
 			continue;
-		}
-
-		if (item->GetState() != SBuyItemInfo::e_bought && item->GetState() != SBuyItemInfo::e_own)
-		{
-			continue;
-		}
-
-		if (item->m_cell_item->IsHelper())
-		{
-			if (std::find(to_sell.begin(), to_sell.end(), item) == to_sell.end())
-			{
-				to_sell.push_back(item);
-			}
-		}
+		while (root->ChildsCount())
+			detached.push_back(root->PopChild(root->Child(root->ChildsCount() - 1)));
+		detached.push_back(list->RemoveItem(root, true));
 	}
-
-	for (ITEMS_vec::iterator it = to_sell.begin();
-	     it != to_sell.end();
-	     ++it)
+	if (!detached.empty())
+		SetCurrentItem(NULL);
+	for (CUICellItem* cell : detached)
 	{
-		SBuyItemInfo* tempo = NULL;
-		TryToSellItem(*it, true, tempo);
+		if (cell->IsHelper())
+			DestroyItem(FindItem(cell));
+		else
+			list->SetItem(cell);
 	}
 }
 

@@ -251,6 +251,11 @@ PROTECT_API void InitSettings()
 	}
 	pSettings = systemSettings;
 	pGameIni = gameSettings;
+#ifdef ANTHOLOGY_LAN_BUILD
+	Msg("* [Anthology LAN] DX11 / DirectPlay; separate network build");
+	Msg("* [Anthology LAN] payload: actor=%d weapon=%d mine=%d", pSettings->section_exist("mp_actor"),
+		pSettings->section_exist("mp_wpn_abakan"), pSettings->section_exist("anth_mp_mine_new_prox"));
+#endif
 	CHECK_OR_EXIT(0 != pSettings->section_count(),
 	              make_string("Cannot find file %s.\nReinstalling application may fix this problem.", systemPath));
 	CHECK_OR_EXIT(0 != pGameIni->section_count(),

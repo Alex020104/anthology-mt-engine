@@ -655,7 +655,8 @@ void CActor::cam_Update(float dt, float fFOV)
 	//}
 	//-Alundaio
 
-	fCurAVelocity = vPrevCamDir.sub(cameras[eacFirstEye]->vDirection).magnitude() / Device.fTimeDelta;
+	fCurAVelocity = vPrevCamDir.square_magnitude() > EPS && Device.fTimeDelta > EPS
+		? vPrevCamDir.sub(cameras[eacFirstEye]->vDirection).magnitude() / Device.fTimeDelta : 0.f;
 	vPrevCamDir = cameras[eacFirstEye]->vDirection;
 
 	// Высчитываем разницу между предыдущим и текущим Yaw \ Pitch от 1-го лица //--#SM+ Begin#--

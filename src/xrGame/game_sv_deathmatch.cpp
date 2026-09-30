@@ -1,4 +1,4 @@
-#include "stdafx.h"
+﻿#include "stdafx.h"
 #include "game_sv_deathmatch.h"
 #include "xrserver_objects_alife_monsters.h"
 #include "level.h"
@@ -105,6 +105,7 @@ void game_sv_Deathmatch::Create(shared_str& options)
 
 	::Random.seed(GetTickCount());
 	m_CorpseList.clear();
+	m_claimedPlayerBags.clear();
 
 	m_AnomaliesPermanent.clear();
 	m_AnomalySetsList.clear();
@@ -138,6 +139,7 @@ void game_sv_Deathmatch::OnRoundStart()
 	m_delayedTeamEliminated = false;
 	pWinnigPlayerName = "";
 	m_dwLastAnomalySetID = 1001;
+	m_claimedPlayerBags.clear();
 
 	for (u32 i = 0; i < teams.size(); ++i)
 	{
@@ -1680,6 +1682,12 @@ BOOL game_sv_Deathmatch::OnTouch(u16 eid_who, u16 eid_what, BOOL bForced)
 		{
 			if (e_what->ID_Parent == 0xffff)
 			{
+				// Pickup requests can be queued more than once before GE_DESTROY is
+				// processed. Claim the bag server-side before moving its contents or
+				// granting the PDA-hunt reward, so every death bag pays out once.
+				if (!m_claimedPlayerBags.insert(eid_what).second)
+					return FALSE;
+
 				//-------------------------------
 				//move all items from rukzak to player
 				if (!e_what->children.empty())
@@ -1750,6 +1758,10 @@ void game_sv_Deathmatch::OnDetach(u16 eid_who, u16 eid_what)
 
 	if (e_entity->m_tClassID == CLSID_OBJECT_PLAYERS_BAG && actor)
 	{
+		// Entity IDs are reusable. A freshly detached death bag must start in
+		// the unclaimed state even if an older bag used the same server ID.
+		m_claimedPlayerBags.erase(eid_what);
+
 		//move all items from player to rukzak
 		xr_vector<u16>::const_iterator it = e_parent->children.begin();
 		xr_vector<u16>::const_iterator it_e = e_parent->children.end();

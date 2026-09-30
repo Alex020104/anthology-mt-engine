@@ -427,6 +427,83 @@ void game_sv_mp::OnEvent(NET_Packet& P, u16 type, u32 time, ClientID sender)
 			}
 		}
 		break;
+
+	case GAME_EVENT_MP_MINE_PLANT:
+		{
+			xrClientData* client = m_server->ID_to_client(sender);
+			if (!client || !client->owner || !client->ps)
+			{
+				Msg("! [MP_MINE] server rejected placement: sender has no active actor");
+				break;
+			}
+
+			const u16 item_id = P.r_u16();
+			const u8 mode = P.r_u8();
+			const Fvector position = P.r_vec3();
+			CSE_Abstract* item = m_server->ID_to_entity(item_id);
+			if (!item)
+			{
+				Msg("! [MP_MINE] server rejected placement: item=%u was not found for actor=%u",
+					item_id, client->owner->ID);
+				break;
+			}
+
+			const bool attached_to_actor = item->ID_Parent == client->owner->ID ||
+				std::find(client->owner->children.begin(), client->owner->children.end(), item_id) !=
+					client->owner->children.end();
+			const bool owned_by_client = item->owner == client;
+			if (!attached_to_actor && !owned_by_client)
+			{
+				Msg("! [MP_MINE] server rejected placement: item=%u parent=%u actor=%u client_owner=%u",
+					item_id, item->ID_Parent, client->owner->ID, owned_by_client ? 1u : 0u);
+				break;
+			}
+
+			LPCSTR explosive_section = nullptr;
+			LPCSTR item_section = *item->s_name;
+			if (0 == xr_strcmp(item_section, "mine_new") && mode == 0)
+				explosive_section = "anth_mp_mine_new_prox";
+			else if (0 == xr_strcmp(item_section, "ied_new"))
+				explosive_section = mode == 0 ? "anth_mp_ied_new_prox" :
+					(mode == 1 ? "anth_mp_ied_new_timer10" : (mode == 2 ? "anth_mp_ied_new_timer30" : nullptr));
+			else if (0 == xr_strcmp(item_section, "ied_rpg_new"))
+				explosive_section = mode == 0 ? "anth_mp_ied_rpg_new_prox" :
+					(mode == 1 ? "anth_mp_ied_rpg_new_timer10" : (mode == 2 ? "anth_mp_ied_rpg_new_timer30" : nullptr));
+
+			if (!explosive_section)
+			{
+				Msg("! [MP_MINE] server rejected placement: unsupported item=%s mode=%u", item_section, mode);
+				break;
+			}
+
+			Fvector offset;
+			offset.sub(position, client->owner->o_Position);
+			if (offset.square_magnitude() > 9.f || _abs(offset.y) > 2.5f)
+			{
+				Msg("! [MP_MINE] server rejected placement: position is too far from actor=%u", client->owner->ID);
+				break;
+			}
+
+			CSE_Abstract* explosive = spawn_begin(explosive_section);
+			explosive->o_Position.set(position);
+			explosive->o_Angle.set(0.f, 0.f, 0.f);
+			explosive->s_flags.assign(M_SPAWN_OBJECT_LOCAL);
+			explosive->set_name_replace(explosive_section);
+			CSE_Abstract* spawned = spawn_end(explosive, sender);
+			if (spawned)
+			{
+				m_mpMinePlanters[spawned->ID] = sender;
+
+				NET_Packet initiator_packet;
+				u_EventGen(initiator_packet, GE_MP_MINE_SET_INITIATOR, spawned->ID);
+				initiator_packet.w_u16(client->owner->ID);
+				u_EventSend(initiator_packet, net_flags(TRUE, TRUE));
+
+				Msg("* [MP_MINE] server spawned: id=%u owner=%u section=%s mode=%u pos=(%.3f, %.3f, %.3f)",
+					spawned->ID, client->owner->ID, explosive_section, mode, position.x, position.y, position.z);
+			}
+		}
+		break;
 	default:
 		inherited::OnEvent(P, type, time, sender);
 	}; //switch
@@ -918,6 +995,8 @@ void game_sv_mp::SpawnWeapon4Actor(u16 actorId, LPCSTR N, u8 Addons, game_Player
 
 void game_sv_mp::OnDestroyObject(u16 eid_who)
 {
+	m_mpMinePlanters.erase(eid_who);
+
 	CORPSE_LIST_it it = std::find(m_CorpseList.begin(), m_CorpseList.end(), eid_who);
 	if (it != m_CorpseList.end())
 	{
@@ -1449,6 +1528,19 @@ void game_sv_mp::OnPlayerKilled(NET_Packet P)
 
 	game_PlayerState* ps_killer = get_eid(KillerID);
 	game_PlayerState* ps_killed = get_eid(KilledID);
+
+	xr_map<u16, ClientID>::const_iterator mine_planter = m_mpMinePlanters.find(WeaponID);
+	if (mine_planter != m_mpMinePlanters.end())
+	{
+		xrClientData* planter_client = m_server->ID_to_client(mine_planter->second);
+		if (planter_client && planter_client->ps)
+		{
+			ps_killer = planter_client->ps;
+			KillerID = ps_killer->GameID;
+			Msg("* [MP_MINE] kill credited: mine=%u planter=%s actor=%u victim=%u",
+				WeaponID, ps_killer->getName(), KillerID, KilledID);
+		}
+	}
 
 	if (!ps_killed)
 	{

@@ -60,6 +60,8 @@ CActor* g_actor = NULL;
 
 CActor* Actor()
 {
+	if (!IsGameTypeSingle())
+		return g_pGameLevel ? smart_cast<CActor*>(Level().CurrentControlEntity()) : nullptr;
 	R_ASSERT2(GameID() == eGameIDSingle, "Actor() method invokation must be only in Single Player game!");
 	VERIFY(g_actor);
 	/*if (GameID() != eGameIDSingle) 
@@ -533,7 +535,7 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 	//force actor to be local on server client
 	CSE_Abstract* e = (CSE_Abstract*)(DC);
 	CSE_ALifeCreatureActor* E = smart_cast<CSE_ALifeCreatureActor*>(e);
-	if (OnServer())
+	if (OnServer() && IsGameTypeSingle())
 	{
 		E->s_flags.set(M_SPAWN_OBJECT_LOCAL, TRUE);
 	}
@@ -610,6 +612,9 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 		cam_Set(eacFirstEye);
 
 	cam_Active()->Set(-E->o_torso.yaw, E->o_torso.pitch, 0); //E->o_Angle.z);
+	// Initialize camera history at spawn, before the first angular-velocity sample.
+	vPrevCamDir.set(0.f, 0.f, 0.f);
+	fCurAVelocity = 0.f;
 
 	// *** movement state - respawn
 	//mstate_wishful			= 0;

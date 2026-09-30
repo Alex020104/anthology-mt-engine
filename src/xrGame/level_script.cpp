@@ -53,6 +53,7 @@
 #include "EffectorBobbing.h"
 #include "LevelDebugScript.h"
 #include "script_attachment_manager.h"
+#include "mp_mine_utils.h"
 
 #include "ui\UIPdaMsgListItem.h"
 #include "ui\UILogsWnd.h"
@@ -1923,6 +1924,93 @@ void spawn_section(LPCSTR sSection, Fvector3 vPosition, u32 LevelVertexID, u16 P
 	Level().spawn_item(sSection, vPosition, LevelVertexID, ParentID, bReturnItem);
 }
 
+
+bool mp_mine_plant(CScriptGameObject* script_item, u8 mode)
+{
+	if (!script_item)
+	{
+		Msg("! [MP_MINE] placement rejected locally: missing item object");
+		return false;
+	}
+	if (GameID() == eGameIDSingle)
+		return false;
+
+	CGameObject& item = script_item->object();
+	CActor* actor = smart_cast<CActor*>(item.H_Parent());
+	CActor* control_actor = smart_cast<CActor*>(Level().CurrentControlEntity());
+	if (!actor || actor != control_actor || !actor->g_Alive())
+	{
+		Msg("! [MP_MINE] placement rejected locally: item=%u parent=%u control=%u alive=%u",
+			item.ID(), actor ? actor->ID() : u16(-1), control_actor ? control_actor->ID() : u16(-1),
+			actor && actor->g_Alive() ? 1u : 0u);
+		return false;
+	}
+
+	LPCSTR item_section = *item.cNameSect();
+	const bool is_pfm = 0 == xr_strcmp(item_section, "mine_new");
+	const bool is_ied = 0 == xr_strcmp(item_section, "ied_new");
+	const bool is_ied_rpg = 0 == xr_strcmp(item_section, "ied_rpg_new");
+	if ((!is_pfm && !is_ied && !is_ied_rpg) || (is_pfm && mode != mpMineProximity))
+	{
+		Msg("! [MP_MINE] placement rejected locally: unsupported item [%s] or mode [%u]", item_section, mode);
+		return false;
+	}
+
+	Fvector forward = Device.vCameraDirection;
+	forward.y = 0.f;
+	if (forward.square_magnitude() < EPS_L)
+		forward.set(0.f, 0.f, 1.f);
+	else
+		forward.normalize();
+
+	Fvector ray_start = actor->Position();
+	ray_start.mad(forward, 1.0f);
+	ray_start.y += 1.5f;
+
+	Fvector down;
+	down.set(0.f, -1.f, 0.f);
+	collide::rq_result ground_pick;
+	Fvector plant_position = actor->Position();
+	plant_position.mad(forward, 1.0f);
+	if (Level().ObjectSpace.RayPick(ray_start, down, 4.0f, collide::rqtStatic, ground_pick, actor))
+	{
+		plant_position.set(ray_start);
+		plant_position.mad(down, ground_pick.range);
+		plant_position.y += 0.025f;
+	}
+	else
+	{
+		plant_position.y += 0.025f;
+	}
+
+	NET_Packet packet;
+	actor->u_EventGen(packet, GE_GAME_EVENT, actor->ID());
+	packet.w_u16(GAME_EVENT_MP_MINE_PLANT);
+	packet.w_u16(item.ID());
+	packet.w_u8(mode);
+	packet.w_vec3(plant_position);
+	actor->u_EventSend(packet);
+
+	Msg("* [MP_MINE] placement request: actor=%u item=%s mode=%u pos=(%.3f, %.3f, %.3f)",
+		actor->ID(), item_section, mode, plant_position.x, plant_position.y, plant_position.z);
+	return true;
+}
+
+bool mp_mine_plant_proximity(CScriptGameObject* item)
+{
+	return mp_mine_plant(item, mpMineProximity);
+}
+
+bool mp_mine_plant_timer_10(CScriptGameObject* item)
+{
+	return mp_mine_plant(item, mpMineTimer10);
+}
+
+bool mp_mine_plant_timer_30(CScriptGameObject* item)
+{
+	return mp_mine_plant(item, mpMineTimer30);
+}
+
 enum ETraceTarget {
 	TT_CAMERA = 0,
 	TT_WEAPON,
@@ -2514,6 +2602,9 @@ void CLevel::script_register(lua_State* L)
 			def("get_target_result", ((script_rq_result (*)(ETraceTarget)) & g_get_target_result)),
 
 			def("spawn_item", &spawn_section),
+			def("mp_mine_plant_proximity", &mp_mine_plant_proximity),
+			def("mp_mine_plant_timer_10", &mp_mine_plant_timer_10),
+			def("mp_mine_plant_timer_30", &mp_mine_plant_timer_30),
 			def("get_active_cam", &get_active_cam),
 			def("set_active_cam", &set_active_cam),
 			def("get_start_time", &get_start_time),

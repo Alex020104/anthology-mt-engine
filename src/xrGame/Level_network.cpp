@@ -564,7 +564,6 @@ void CLevel::ClearAllObjects()
 	while (ParentFound)
 	{
 		ParentFound = false;
-        xrSRWLockGuard g(prefetch_lock);
 		for (u32 i = 0; i < CLObjNum; i++)
 		{
 			CObject* pObj = Level().Objects.o_get_by_iterator(i);
@@ -577,7 +576,10 @@ void CLevel::ClearAllObjects()
 			GEN.w_u16(GE_OWNERSHIP_REJECT);
 			GEN.w_u16(pObj->H_Parent()->ID());
 			GEN.w_u16(u16(pObj->ID()));
-			game_events->insert(GEN);
+			{
+				xrSRWLockGuard g(prefetch_lock);
+				game_events->insert(GEN);
+			}
 			if (g_bDebugEvents) ProcessGameEvents();
 			//-------------------------------------------------------------
 			ParentFound = true;
@@ -591,7 +593,6 @@ void CLevel::ClearAllObjects()
 
 	CLObjNum = Level().Objects.o_count();
 
-    xrSRWLockGuard g(prefetch_lock);
 	for (u32 i = 0; i < CLObjNum; i++)
 	{
 		CObject* pObj = Level().Objects.o_get_by_iterator(i);
@@ -614,7 +615,10 @@ void CLevel::ClearAllObjects()
 		GEN.w_u32(Level().timeServer());
 		GEN.w_u16(GE_DESTROY);
 		GEN.w_u16(u16(pObj->ID()));
-		game_events->insert(GEN);
+		{
+			xrSRWLockGuard g(prefetch_lock);
+			game_events->insert(GEN);
+		}
 		if (g_bDebugEvents) ProcessGameEvents();
 		//-------------------------------------------------------------
 		ParentFound = true;

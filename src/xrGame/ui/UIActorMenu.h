@@ -289,7 +289,7 @@ protected:
 	bool ToBag(CUICellItem* itm, bool b_use_cursor_pos);
 	bool ToBeltScript(CScriptGameObject* GO, bool b_use_cursor_pos);
 	bool ToBelt(CUICellItem* itm, bool b_use_cursor_pos);
-	bool TryUseItem(CUICellItem* cell_itm);
+	bool TryUseItem(CUICellItem* cell_itm, bool skip_mp_mine_placement = false);
 	bool ToQuickSlot(CUICellItem* itm);
 
 	void UpdateActorMP();

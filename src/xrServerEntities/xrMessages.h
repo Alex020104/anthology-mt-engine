@@ -188,6 +188,8 @@ enum
 	GE_REQUEST_PLAYERS_INFO,
 
 	GE_TRADER_FLAGS,
+	// Anthology MP: authoritative mine object receives the planting actor ID.
+	GE_MP_MINE_SET_INITIATOR,
 
 	GE_FORCEDWORD = u32(-1)
 };
@@ -260,6 +262,7 @@ enum EGameMessages
 	GAME_EVENT_RECEIVE_SERVER_LOGO,
 	GAME_EVENT_CREATE_PLAYER_STATE,
 	GAME_EVENT_PLAYERS_INFO_REPLY,
+	GAME_EVENT_MP_MINE_PLANT,
 
 	//-----------------------------------------
 	GAME_EVENT_SCRIPT_BEGINS_FROM,

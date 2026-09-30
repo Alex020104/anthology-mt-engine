@@ -28,8 +28,14 @@ void xrServer::Perform_destroy(CSE_Abstract* object, u32 mode)
 
 	while (!object->children.empty())
 	{
-		CSE_Abstract* child = game->get_entity_from_eid(object->children.back());
-		R_ASSERT2(child, make_string("child registered but not found [%d]",object->children.back()));
+		const u16 child_id = object->children.back();
+		CSE_Abstract* child = game->get_entity_from_eid(child_id);
+		if (!child || child == object)
+		{
+			Msg("! [MP_DISCONNECT] dropping stale child link parent=[%d] child=[%d]", object->ID, child_id);
+			object->children.pop_back();
+			continue;
+		}
 		//		Msg					("SLS-CLEAR : REJECT  [%s][%s] FROM [%s][%s]",child->name(),child->name_replace(),object->name(),object->name_replace());
 		Perform_reject(child, object, 2 * NET_Latency);
 #ifdef DEBUG

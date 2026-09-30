@@ -61,7 +61,17 @@ void xrServer::Process_event_destroy(NET_Packet& P, ClientID sender, u32 time, u
 		if (!pEventPack) pEventPack = &P2;
 
 		while (!e_dest->children.empty())
-			Process_event_destroy(P, sender, time, *e_dest->children.begin(), pEventPack);
+		{
+			const u16 child_id = *e_dest->children.begin();
+			CSE_Abstract* child = game->get_entity_from_eid(child_id);
+			if (!child || child == e_dest)
+			{
+				Msg("! [MP_DESTROY] dropping stale child link parent=[%d] child=[%d]", e_dest->ID, child_id);
+				e_dest->children.erase(e_dest->children.begin());
+				continue;
+			}
+			Process_event_destroy(P, sender, time, child_id, pEventPack);
+		}
 	};
 
 	if (0xffff == parent_id && NULL == pEventPack)

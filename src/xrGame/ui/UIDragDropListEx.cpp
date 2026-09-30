@@ -745,6 +745,8 @@ Ivector2 CUICellContainer::FindFreeCell(const Ivector2& _size)
 				if (IsRoomFree(tmp, _size))
 					return tmp;
 
+		Msg("! [UI grid] name=%s item=%dx%d capacity=%dx%d", *m_pParentDragDropList->WindowName(),
+			size.x, size.y, m_cellsCapacity.x, m_cellsCapacity.y);
 		R_ASSERT2(0, "there are no free room to place item");
 	}
 	return tmp;

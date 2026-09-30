@@ -858,6 +858,12 @@ void WeaponUsageStatistic::OnExplosionKill(game_PlayerState* ps, const SHit& hit
 	Player_Statistic& PlayerStatKiller = *(FindPlayer(killerPS->getName()));
 
 	CObject* weapon_object = Level().Objects.net_Find(hit.weaponID);
+	if (!weapon_object)
+	{
+		Msg("! [MP_EXPLOSION] statistic skipped: weapon object id=%u no longer exists", hit.weaponID);
+		return;
+	}
+
 	WEAPON_STATS_it WeaponIt = PlayerStatKiller.FindPlayersWeapon(weapon_object->cNameSect().c_str());
 	++WeaponIt->m_dwHitsScored;
 	++WeaponIt->m_dwKillsScored;

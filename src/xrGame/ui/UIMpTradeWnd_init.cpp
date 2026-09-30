@@ -90,6 +90,7 @@ void CUIMpTradeWnd::Init(const shared_str& sectionName, const shared_str& sectio
 			lst->SetAutoDelete(true);
 		}
 		CUIXmlInit::InitDragDropListEx(xml_doc, _list_names[idx], 0, lst);
+		lst->SetWindowName(_list_names[idx]);
 		BindDragDropListEvents(lst, true);
 	}
 

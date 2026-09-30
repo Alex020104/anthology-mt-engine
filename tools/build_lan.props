@@ -1,0 +1,13 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(MSBuildProjectName)'=='xrEngine'">
+    <TargetName Condition="'$(Configuration)'=='ReleaseR4'">AnomalyDX11_LAN</TargetName>
+    <TargetName Condition="'$(Configuration)'=='ReleaseR4-AVX'">AnomalyDX11AVX_LAN</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/MP3 %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>ANTHOLOGY_LAN_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>

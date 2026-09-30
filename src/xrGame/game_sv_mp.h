@@ -38,6 +38,7 @@ protected:
 	DEF_DEQUE(CORPSE_LIST, u16);
 
 	CORPSE_LIST m_CorpseList;
+	xr_map<u16, ClientID> m_mpMinePlanters;
 
 	DEF_VECTOR(RANKS_LIST, Rank_Struct);
 

@@ -18,12 +18,28 @@ class CExplosiveItem :
 private:
 	typedef CInventoryItemObject inherited;
 
+
+	enum EMPMineMode : u8
+	{
+		empMineDisabled = 0,
+		empMineProximity,
+		empMineTimer,
+	};
+
+	EMPMineMode m_mpMineMode;
+	u32 m_mpMineTriggerTime;
+	float m_mpMineTriggerRadius;
+	bool m_mpMineTriggered;
+
+	void UpdateMPMine();
+	void TriggerMPMine();
+
 public:
 	CExplosiveItem(void);
 	virtual ~CExplosiveItem(void);
 
 	virtual void Load(LPCSTR section);
-	virtual BOOL net_Spawn(CSE_Abstract* DC) { return CInventoryItemObject::net_Spawn(DC); }
+	virtual BOOL net_Spawn(CSE_Abstract* DC);
 	virtual void net_Destroy();
 	virtual void net_Export(NET_Packet& P) { CInventoryItemObject::net_Export(P); }
 	virtual void net_Import(NET_Packet& P) { CInventoryItemObject::net_Import(P); }

@@ -35,6 +35,7 @@
 #include "../PDA.h"
 #include "../ActorBackpack.h"
 #include "../actor_defs.h"
+#include "../mp_mine_utils.h"
 
  //Alundaio
 
@@ -1007,13 +1008,34 @@ CUIDragDropListEx* CUIActorMenu::GetSlotList(u16 slot_idx)
 	return m_pInventoryBagList;
 }
 
-bool CUIActorMenu::TryUseItem(CUICellItem* cell_itm)
+static bool IsMPMineInventoryItem(PIItem item)
+{
+	if (!item)
+		return false;
+
+	LPCSTR section = *item->object().cNameSect();
+	return 0 == xr_strcmp(section, "mine_new") || 0 == xr_strcmp(section, "ied_new") ||
+		0 == xr_strcmp(section, "ied_rpg_new");
+}
+
+static bool TryPlantMPMineInventoryItem(PIItem item, u8 mode)
+{
+	CGameObject* game_item = smart_cast<CGameObject*>(item);
+	return game_item && mp_mine_plant(game_item->lua_game_object(), mode);
+}
+
+bool CUIActorMenu::TryUseItem(CUICellItem* cell_itm, bool skip_mp_mine_placement)
 {
 	if (!cell_itm)
 	{
 		return false;
 	}
 	PIItem item = (PIItem)cell_itm->m_pData;
+	if (!skip_mp_mine_placement && GameID() != eGameIDSingle && IsMPMineInventoryItem(item))
+	{
+		if (!TryPlantMPMineInventoryItem(item, mpMineProximity))
+			return false;
+	}
 
 	CBottleItem* pBottleItem = smart_cast<CBottleItem*>(item);
 	CMedkit* pMedkit = smart_cast<CMedkit*>(item);
@@ -1659,6 +1681,12 @@ void CUIActorMenu::ProcessPropertiesBoxClicked(CUIWindow* w, void* d)
 		break;
 	case INVENTORY_EAT2_ACTION:
 		{
+			if (GameID() != eGameIDSingle && IsMPMineInventoryItem(item))
+			{
+				if (TryPlantMPMineInventoryItem(item, mpMineProximity))
+					TryUseItem(cell_item, true);
+				break;
+			}
 			CGameObject* GO = smart_cast<CGameObject*>(item);
 			LPCSTR functor_name = READ_IF_EXISTS(pSettings, r_string, GO->cNameSect(), "use1_action_functor", 0);
 			if (functor_name)
@@ -1674,6 +1702,12 @@ void CUIActorMenu::ProcessPropertiesBoxClicked(CUIWindow* w, void* d)
 		}
 	case INVENTORY_EAT3_ACTION:
 		{
+			if (GameID() != eGameIDSingle && IsMPMineInventoryItem(item))
+			{
+				if (TryPlantMPMineInventoryItem(item, mpMineTimer10))
+					TryUseItem(cell_item, true);
+				break;
+			}
 			CGameObject* GO = smart_cast<CGameObject*>(item);
 			LPCSTR functor_name = READ_IF_EXISTS(pSettings, r_string, GO->cNameSect(), "use2_action_functor", 0);
 			if (functor_name)
@@ -1689,6 +1723,12 @@ void CUIActorMenu::ProcessPropertiesBoxClicked(CUIWindow* w, void* d)
 		}
 	case INVENTORY_EAT4_ACTION:
 		{
+			if (GameID() != eGameIDSingle && IsMPMineInventoryItem(item))
+			{
+				if (TryPlantMPMineInventoryItem(item, mpMineTimer30))
+					TryUseItem(cell_item, true);
+				break;
+			}
 			CGameObject* GO = smart_cast<CGameObject*>(item);
 			LPCSTR functor_name = READ_IF_EXISTS(pSettings, r_string, GO->cNameSect(), "use3_action_functor", 0);
 			if (functor_name)

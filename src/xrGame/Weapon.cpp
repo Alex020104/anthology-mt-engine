@@ -1281,8 +1281,8 @@ void CWeapon::OnH_B_Independent(bool just_before_destroy)
 	m_zoom_params.m_bIsZoomModeNow = false;
 	UpdateXForm();
 
-	if (ParentIsActor())
-		Actor()->set_safemode(false);
+	if (CActor* owner = smart_cast<CActor*>(H_Parent()))
+		owner->set_safemode(false);
 }
 
 void CWeapon::OnH_A_Independent()
@@ -1354,7 +1354,8 @@ void CWeapon::SendHiddenItem()
 
 bool CWeapon::NeedBlendAnm()
 {
-	if (GetState() == eIdle && Actor()->is_safemode())
+	CActor* owner = smart_cast<CActor*>(H_Parent());
+	if (GetState() == eIdle && owner && owner->is_safemode())
 		return true;
 
 	if (IsZoomed() && psDeviceFlags2.test(rsAimSway))
@@ -1379,7 +1380,8 @@ extern u32 hud_adj_mode;
 
 bool CWeapon::AllowBore()
 {
-	return !Actor()->is_safemode();
+	CActor* owner = smart_cast<CActor*>(H_Parent());
+	return !owner || !owner->is_safemode();
 }
 
 void CWeapon::UpdateCL()
@@ -3262,7 +3264,7 @@ void CWeapon::OnStateSwitch(u32 S, u32 oldState)
 	}
 
 	if (ParentIsActor() && smart_cast<CActor*>(H_Parent())->inventory().ActiveItem() == this && GetState() != eIdle)
-		Actor()->set_safemode(false);
+		smart_cast<CActor*>(H_Parent())->set_safemode(false);
 }
 
 void CWeapon::OnAnimationEnd(u32 state)
@@ -3275,7 +3277,7 @@ u8 CWeapon::GetCurrentHudOffsetIdx()
 	CActor* pActor = smart_cast<CActor*>(H_Parent());
 	if (!pActor) return 0;
 
-	if (m_bCanBeLowered && Actor()->is_safemode())
+	if (m_bCanBeLowered && pActor->is_safemode())
 		return 4;
 	else if (!IsZoomed())
 		return 0;

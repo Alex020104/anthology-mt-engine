@@ -56,8 +56,8 @@ float CWeapon::GetWeaponDeterioration()
 
 void CWeapon::FireStart()
 {
-	if (ParentIsActor())
-		Actor()->StopSprint();
+	if (CActor* owner = smart_cast<CActor*>(H_Parent()))
+		owner->StopSprint();
 
 	CShootingObject::FireStart();
 }
@@ -89,13 +89,18 @@ void CWeapon::FireTrace(const Fvector& P, const Fvector& D)
 	if (!IsGameTypeSingle())
 	{
 		tmp_actor = smart_cast<CActor*>(Level().CurrentControlEntity());
-		if (tmp_actor)
+		if (tmp_actor && H_Parent() == tmp_actor)
 		{
 			CEntity::SEntityState state;
 			tmp_actor->g_State(state);
 			if (m_first_bullet_controller.is_bullet_first(state.fVelocity))
 			{
-				fire_disp = m_first_bullet_controller.get_fire_dispertion();
+				// The legacy MP value is an absolute cone and can be wider than
+				// the weapon's regular cone, especially for precise addon rifles.
+				// A first-shot bonus must never make that shot less accurate.
+				const float configured_first_disp = m_first_bullet_controller.get_fire_dispertion();
+				const float regular_disp = tmp_actor->GetFireDispertion();
+				fire_disp = _min(configured_first_disp, regular_disp);
 				m_first_bullet_controller.make_shot();
 			}
 		}
