@@ -190,6 +190,11 @@ public:
 	void rescan_pathes();
 	void lock_rescan();
 	void unlock_rescan();
+
+private:
+    void CommitStartupFiles();
+    struct StartupScanState;
+    StartupScanState* m_startup_scan = nullptr;
 };
 
 extern XRCORE_API CLocatorAPI* xr_FS;

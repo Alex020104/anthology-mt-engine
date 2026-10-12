@@ -11,6 +11,10 @@
 #include <sys\stat.h>
 #define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
 #include <experimental\filesystem>
+#include <array>
+#include <cstddef>
+#include <time.h>
+#include <winternl.h>
 #pragma warning(default:4995)
 
 #include "FS_internal.h"
@@ -28,6 +32,42 @@ const u32 BIG_FILE_READER_WINDOW_SIZE = 1024 * 1024;
 # pragma warning(pop)
 
 CLocatorAPI* xr_FS = NULL;
+
+// Startup-only directory reuse, adapted from the MT/startup branches and IX-Ray.
+struct CLocatorAPI::StartupScanState
+{
+    struct Directory
+    {
+        size_t archives;
+        bool recursive;
+    };
+
+    struct FileData
+    {
+        u32 vfs;
+        u32 crc;
+        u32 ptr;
+        u32 size_real;
+        u32 size_compressed;
+        u32 modif;
+    };
+
+    struct FileRecord
+    {
+        xr_string name;
+        FileData data;
+    };
+
+    xr_unordered_map<xr_string, Directory> directories;
+    xr_vector<FileRecord> files;
+    bool build_catalog = true;
+    u32 failed = 0;
+    u32 skipped = 0;
+    u32 enumerated = 0;
+    u32 native = 0;
+    u32 batches = 0;
+    u32 fallback = 0;
+};
 
 #ifdef _EDITOR
 # define FSLTX "fs.ltx"
@@ -227,6 +267,13 @@ void CLocatorAPI::Register(LPCSTR name, u32 vfs, u32 crc, u32 ptr, u32 size_real
 	xr_strcpy(temp_file_name, sizeof(temp_file_name), name);
 	xr_strlwr(temp_file_name);
 
+    if (m_startup_scan && m_startup_scan->build_catalog)
+    {
+        m_startup_scan->files.push_back({temp_file_name,
+            {vfs, crc, ptr, size_real, size_compressed, modif & (~u32(0x3))}});
+        return;
+    }
+
 	// Register file
 	file desc;
 	// desc.name = xr_strlwr(xr_strdup(name));
@@ -284,6 +331,83 @@ void CLocatorAPI::Register(LPCSTR name, u32 vfs, u32 crc, u32 ptr, u32 size_real
 		if (xr_strlen(temp)) temp[xr_strlen(temp) - 1] = 0;
 		vfs_id = 0xffffffff;
 	}
+}
+
+// Ordered replay and sorted set insertion adapted from MT commit 47a93f24f.
+void CLocatorAPI::CommitStartupFiles()
+{
+    if (!m_startup_scan || !m_startup_scan->build_catalog)
+        return;
+    PROF_EVENT("VFS.BuildCatalog");
+    auto& state = *m_startup_scan;
+    state.build_catalog = false;
+    using FileMap = xr_unordered_map<xr_string, StartupScanState::FileData>;
+    using FileMapEntry = FileMap::value_type;
+    FileMap merged;
+    merged.reserve(state.files.size());
+    size_t replacements = 0;
+    {
+        PROF_EVENT("VFS.CatalogReplay");
+        for (const auto& record : state.files)
+        {
+            auto existing = merged.find(record.name);
+            if (existing != merged.end())
+            {
+                existing->second = record.data;
+                ++replacements;
+                continue;
+            }
+            merged.emplace(record.name, record.data);
+            string_path temp;
+            xr_strcpy(temp, sizeof(temp), record.name.c_str());
+            string_path path, folder;
+            u32 vfs_id = record.data.vfs;
+            while (temp[0] && temp[1])
+            {
+                _splitpath(temp, path, folder, nullptr, nullptr);
+                xr_strcat(path, folder);
+                if (merged.find(path) == merged.end())
+                {
+                    auto data = record.data;
+                    data.vfs = vfs_id;
+                    data.ptr = 0;
+                    data.size_real = 0;
+                    data.size_compressed = 0;
+                    data.modif = u32(-1);
+                    merged.emplace(path, data);
+                }
+                xr_strcpy(temp, sizeof(temp), path);
+                if (xr_strlen(temp))
+                    temp[xr_strlen(temp) - 1] = 0;
+                vfs_id = u32(-1);
+            }
+        }
+    }
+    xr_vector<const FileMapEntry*> sorted;
+    {
+        PROF_EVENT("VFS.CatalogSort");
+        sorted.reserve(merged.size());
+        for (const auto& entry : merged)
+            sorted.push_back(&entry);
+        std::sort(sorted.begin(), sorted.end(), [](const FileMapEntry* left, const FileMapEntry* right)
+        {
+            return xr_strcmp(left->first.c_str(), right->first.c_str()) < 0;
+        });
+    }
+    {
+        PROF_EVENT("VFS.CatalogCommit");
+        R_ASSERT(m_files.empty());
+        for (const auto* entry : sorted)
+        {
+            const auto& data = entry->second;
+            file desc = {xr_strdup(entry->first.c_str()), data.vfs, data.crc, data.ptr,
+                data.size_real, data.size_compressed, data.modif};
+            m_files.emplace_hint(m_files.end(), desc);
+        }
+    }
+    Msg("* [VFS] Startup catalog: records=%zu replacements=%zu files=%zu",
+        state.files.size(), replacements, m_files.size());
+    xr_vector<StartupScanState::FileRecord>().swap(state.files);
 }
 
 IReader* open_chunk(void* ptr, u32 ID)
@@ -599,56 +723,251 @@ bool ignore_path(const char* _path)
 		return true;
 }
 
+// Batched directory enumeration adapted from AOE (377836cc9).
+struct xr_file_both_dir_information
+{
+    ULONG NextEntryOffset;
+    ULONG FileIndex;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER EndOfFile;
+    LARGE_INTEGER AllocationSize;
+    ULONG FileAttributes;
+    ULONG FileNameLength;
+    ULONG EaSize;
+    CCHAR ShortNameLength;
+    WCHAR ShortName[12];
+    WCHAR FileName[1];
+};
+
+static bool directory_write_time(const LARGE_INTEGER& time, __time64_t& result)
+{
+    PROF_EVENT("VFS.NativeTimestamp");
+    result = -1;
+    if (!time.QuadPart)
+        return true;
+    FILETIME file_time = {time.LowPart, static_cast<DWORD>(time.HighPart)};
+    SYSTEMTIME utc, local;
+    if (!FileTimeToSystemTime(&file_time, &utc) ||
+        !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local) || local.wYear < 1970 || local.wYear > 3000)
+        return true;
+    // Match CRT's local-time conversion, including the TZ environment variable.
+    // ProcessOne only consumes the last-write timestamp.
+    tm value = {};
+    value.tm_year = local.wYear - 1900;
+    value.tm_mon = local.wMonth - 1;
+    value.tm_mday = local.wDay;
+    value.tm_hour = local.wHour;
+    value.tm_min = local.wMinute;
+    value.tm_sec = local.wSecond;
+    value.tm_isdst = -1;
+    result = _mktime64(&value);
+    // CRT's find functions can return negative times near the epoch, unlike mktime.
+    // Leave these boundary cases to the original enumerator.
+    return result != -1;
+}
+
+// Keep the batch buffer out of recursive Recurse frames, including LTCG builds.
+static ICN bool enumerate_directory_native(const char* path, xr_vector<_finddata_t>& entries, bool check_paths, u32& batches)
+{
+    using NtQueryDirectoryFileFn = NTSTATUS(NTAPI*)(HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID,
+        PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS, BOOLEAN, PUNICODE_STRING, BOOLEAN);
+    static const auto query_directory = reinterpret_cast<NtQueryDirectoryFileFn>(
+        GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryDirectoryFile"));
+    if (!query_directory)
+        return false;
+    HANDLE directory;
+    {
+        PROF_EVENT("VFS.NativeOpenDirectory");
+        directory = CreateFileA(path, FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    }
+    if (directory == INVALID_HANDLE_VALUE)
+        return false;
+
+    // This buffer leaves the stack before ProcessOne recurses into child directories.
+    const bool complete = [&]()
+    {
+        alignas(LARGE_INTEGER) std::array<std::byte, 64 * 1024> buffer;
+        constexpr size_t header_size = offsetof(xr_file_both_dir_information, FileName);
+        static_assert(header_size == 94, "FILE_BOTH_DIR_INFORMATION layout");
+        const UINT code_page = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
+        bool first_query = true;
+        for (;;)
+        {
+            IO_STATUS_BLOCK io_status = {};
+            NTSTATUS status;
+            {
+                PROF_EVENT("VFS.NativeQuery");
+                status = query_directory(directory, nullptr, nullptr, nullptr, &io_status,
+                    buffer.data(), static_cast<ULONG>(buffer.size()), static_cast<FILE_INFORMATION_CLASS>(3),
+                    FALSE, nullptr, first_query ? TRUE : FALSE);
+            }
+            constexpr NTSTATUS no_more_files = static_cast<NTSTATUS>(0x80000006L);
+            if (status == no_more_files)
+                return !first_query;
+            // Empty success, partial records or errors require a fresh CRT scan.
+            if (status != 0 || !io_status.Information || io_status.Information > buffer.size())
+                return false;
+            first_query = false;
+            ++batches;
+            PROF_EVENT("VFS.NativeEntries");
+            size_t offset = 0;
+            for (;;)
+            {
+                const size_t remaining = io_status.Information - offset;
+                if (remaining < header_size)
+                    return false;
+                const auto* info = reinterpret_cast<const xr_file_both_dir_information*>(buffer.data() + offset);
+                if (info->FileNameLength % sizeof(WCHAR) || info->FileNameLength > remaining - header_size)
+                    return false;
+                _finddata_t entry = {};
+                const int name_length = WideCharToMultiByte(code_page, 0, info->FileName,
+                    static_cast<int>(info->FileNameLength / sizeof(WCHAR)), entry.name,
+                    static_cast<int>(sizeof(entry.name) - 1), nullptr, nullptr);
+                if (name_length <= 0)
+                    return false;
+                entry.name[name_length] = 0;
+                entry.attrib = info->FileAttributes == FILE_ATTRIBUTE_NORMAL ? 0 : info->FileAttributes;
+                entry.size = static_cast<decltype(entry.size)>(info->EndOfFile.QuadPart);
+                if (!directory_write_time(info->LastWriteTime, entry.time_write))
+                    return false;
+                string1024 full_path;
+                xr_strcpy(full_path, sizeof(full_path), path);
+                xr_strcat(full_path, entry.name);
+                if (!ignore_name(entry.name) && (!check_paths || !ignore_path(full_path)))
+                    entries.push_back(entry);
+                if (!info->NextEntryOffset)
+                    break;
+                if (info->NextEntryOffset < header_size + info->FileNameLength ||
+                    info->NextEntryOffset % alignof(LARGE_INTEGER) || info->NextEntryOffset >= remaining)
+                    return false;
+                offset += info->NextEntryOffset;
+            }
+        }
+    }();
+    {
+        PROF_EVENT("VFS.NativeCloseDirectory");
+        CloseHandle(directory);
+    }
+    return complete;
+}
+
 bool CLocatorAPI::Recurse(const char* path)
 {
     PROF_EVENT("VFS.ScanDirectory");
-    PROF_TAG("Directory", path);
-	string_path scanPath;
-	xr_strcpy(scanPath, sizeof(scanPath), path);
-	xr_strcat(scanPath, ".xrignore");
-	struct stat buffer;
-	if (!stat(scanPath, &buffer))
-		return true;
-	xr_strcpy(scanPath, sizeof(scanPath), path);
-	xr_strcat(scanPath, "*.*");
-	_finddata_t findData;
-	intptr_t handle = _findfirst(scanPath, &findData);
-	if (handle == -1)
-		return false;
-	rec_files.reserve(256);
-	size_t oldSize = rec_files.size();
-	intptr_t done = handle;
-	while (done != -1)
-	{
-		string1024 fullPath;
-		bool ignore = false;
-		if (m_Flags.test(flNeedCheck))
-		{
-			xr_strcpy(fullPath, sizeof(fullPath), path);
-			xr_strcat(fullPath, findData.name);
-			ignore = ignore_name(findData.name) || ignore_path(fullPath);
-		}
-		else
-		{
-			ignore = ignore_name(findData.name);
-		}
-		if (!ignore)
-			rec_files.push_back(findData);
-		done = _findnext(handle, &findData);
-	}
-	_findclose(handle);
-	size_t newSize = rec_files.size();
-	if (newSize > oldSize)
-	{
-		std::sort(rec_files.begin() + oldSize, rec_files.end(), pred_str_ff);
-		for (size_t i = oldSize; i < newSize; i++)
-			ProcessOne(path, rec_files[i]);
-		rec_files.erase(rec_files.begin() + oldSize, rec_files.end());
-	}
-	// insert self
-	if (path && path[0] != 0)
-		Register(path, 0xffffffff, 0, 0, 0, 0, 0);
-	return true;
+    // Dynamic descriptions retain the whole path; Optick string tags only keep 31 bytes.
+    PROF_EVENT_DYNAMIC(path);
+    const size_t archive_count = m_archives.size();
+    const u32 failures_before = m_startup_scan ? m_startup_scan->failed : 0;
+    if (m_startup_scan)
+    {
+        const auto found = m_startup_scan->directories.find(path);
+        if (found != m_startup_scan->directories.end() && found->second.archives == archive_count &&
+            (found->second.recursive || bNoRecurse))
+        {
+            PROF_EVENT("VFS.ScanSkipped");
+            ++m_startup_scan->skipped;
+            // ProcessOne may have just registered this folder with its disk timestamp.
+            // Preserve Recurse's final folder metadata even when the contents are reused.
+            if (path[0])
+                Register(path, 0xffffffff, 0, 0, 0, 0, 0);
+            return true;
+        }
+    }
+
+    const size_t oldSize = rec_files.size();
+    {
+        PROF_EVENT("VFS.EnumerateDirectory");
+        string_path scanPath;
+        xr_strcpy(scanPath, sizeof(scanPath), path);
+        xr_strcat(scanPath, ".xrignore");
+        struct stat buffer;
+        if (!stat(scanPath, &buffer))
+            return true;
+        bool native_scan = false;
+        if (m_startup_scan)
+        {
+            PROF_EVENT("VFS.EnumerateDirectory.Native");
+            native_scan = enumerate_directory_native(path, rec_files, m_Flags.test(flNeedCheck), m_startup_scan->batches);
+            if (native_scan)
+            {
+                ++m_startup_scan->native;
+                ++m_startup_scan->enumerated;
+            }
+            else
+            {
+                ++m_startup_scan->fallback;
+                // Discard every partial native result before restarting enumeration.
+                rec_files.resize(oldSize);
+            }
+        }
+        if (!native_scan)
+        {
+            PROF_EVENT("VFS.EnumerateDirectory.CRT");
+            xr_strcpy(scanPath, sizeof(scanPath), path);
+            xr_strcat(scanPath, "*.*");
+            _finddata_t findData;
+            intptr_t handle = _findfirst(scanPath, &findData);
+            if (handle == -1)
+            {
+                if (m_startup_scan)
+                    ++m_startup_scan->failed;
+                return false;
+            }
+            if (m_startup_scan)
+                ++m_startup_scan->enumerated;
+            rec_files.reserve(256);
+            intptr_t done = handle;
+            while (done != -1)
+            {
+                string1024 fullPath;
+                bool ignore = false;
+                if (m_Flags.test(flNeedCheck))
+                {
+                    xr_strcpy(fullPath, sizeof(fullPath), path);
+                    xr_strcat(fullPath, findData.name);
+                    ignore = ignore_name(findData.name) || ignore_path(fullPath);
+                }
+                else
+                {
+                    ignore = ignore_name(findData.name);
+                }
+                if (!ignore)
+                    rec_files.push_back(findData);
+                done = _findnext(handle, &findData);
+            }
+            // An incomplete enumeration must not suppress a later retry through another alias.
+            if (m_startup_scan && errno != ENOENT)
+                ++m_startup_scan->failed;
+            _findclose(handle);
+        }
+    }
+    const size_t newSize = rec_files.size();
+    if (newSize > oldSize)
+    {
+        {
+            PROF_EVENT("VFS.SortDirectory");
+            std::sort(rec_files.begin() + oldSize, rec_files.end(), pred_str_ff);
+        }
+        {
+            PROF_EVENT("VFS.RegisterDirectoryEntries");
+            for (size_t i = oldSize; i < newSize; i++)
+                ProcessOne(path, rec_files[i]);
+        }
+        rec_files.erase(rec_files.begin() + oldSize, rec_files.end());
+    }
+    // insert self
+    if (path && path[0] != 0)
+        Register(path, 0xffffffff, 0, 0, 0, 0, 0);
+    // Mounting an archive can change file overrides. Only reuse a complete scan
+    // performed without new mounts, while the same archive set remains active.
+    if (m_startup_scan && m_startup_scan->failed == failures_before && m_archives.size() == archive_count)
+        m_startup_scan->directories[path] = {archive_count, !bNoRecurse};
+    return true;
 }
 
 bool file_handle_internal(LPCSTR file_name, u32& size, int& file_handle);
@@ -755,6 +1074,9 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
     PROF_EVENT("VFS.Initialize");
 	char _delimiter = '|'; //','
 	if (m_Flags.is(flReady))return;
+    StartupScanState startup_scan;
+    startup_scan.build_catalog = m_files.empty();
+    m_startup_scan = &startup_scan;
 	CTimer t;
 	t.Start();
 	Log("Initializing File System...");
@@ -835,7 +1157,11 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 
 			FS_Path* P = new FS_Path((p_it != pathes.end()) ? p_it->second->m_Path : root, lp_add, lp_def, lp_capt, fl);
 			bNoRecurse = !(fl & FS_Path::flRecurse);
-			Recurse(P->m_Path);
+            {
+                PROF_EVENT("VFS.ScanAlias");
+                PROF_EVENT_DYNAMIC(id);
+                Recurse(P->m_Path);
+            }
 			auto I = pathes.insert(std::make_pair(xr_strdup(id), P));
 #ifndef DEBUG
 			m_Flags.set(flCacheFiles, FALSE);
@@ -848,6 +1174,12 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 	};
 
 
+    CommitStartupFiles();
+    m_startup_scan = nullptr;
+    Msg("* [VFS] Startup directory scans: enumerated=%u reused=%u failed=%u",
+        startup_scan.enumerated, startup_scan.skipped, startup_scan.failed);
+    Msg("* [VFS] Startup enumeration: native=%u batches=%u fallback=%u",
+        startup_scan.native, startup_scan.batches, startup_scan.fallback);
 	Msg("File System Ready...");
 	size_t M2 = Memory.mem_usage();
 	Msg("FS: %d files cached %d archives, %lldKb memory used.", m_files.size(), m_archives.size(), (M2 - M1) / 1024);
@@ -1715,6 +2047,9 @@ void CLocatorAPI::unlock_rescan()
 
 void CLocatorAPI::check_pathes()
 {
+    // Readers and file-list queries must see all records discovered so far.
+    if (m_startup_scan && m_startup_scan->build_catalog)
+        CommitStartupFiles();
 	if (m_Flags.is(flNeedRescan) && (0 == m_iLockRescan))
 	{
 		lock_rescan();
