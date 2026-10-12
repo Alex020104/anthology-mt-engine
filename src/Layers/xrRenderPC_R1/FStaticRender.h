@@ -124,6 +124,7 @@ public:
 	void apply_object(IRenderable* O);
 	IC void apply_lmaterial()
 	{
+		RCache.bus_object.apply_static();
 	};
 public:
 	// feature level
