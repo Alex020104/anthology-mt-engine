@@ -84,6 +84,7 @@ void addShaderSourceCrc32(const void* sourceData, u32 sourceSize, LPCSTR shaderP
 
 u32 getShaderSourceCrc32(const void* sourceData, u32 sourceSize, LPCSTR shaderPath)
 {
+	PROF_EVENT("Shader.SourceCRC");
 	u32 crc = 0;
 	addShaderSourceCrc32(sourceData, sourceSize, shaderPath, crc);
 	return crc;

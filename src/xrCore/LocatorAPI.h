@@ -12,6 +12,7 @@
 #pragma warning(pop)
 
 #include "LocatorAPI_defs.h"
+#include "_thread_types.h"
 
 class XRCORE_API CStreamReader;
 
@@ -100,7 +101,7 @@ public:
 
 	Flags32 m_Flags;
 	u32 dwAllocGranularity;
-	u32 dwOpenCounter;
+	xr_atomic_u32 dwOpenCounter;
 
 private:
 	void check_cached_files(LPSTR fname, const u32& fname_size, const file& desc, LPCSTR& source_name);

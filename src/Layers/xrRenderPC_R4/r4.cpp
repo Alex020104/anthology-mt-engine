@@ -999,6 +999,7 @@ static HRESULT create_shader(
 	bool const disasm
 )
 {
+	PROF_EVENT("Shader.CreateFromBytecode");
 	HRESULT _result = E_FAIL;
 	if (pTarget[0] == 'p')
 	{
@@ -1982,8 +1983,11 @@ HRESULT CRender::shader_compile(
 	FS.update_path(folder_name, "$game_shaders$", folder);
 	xr_strcat(folder_name, "\\");
 
-	m_file_set.clear();
-	FS.file_list(m_file_set, folder_name, FS_ListFiles | FS_RootOnly, "*");
+	{
+		PROF_EVENT("Shader.FindPrecompiled");
+		m_file_set.clear();
+		FS.file_list(m_file_set, folder_name, FS_ListFiles | FS_RootOnly, "*");
+	}
 
 	string_path temp_file_name, file_name;
 	bool const useGeneratedShaderCache =
@@ -2011,6 +2015,8 @@ HRESULT CRender::shader_compile(
 
 	if (FS.exist(file_name))
 	{
+		PROF_EVENT("Shader.CacheRead");
+		PROF_EVENT_DYNAMIC(file_name);
 		IReader* file = FS.r_open(file_name);
 		if (useGeneratedShaderCache)
 		{
@@ -2053,17 +2059,20 @@ HRESULT CRender::shader_compile(
 		includer Includer;
 		LPD3DBLOB pShaderBuf = NULL;
 		LPD3DBLOB pErrorBuf = NULL;
-		_result =
-			D3DCompile(
-				pSrcData,
-				SrcDataLen,
-				"", //NULL, //LPCSTR pFileName,	//	NVPerfHUD bug workaround.
-				defines, &Includer, pFunctionName,
-				pTarget,
-				Flags, 0,
-				&pShaderBuf,
-				&pErrorBuf
-			);
+		{
+			PROF_EVENT("Shader.D3DCompile");
+			_result =
+				D3DCompile(
+					pSrcData,
+					SrcDataLen,
+					"", //NULL, //LPCSTR pFileName,	//	NVPerfHUD bug workaround.
+					defines, &Includer, pFunctionName,
+					pTarget,
+					Flags, 0,
+					&pShaderBuf,
+					&pErrorBuf
+				);
+		}
 
 		if (SUCCEEDED(_result))
 		{

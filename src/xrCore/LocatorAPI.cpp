@@ -1515,8 +1515,12 @@ void CLocatorAPI::file_from_archive(IReader*& R, LPCSTR fname, const file& desc)
 	end *= dwAllocGranularity;
 	if (end > A.size) end = A.size;
 	u32 sz = (end - start);
-	u8* ptr = (u8*)MapViewOfFile(A.hSrcMap, FILE_MAP_READ, 0, start, sz);
-	VERIFY3(ptr, "cannot create file mapping on file", fname);
+	u8* ptr;
+	{
+		PROF_EVENT("VFS.ArchiveMapView");
+		ptr = (u8*)MapViewOfFile(A.hSrcMap, FILE_MAP_READ, 0, start, sz);
+		VERIFY3(ptr, "cannot create file mapping on file", fname);
+	}
 
 	string512 temp;
 	xr_sprintf(temp, sizeof(temp), "%s:%s", *A.path, fname);
@@ -1534,7 +1538,10 @@ void CLocatorAPI::file_from_archive(IReader*& R, LPCSTR fname, const file& desc)
 
 	// Compressed
 	u8* dest = xr_alloc<u8>(desc.size_real);
-	rtc_decompress(dest, desc.size_real, ptr + ptr_offs, desc.size_compressed);
+	{
+		PROF_EVENT("VFS.ArchiveDecompress");
+		rtc_decompress(dest, desc.size_real, ptr + ptr_offs, desc.size_compressed);
+	}
 	R = xr_new<CTempReader>(dest, desc.size_real, 0);
 	UnmapViewOfFile(ptr);
 
@@ -1686,23 +1693,36 @@ template <typename T>
 T* CLocatorAPI::r_open_impl(LPCSTR path, LPCSTR _fname)
 {
 	PROF_EVENT("r_open_impl");
+	PROF_EVENT_DYNAMIC(_fname ? _fname : "<null>");
 	T* R = 0;
 	string_path fname;
 	const file* desc = 0;
 	LPCSTR source_name = &fname[0];
 
-	if (!check_for_file(path, _fname, fname, desc))
 	{
-		if (m_Flags.test(flPrintLTX))
-			Log("Warning : Unable to find", _fname);
-		return (0);
+		PROF_EVENT("VFS.CheckFile");
+		if (!check_for_file(path, _fname, fname, desc))
+		{
+			if (m_Flags.test(flPrintLTX))
+				Log("Warning : Unable to find", _fname);
+			return (0);
+		}
 	}
 
 	// OK, analyse
+	PROF_EVENT_DYNAMIC(fname);
+	PROF_TAG("Bytes", desc->size_real);
 	if (0xffffffff == desc->vfs)
+	{
+		PROF_EVENT("VFS.ReadLoose");
 		file_from_cache(R, fname, sizeof(fname), *desc, source_name);
+	}
 	else
+	{
+		PROF_EVENT("VFS.ReadArchive");
+		PROF_TAG("ArchiveIndex", desc->vfs);
 		file_from_archive(R, fname, *desc);
+	}
 
 #ifdef DEBUG
     if (R && m_Flags.is(flBuildCopy | flReady))

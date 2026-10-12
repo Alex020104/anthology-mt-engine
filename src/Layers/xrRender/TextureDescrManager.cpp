@@ -4,6 +4,7 @@
 #include "ETextureParams.h"
 #include "profiler.h"
 #include "../../xrCore/xr_ini.h"
+#include "../../xrCore/_thread_types.h"
 
 // eye-params
 float r__dtex_range = 50;
@@ -44,26 +45,52 @@ void CTextureDescrMngr::LoadTHM(LPCSTR initial, map_TD& s_texture_details, map_C
 	FS_FileSet flist;
 	FS.file_list(flist, initial, FS_ListFiles, "*.thm");
 
-	STextureParams tp;
-	string_path fn;
-
+	struct PreparedThm
+	{
+		xr_string file;
+		xr_string name;
+		STextureParams parameters;
+	};
+	xr_vector<PreparedThm> prepared(flist.size());
+	u32 sourceIndex = 0;
 	for (const FS_File& fs_iter : flist)
 	{
-		FS.update_path(fn, initial, fs_iter.name.c_str());
-		IReader* F = FS.r_open(fn);
+		PreparedThm& result = prepared[sourceIndex++];
+		result.file = fs_iter.name.c_str();
+		string_path fn;
 		xr_strcpy(fn, fs_iter.name.c_str());
 		fix_texture_thm_name(fn);
+		result.name = fn;
+	}
 
-		R_ASSERT(F->find_chunk(THM_CHUNK_TYPE));
-		F->r_u32();
-		tp.Clear();
-		tp.Load(*F);
-		FS.r_close(F);
+	{
+		PROF_EVENT("Render.THMPrepare");
+		xr_parallel_for(0u, static_cast<u32>(prepared.size()), [&](u32 index)
+		{
+			PROF_THREAD("X-Ray resource loader");
+			PROF_EVENT("Render.THMRead");
+			PreparedThm& result = prepared[index];
+			string_path path;
+			FS.update_path(path, initial, result.file.c_str());
+			IReader* F = FS.r_open(path);
+			R_ASSERT2(F, path);
+			R_ASSERT(F->find_chunk(THM_CHUNK_TYPE));
+			F->r_u32();
+			result.parameters.Load(*F);
+			FS.r_close(F);
+		});
+	}
+
+	// Workers own separate results; apply in file order to preserve metadata precedence.
+	PROF_EVENT("Render.THMCommit");
+	for (const PreparedThm& result : prepared)
+	{
+		const STextureParams& tp = result.parameters;
 		if (STextureParams::ttImage == tp.type || STextureParams::ttTerrain == tp.type || STextureParams::ttNormalMap ==
 			tp.type)
 		{
-			texture_desc& desc = s_texture_details[fn];
-			cl_dt_scaler*& dts = s_detail_scalers[fn];
+			texture_desc& desc = s_texture_details[result.name.c_str()];
+			cl_dt_scaler*& dts = s_detail_scalers[result.name.c_str()];
 
 			if (tp.detail_name.size() && tp.flags.is_any(STextureParams::flDiffuseDetail | STextureParams::flBumpDetail)
 			)

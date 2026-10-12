@@ -7,6 +7,7 @@
 #include "PSLibrary.h"
 #include "ParticleEffect.h"
 #include "ParticleGroup.h"
+#include "../../xrCore/_thread_types.h"
 
 #ifdef _EDITOR
 #	include "ParticleEffectActions.h"
@@ -200,51 +201,72 @@ bool CPSLibrary::Load2()
 
 bool CPSLibrary::Load(const char* nm)
 {
+	PROF_EVENT("Render.ParticlesLoad");
 	FS_FileSet files;
 	string_path _path;
 
 	FS.update_path(_path, "$game_particles$", "");
 	FS.file_list(files, _path, FS_ListFiles, "*.pe,*.pg");
 
-	FS_FileSet::iterator it = files.begin();
-	FS_FileSet::iterator it_e = files.end();
-
-	string_path p_path, p_name, p_ext;
-	for (; it != it_e; ++it)
+	struct PreparedParticle
 	{
-		const FS_File& f = (*it);
-		_splitpath(f.name.c_str(), 0, p_path, p_name, p_ext);
-		FS.update_path(_path, "$game_particles$", f.name.c_str());
-		CInifile ini(_path, TRUE, TRUE, FALSE);
+		xr_string file;
+		shared_str name;
+		bool effect = false;
+		xr_unique_ptr<PS::CPEDef> effectDefinition;
+		xr_unique_ptr<PS::CPGDef> groupDefinition;
+	};
+	xr_vector<PreparedParticle> prepared(files.size());
+	u32 sourceIndex = 0;
+	for (const FS_File& file : files)
+	{
+		string_path path, name, extension;
+		_splitpath(file.name.c_str(), nullptr, path, name, extension);
+		PreparedParticle& result = prepared[sourceIndex++];
+		result.file = file.name.c_str();
+		result.name.printf("%s%s", path, name);
+		result.effect = 0 == stricmp(extension, ".pe");
+		R_ASSERT(result.effect || 0 == stricmp(extension, ".pg"));
+	}
 
-		xr_sprintf(_path, sizeof(_path), "%s%s", p_path, p_name);
-		if (0 == stricmp(p_ext, ".pe"))
+	{
+		PROF_EVENT("Render.ParticlesPrepare");
+		xr_parallel_for(0u, static_cast<u32>(prepared.size()), [&](u32 index)
 		{
-			PS::CPEDef* def = xr_new<PS::CPEDef>();
-			def->m_Name = _path;
-			if (def->Load2(ini))
-            {
-                m_all_ps.push_back(def->m_Name);
-                m_PEDs.push_back(def);
-            }
+			PROF_THREAD("X-Ray resource loader");
+			PROF_EVENT("Render.ParticleRead");
+			PreparedParticle& result = prepared[index];
+			string_path fullPath;
+			FS.update_path(fullPath, "$game_particles$", result.file.c_str());
+			CInifile ini(fullPath, TRUE, TRUE, FALSE);
+			if (result.effect)
+			{
+				xr_unique_ptr<PS::CPEDef> definition = xr_make_unique<PS::CPEDef>();
+				definition->m_Name = result.name;
+				if (definition->Load2(ini))
+					result.effectDefinition = std::move(definition);
+			}
 			else
-				xr_delete(def);
-		}
-		else if (0 == stricmp(p_ext, ".pg"))
+			{
+				xr_unique_ptr<PS::CPGDef> definition = xr_make_unique<PS::CPGDef>();
+				definition->m_Name = result.name;
+				if (definition->Load2(ini))
+					result.groupDefinition = std::move(definition);
+			}
+		});
+	}
+
+	for (PreparedParticle& result : prepared)
+	{
+		if (result.effectDefinition)
 		{
-			PS::CPGDef* def = xr_new<PS::CPGDef>();
-			def->m_Name = _path;
-			if (def->Load2(ini))
-            {
-                m_all_ps.push_back(def->m_Name);
-                m_PGDs.push_back(def);
-            }
-			else
-				xr_delete(def);
+			m_all_ps.push_back(result.effectDefinition->m_Name);
+			m_PEDs.push_back(result.effectDefinition.release());
 		}
-		else
+		else if (result.groupDefinition)
 		{
-			R_ASSERT(0);
+			m_all_ps.push_back(result.groupDefinition->m_Name);
+			m_PGDs.push_back(result.groupDefinition.release());
 		}
 	}
 
@@ -333,6 +355,8 @@ bool CPSLibrary::Load(const char* nm)
 	std::sort(m_PEDs.begin(), m_PEDs.end(), ped_sort_pred);
 	std::sort(m_PGDs.begin(), m_PGDs.end(), pgd_sort_pred);
 
+	// Shader creation may write the VFS catalog; all parallel reads must finish first.
+	PROF_EVENT("Render.ParticleShaders");
 	for (PS::PEDIt e_it = m_PEDs.begin(); e_it != m_PEDs.end(); ++e_it)
 		(*e_it)->CreateShader();
 
