@@ -1,5 +1,5 @@
 #include "common.h"
-#include "screenspace_mvectors.h"
+
 #include "anthology_snow_field.h"
 struct snow_input { float4 p:POSITION; float3 n:NORMAL; float4 data:TEXCOORD0; };
 struct snow_output {
@@ -23,8 +23,14 @@ snow_output main(snow_input I)
     O.view=mul(m_V,P).xyz;
     O.current=mul(m_VP,P);
     P.y=I.data.y;
+#ifdef SSFX_MV_LOADED
     O.previous=mul(m_vp_prev,P);
+#else
+    O.previous=O.current;
+#endif
     O.hpos=O.current;
+#ifdef SSFX_MV_LOADED
     O.hpos.xy=ssfx_taa_jitter(O.hpos);
+#endif
     return O;
 }

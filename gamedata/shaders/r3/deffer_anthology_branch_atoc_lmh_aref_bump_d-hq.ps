@@ -6,4 +6,9 @@
 #define USE_TDETAIL
 #define USE_PARALLAX
 #include "anthology_ssfx_flora_sload146.h"
+#ifdef SSFX_MV_LOADED
 #include "deffer_tree_branch_aref_bump-hq.ps"
+#else
+// Coverage pass returns alpha only; foliage colour wrappers return a gbuffer.
+#include "deffer_base_aref_bump-hq.ps"
+#endif

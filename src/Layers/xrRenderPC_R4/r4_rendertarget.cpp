@@ -619,10 +619,9 @@ CRenderTarget::CRenderTarget()
 
 	if (g_AnthologyUpscaler.ProbeAndResolveMode())
 	{
-		const float scale = g_AnthologyUpscaler.ResolveRenderScale();
-		const u32 requestedWidth = _max(320u, (u32(float(Device.dwWidth) * scale)) & ~1u);
-		const u32 requestedHeight = _max(180u, (u32(float(Device.dwHeight) * scale)) & ~1u);
-		m_upscalerActive = g_AnthologyUpscaler.Initialize(
+        u32 requestedWidth = Device.dwWidth, requestedHeight = Device.dwHeight;
+        m_upscalerActive = g_AnthologyUpscaler.ResolveRenderSize(requestedWidth, requestedHeight) &&
+            g_AnthologyUpscaler.Initialize(
 			requestedWidth, requestedHeight, Device.dwWidth, Device.dwHeight);
 		if (m_upscalerActive)
 		{

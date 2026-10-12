@@ -475,6 +475,10 @@ u32 GetMainRenderHeight()
 
 u32 ps_r4_upscaler = 0;
 u32 ps_r4_upscaler_quality = 1;
+u32 ps_r4_dlss_preset = 0;
+xr_token r4_dlss_preset_token[] = {
+    {"default", 0}, {"j", 10}, {"k", 11}, {"l", 12}, {"m", 13}, {nullptr, 0}
+};
 float ps_r4_upscaler_custom_scale = 0.67f;
 float ps_r4_upscaler_sharpness = 0.2f;
 
@@ -1398,6 +1402,7 @@ void xrRender_initconsole()
 
 	CMD3(CCC_Token, "r4_upscaler", &ps_r4_upscaler, r4_upscaler_token);
 	CMD3(CCC_Token, "r4_upscaler_quality", &ps_r4_upscaler_quality, r4_upscaler_quality_token);
+    CMD3(CCC_Token, "r4_dlss_preset", &ps_r4_dlss_preset, r4_dlss_preset_token);
 	CMD4(CCC_Float, "r4_upscaler_custom_scale", &ps_r4_upscaler_custom_scale, 0.33f, 1.0f);
 	CMD4(CCC_Float, "r4_upscaler_sharpness", &ps_r4_upscaler_sharpness, 0.0f, 1.0f);
 

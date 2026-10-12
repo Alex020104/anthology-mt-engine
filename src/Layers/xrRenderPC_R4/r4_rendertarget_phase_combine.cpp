@@ -606,7 +606,7 @@ void CRenderTarget::phase_combine()
 
 	phase_lut();	
 
-	if (!svp_frame && ps_r2_mask_control.x > 0)
+	if (!m_upscalerActive && !svp_frame && ps_r2_mask_control.x > 0)
 	{
 		phase_gasmask_dudv();
 		if (ps_r2_drops_control.x > 0)
@@ -615,12 +615,14 @@ void CRenderTarget::phase_combine()
 		}
 	}
 	
-	if (!svp_frame && ps_r2_nightvision > 0)
+	if (!m_upscalerActive && !svp_frame && ps_r2_nightvision > 0)
 		phase_nightvision();
 
 	//--DSR-- HeatVision_start
 	const bool head_heatvision = !svp_frame && ps_r2_heatvision > 0;
 	const bool lens_heatvision = svp_frame && Device.m_SecondViewport.IsSVPThermal();
+	// Thermal derives color from jittered geometry/heat, not resolved RGB.
+	// Reconstruct it with the scene instead of exposing raw jitter after SR.
 	if (head_heatvision || lens_heatvision)
 		phase_heatvision();
 
@@ -628,7 +630,7 @@ void CRenderTarget::phase_combine()
 		phase_3DSSReticle();
 	//--DSR-- HeatVision_end
 
-	if (scope_fake_enabled && !Device.m_SecondViewport.IsSVPActive())
+	if (!m_upscalerActive && scope_fake_enabled && !Device.m_SecondViewport.IsSVPActive())
 	{
 		phase_fakescope(); //crookr
 	}
@@ -676,6 +678,7 @@ void CRenderTarget::phase_combine()
 		phase_upscale(!svp_frame);
 		phase_upscale_finish();
 		if (display_reticle) phase_upscale_reticle();
+        if (!svp_frame) phase_upscale_display_effects();
 	}
 
 	// Combine everything + perform AA
@@ -723,7 +726,9 @@ void CRenderTarget::phase_combine()
 		float ddh = 1.f / _h;
 		p0.set(.5f / _w, .5f / _h);
 		p1.set((_w + .5f) / _w, (_h + .5f) / _h);
-		if (m_upscalerActive) { p0.set(0.f, 0.f); p1.set(1.f, 1.f); }
+		// stub_notransform_aa_AA shifts vertices by half a pixel. Keep the
+		// matching UV offset at display resolution, or native UI is filtered
+		// between four texels even after bypassing temporal reconstruction.
 
 		// Fill vertex buffer
 		v_aa* pv = (v_aa*)RCache.Vertex.Lock(4, g_aa_AA->vb_stride, Offset);

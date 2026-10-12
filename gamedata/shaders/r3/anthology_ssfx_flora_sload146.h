@@ -1,3 +1,5 @@
+#include "common.h"
+#ifdef SSFX_MV_LOADED
 // SSS Update 23.5 adapter: only tbase is changed; normal/gloss/POM/detail code is preserved.
 #ifndef SLOAD_H
 #define SLOAD_H
@@ -246,4 +248,8 @@ surface_bumped sload ( p_bumped I, float2 pixeloffset )
 	return sload_i(I);
 }
 
+#endif
+
+#else
+#include "anthology_runtime_seasons_sload.h"
 #endif

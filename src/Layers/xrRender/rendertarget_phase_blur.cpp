@@ -17,6 +17,12 @@ void CRenderTarget::phase_blur()
 	//Full resolution
 	float w = float(GetMainRenderWidth());
 	float h = float(GetMainRenderHeight());
+#ifdef USE_DX11
+	// TL vertices and screen_res use full internal pixels even though these
+	// targets are smaller. A preceding native HUD pass leaves a display viewport.
+	D3D_VIEWPORT viewport = {0.f, 0.f, w, h, 0.f, 1.f};
+	HW.pContext->RSSetViewports(1, &viewport);
+#endif
 
 	Fvector2 p0, p1;
 #if defined(USE_DX10) || defined(USE_DX11)

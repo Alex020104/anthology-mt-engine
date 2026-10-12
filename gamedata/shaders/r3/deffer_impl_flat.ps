@@ -206,5 +206,6 @@ f_deffer 	main	( p_flat I 		)
                                 float4 	(I.position.xyz + Ne.xyz*def_virtualh/2.h, 	0.95f			),	//
                                 float4	(D.x,	D.y,	D.z,						G			) );	// OUT: rgb.gloss
 
+  O.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
   return O;
 }

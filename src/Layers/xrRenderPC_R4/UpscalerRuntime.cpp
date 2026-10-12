@@ -63,36 +63,64 @@ float CAnthologyUpscalerRuntime::ResolveRenderScale() const
     }
 }
 
+namespace
+{
+void BackendLog(const char* stage, unsigned result)
+{
+    Msg("! [UPSCALER/brodrigz] %s: 0x%08x", stage, result);
+}
+
+dlss::Quality BackendQuality(u32 quality)
+{
+    return static_cast<dlss::Quality>(clampr(quality, 0u, 4u) + 1u);
+}
+}
+
 bool CAnthologyUpscalerRuntime::ProbeAndResolveMode()
 {
     m_mode = clampr(ps_r4_upscaler, u32(AnthologyUpscalerOff), u32(AnthologyUpscalerDLSS));
-    if (m_mode == AnthologyUpscalerDLSS && !m_dlss.Probe(HW.pDevice))
+    if (m_mode == AnthologyUpscalerDLSS)
     {
+        string_path cache;
+        FS.update_path(cache, "$app_data_root$", "");
+        wchar_t wideCache[MAX_PATH] = {};
+        const bool converted = MultiByteToWideChar(CP_ACP, 0, cache, -1, wideCache, MAX_PATH) > 0;
+        if (!converted || !m_dlss.Initialize(HW.pDevice, wideCache, BackendLog))
+            m_mode = AnthologyUpscalerOff;
+    }
+    if (m_mode == AnthologyUpscalerFSR3 && HW.FeatureLevel < D3D_FEATURE_LEVEL_11_1)
+    {
+        Msg("! [UPSCALER/FSR3] feature level 11.1 is required; native fallback selected");
+        m_mode = AnthologyUpscalerOff;
+    }
+    if (!IsEnabled()) ps_r4_upscaler = AnthologyUpscalerOff;
+    return IsEnabled();
+}
+
+bool CAnthologyUpscalerRuntime::ResolveRenderSize(u32& width, u32& height)
+{
+    const dlss::Size display{Device.dwWidth, Device.dwHeight};
+    dlss::Size render;
+    const u32 quality = ResolveEffectiveQuality(m_mode);
+    bool valid = false;
+    if (m_mode == AnthologyUpscalerDLSS)
+        valid = m_dlss.OptimalSize(BackendQuality(quality), display, render);
+    else if (m_mode == AnthologyUpscalerFSR3 && quality <= 4)
+        valid = fsr3::D3D11Backend::OptimalSize(quality, display, render);
+    else if (m_mode == AnthologyUpscalerFSR3)
+    {
+        const float scale = ResolveRenderScale();
+        render = {_max(1u, u32(display.width * scale)), _max(1u, u32(display.height * scale))};
+        valid = true;
+    }
+    if (valid) { width = render.width; height = render.height; }
+    else
+    {
+        Msg("! [UPSCALER] backend rejected the display size; native fallback selected");
         m_mode = AnthologyUpscalerOff;
         ps_r4_upscaler = AnthologyUpscalerOff;
     }
-	if (m_mode == AnthologyUpscalerFSR3 && HW.FeatureLevel < D3D_FEATURE_LEVEL_11_0)
-    {
-        Msg("! [UPSCALER/FSR3] feature level 11.0 is required; native fallback selected");
-        m_mode = AnthologyUpscalerOff;
-		ps_r4_upscaler = AnthologyUpscalerOff;
-	}
-	if (m_mode == AnthologyUpscalerFSR3)
-	{
-		static HMODULE backendModule = nullptr;
-		static HMODULE upscalerModule = nullptr;
-		if (!backendModule)
-			backendModule = LoadLibraryA("ffx_backend_dx11_x64.dll");
-		if (!upscalerModule)
-			upscalerModule = LoadLibraryA("ffx_fsr3upscaler_x64.dll");
-		if (!backendModule || !upscalerModule)
-		{
-			Msg("! [UPSCALER/FSR3] runtime DLLs are missing; native fallback selected");
-			m_mode = AnthologyUpscalerOff;
-			ps_r4_upscaler = AnthologyUpscalerOff;
-		}
-	}
-    return IsEnabled();
+    return valid;
 }
 
 bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u32 displayWidth, u32 displayHeight)
@@ -110,26 +138,11 @@ bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u3
     if (!IsEnabled())
         return false;
 
-    bool created = false;
-    if (m_mode == AnthologyUpscalerFSR3)
-    {
-        CFSR3Wrapper::ContextParameters params;
-        params.maxRenderSize = {renderWidth, renderHeight};
-        params.displaySize = {displayWidth, displayHeight};
-        params.device = HW.pDevice;
-        created = m_fsr3.Create(params);
-    }
-    else if (m_mode == AnthologyUpscalerDLSS)
-    {
-        CDLSSWrapper::ContextParameters params;
-        params.renderWidth = renderWidth;
-        params.renderHeight = renderHeight;
-        params.displayWidth = displayWidth;
-        params.displayHeight = displayHeight;
-        params.device = HW.pDevice;
-        params.context = HW.pContext;
-		created = m_dlss.Create(params, ResolveEffectiveQuality(m_mode));
-    }
+    const dlss::Size render{renderWidth, renderHeight}, display{displayWidth, displayHeight};
+    const bool created = m_mode == AnthologyUpscalerFSR3
+        ? m_fsr3.Create(HW.pDevice, render, display, false, BackendLog, false)
+        : m_dlss.Create(BackendQuality(ResolveEffectiveQuality(m_mode)), render, display, false,
+            static_cast<dlss::Preset>(ps_r4_dlss_preset), false);
 
     if (!created)
     {
@@ -156,7 +169,7 @@ bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u3
 	}
 
 	Msg("* [UPSCALER] backend=%s quality=%s render=%ux%u display=%ux%u scale=%.3f "
-		"mip_bias(user=%.3f auto=%.3f effective=%.3f) frame_generation=off",
+		"mip_bias(user=%.3f auto=%.3f effective=%.3f) frame_generation=off integration=brodrigz-00093f6-anthology",
 		m_mode == AnthologyUpscalerFSR3 ? "FSR3.1.2" : "DLSS", qualityLabel, renderWidth, renderHeight,
 		displayWidth, displayHeight, actualScale, ps_r__tf_Mipbias, automaticMipBias, effectiveMipBias);
     return true;
@@ -173,21 +186,12 @@ void CAnthologyUpscalerRuntime::UpdateJitter(u32 frameIndex)
 	if (m_jitterFrame == frameIndex)
 		return;
 	m_jitterFrame = frameIndex;
+    m_previousJitter = g_main_taa_jitter_pixels;
 
-	const int phaseCount = _max(1, ffxFsr3UpscalerGetJitterPhaseCount(
-		int(m_renderWidth), int(m_displayWidth)));
-	float jitterX = 0.f;
-	float jitterY = 0.f;
-	// Device frames include lens captures. Indexing Halton with dwFrame skips
-	// half of even-length sequences while ADS alternates main and SVP renders.
-	const int jitterPhase = int(m_jitterPhase % u32(phaseCount));
-	m_jitterPhase = u32((jitterPhase + 1) % phaseCount);
-	if (ffxFsr3UpscalerGetJitterOffset(&jitterX, &jitterY, jitterPhase, phaseCount) != FFX_OK)
-	{
-		jitterX = 0.f;
-		jitterY = 0.f;
-	}
-	g_main_taa_jitter_pixels.set(jitterX, jitterY);
+    const auto jitter = dlss::Jitter(m_jitterPhase++,
+        {m_renderWidth, m_renderHeight}, {m_displayWidth, m_displayHeight});
+    g_main_taa_jitter_pixels.set(jitter.x, jitter.y);
+    if (!m_historyValid) m_previousJitter = g_main_taa_jitter_pixels;
 }
 
 bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* motion,
@@ -200,7 +204,8 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
 		(Device.vCameraPosition.distance_to_sqr(m_previousCameraPosition) > 25.f ||
 		 Device.vCameraDirection.dotproduct(m_previousCameraDirection) < 0.5f ||
 		 fabsf(Device.fFOV - m_previousFov) > 10.f);
-	resetHistory = resetHistory || !m_historyValid || frameGap > 2 || cameraCut;
+	resetHistory = resetHistory || !m_historyValid || frameGap > 2 || cameraCut ||
+		ps_r2_heatvision != m_previousHeatvision;
 	const float frameTimeMs = !resetHistory ?
 		clampr(float(Device.dwTimeContinual - m_lastDispatchTime), 1.f, 250.f) :
 		clampr(Device.fTimeDelta * 1000.f, 1.f, 250.f);
@@ -215,6 +220,7 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
 			m_previousCameraPosition.set(Device.vCameraPosition);
 			m_previousCameraDirection.set(Device.vCameraDirection);
 			m_previousFov = Device.fFOV;
+			m_previousHeatvision = ps_r2_heatvision;
 		}
 		if (success && !m_dispatchLogged)
 		{
@@ -236,53 +242,28 @@ bool CAnthologyUpscalerRuntime::Dispatch(ID3D11Resource* color, ID3D11Resource* 
 		return success;
 	};
 
-    if (m_mode == AnthologyUpscalerFSR3)
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> colorTex, motionTex, depthTex, outputTex, reactiveTex;
+    auto asTexture = [](ID3D11Resource* resource, Microsoft::WRL::ComPtr<ID3D11Texture2D>& texture)
     {
-        CFSR3Wrapper::DrawParameters params;
-        params.reactive = reactive;
-        params.deviceContext = HW.pContext;
-        params.unresolvedColor = color;
-        params.motionVectors = motion;
-        params.depth = depth;
-        params.output = output;
-        params.renderWidth = m_renderWidth;
-        params.renderHeight = m_renderHeight;
-        params.displayWidth = m_displayWidth;
-        params.displayHeight = m_displayHeight;
-        params.reset = resetHistory;
-		// Run RCAS inside the vendor dispatch. The old mandatory display 9-tap pass
-		// erased much of the GPU saving and reprocessed an already reconstructed image.
-		params.sharpening = ps_r4_upscaler_sharpness > EPS;
-		params.sharpness = clampr(ps_r4_upscaler_sharpness, 0.f, 1.f);
-		params.frameTimeMs = frameTimeMs;
-		// The active camera may override its near plane. Reconstruct the same
-		// finite, forward-Z projection that authored the exported hardware depth.
-		const float projectionNear = -Device.mProject._43 / Device.mProject._33;
-		params.nearPlane = projectionNear > EPS_S ? projectionNear : VIEWPORT_NEAR;
-        params.farPlane = g_pGamePersistent && g_pGamePersistent->Environment().CurrentEnv ?
-            g_pGamePersistent->Environment().CurrentEnv->far_plane : 500.f;
-        params.verticalFov = deg2rad(Device.fFOV);
-        params.jitterX = g_main_taa_jitter_pixels.x;
-        params.jitterY = g_main_taa_jitter_pixels.y;
-		return finishDispatch(m_fsr3.Draw(params));
-    }
-    if (m_mode == AnthologyUpscalerDLSS)
-    {
-        CDLSSWrapper::DrawParameters params;
-        params.reactive = reactive;
-        params.unresolvedColor = color;
-        params.motionVectors = motion;
-        params.depth = depth;
-        params.output = output;
-        params.renderWidth = m_renderWidth;
-        params.renderHeight = m_renderHeight;
-        params.reset = resetHistory;
-		params.frameTimeMs = frameTimeMs;
-		params.jitterX = g_main_taa_jitter_pixels.x;
-		params.jitterY = g_main_taa_jitter_pixels.y;
-		return finishDispatch(m_dlss.Draw(params));
-    }
-    return false;
+        return resource && SUCCEEDED(resource->QueryInterface(IID_PPV_ARGS(&texture)));
+    };
+    if (!asTexture(color, colorTex) || !asTexture(motion, motionTex) ||
+        !asTexture(depth, depthTex) || !asTexture(output, outputTex)) return finishDispatch(false);
+    if (reactive && !asTexture(reactive, reactiveTex)) return finishDispatch(false);
+
+    fsr3::D3D11Backend::Frame frame;
+    frame.color = colorTex.Get(); frame.motion = motionTex.Get(); frame.depth = depthTex.Get();
+    frame.output = outputTex.Get(); frame.reactive = reactiveTex.Get();
+    frame.jitter = {g_main_taa_jitter_pixels.x, g_main_taa_jitter_pixels.y};
+    frame.deltaMilliseconds = frameTimeMs;
+    frame.frame = Device.dwFrame; frame.cameraCut = resetHistory;
+    const float projectionNear = -Device.mProject._43 / Device.mProject._33;
+    frame.cameraNear = projectionNear > EPS_S ? projectionNear : VIEWPORT_NEAR;
+    frame.cameraFar = g_pGamePersistent && g_pGamePersistent->Environment().CurrentEnv
+        ? g_pGamePersistent->Environment().CurrentEnv->far_plane : 500.f;
+    frame.verticalFov = deg2rad(Device.fFOV);
+    return finishDispatch(m_mode == AnthologyUpscalerFSR3 ? m_fsr3.Evaluate(frame) :
+        m_mode == AnthologyUpscalerDLSS && m_dlss.Evaluate(frame));
 }
 
 void CAnthologyUpscalerRuntime::Shutdown()
@@ -291,11 +272,17 @@ void CAnthologyUpscalerRuntime::Shutdown()
 	ResetTemporalState();
 	SetTemporalUpscalerMipBias(0.0f, false);
     m_fsr3.Destroy();
-    m_dlss.Shutdown();
+    m_dlss.ReleaseFeature();
     m_mode = AnthologyUpscalerOff;
     m_renderWidth = m_renderHeight = m_displayWidth = m_displayHeight = 0;
 	m_dispatchLogged = false;
 	g_main_taa_jitter_pixels.set(0.f, 0.f);
+}
+
+void CAnthologyUpscalerRuntime::ShutdownDevice()
+{
+    Shutdown();
+    m_dlss.Shutdown();
 }
 
 void CAnthologyUpscalerRuntime::ResetTemporalState()

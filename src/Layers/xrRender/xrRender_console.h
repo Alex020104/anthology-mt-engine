@@ -19,6 +19,7 @@ extern ECORE_API u32 GetMainRenderHeight();
 // world render targets are recreated at the selected internal resolution.
 extern ECORE_API u32 ps_r4_upscaler;
 extern ECORE_API u32 ps_r4_upscaler_quality;
+extern ECORE_API u32 ps_r4_dlss_preset;
 extern ECORE_API float ps_r4_upscaler_custom_scale;
 extern ECORE_API float ps_r4_upscaler_sharpness;
 extern ECORE_API xr_token r4_upscaler_token[];

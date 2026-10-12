@@ -16,6 +16,9 @@
 #include "dxRenderDeviceRender.h"
 #include "xrRender_console.h"
 #include "../../xrCore/RuntimeSeason.h"
+#ifdef USE_DX11
+#include "../xrRenderPC_R4/UpscalerRuntime.h"
+#endif
 
 // matrices
 #define	BIND_DECLARE(xf)	\
@@ -490,7 +493,15 @@ static class cl_heatvision_blurring : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, heat_vision_blurring.x, heat_vision_blurring.y, heat_vision_blurring.z, active_heatvision_palette_mode());
+        float radiusScale = 1.f;
+#if defined(USE_DX11)
+        // Keep the thermal normal filter's displayed radius when the main
+        // G-buffer is reduced by SR. Lens captures retain their own filtering.
+        if (g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame())
+            radiusScale = g_main_taa_render_size.x / float(_max(Device.dwWidth, 1u));
+#endif
+        RCache.set_c(C, _max(1.f, heat_vision_blurring.x * radiusScale),
+            _max(1.f, heat_vision_blurring.y * radiusScale), heat_vision_blurring.z, active_heatvision_palette_mode());
 	}
 } binder_heatvision_params2;
 
@@ -1464,6 +1475,35 @@ static class ssfx_jitter : public R_constant_setup
 	}
 }    ssfx_jitter;
 
+static class dlss_params : public R_constant_setup
+{
+    virtual void setup(R_constant* C)
+    {
+        bool active = false;
+#ifdef USE_DX11
+        active = g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame();
+#endif
+        RCache.set_c(C, active ? 1.f : 0.f, g_main_taa_render_size.x, g_main_taa_render_size.y, 0.f);
+    }
+} dlss_params;
+
+static class dlss_temporal_jitter : public R_constant_setup
+{
+    virtual void setup(R_constant* C)
+    {
+        Fvector4 offset = {};
+#ifdef USE_DX11
+        if (g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame())
+        {
+            const Fvector2 previous = g_AnthologyUpscaler.PreviousJitterPixels();
+            const float w = _max(1.f, g_main_taa_render_size.x), h = _max(1.f, g_main_taa_render_size.y);
+            offset.set(g_main_taa_jitter_pixels.x / w, g_main_taa_jitter_pixels.y / h, previous.x / w, previous.y / h);
+        }
+#endif
+        RCache.set_c(C, offset);
+    }
+} dlss_temporal_jitter;
+
 static class anthology_shadow_history_jitter : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
@@ -1768,6 +1808,8 @@ void CBlender_Compile::SetMapping()
 	r_Constant("ssfx_timedelta", &ssfx_fTimeDelta);
 	r_Constant("ssfx_motionblur", &ssfx_motionblur);
 	r_Constant("ssfx_jitter", &ssfx_jitter);
+    r_Constant("dlss_params", &dlss_params);
+    r_Constant("dlss_temporal_jitter", &dlss_temporal_jitter);
 	r_Constant("anthology_shadow_history_jitter", &anthology_shadow_history_jitter);
 	r_Constant("ssfx_pom", &ssfx_pom);
 

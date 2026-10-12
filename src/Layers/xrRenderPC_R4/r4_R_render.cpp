@@ -242,6 +242,8 @@ extern u32 g_r;
 
 void CRender::Render()
 {
+    GMBase.RGraph.mapHUDNativeUi.clear();
+    GMBase.RGraph.hasNativeHudAttachments = false;
 	PIX_EVENT(CRender_Render);
 	Target->m_svpSceneFrame = u32(-1);
 
@@ -389,6 +391,11 @@ void CRender::Render()
 		if (!Snow && anthology::snow::Active()) Snow = xr_new<CSnowRenderer>();
 		if (Snow) Snow->Render();
 		GMBase.r_dsgraph_capture_hud();
+		// HUD packets do not exist during the earlier world capture. Extract
+		// their screens now, before any forward/emissive/distortion pass consumes them.
+		// Thermal reconstructs the complete core scene, including devices.
+		if (Target->upscaler_active() && !Device.m_SecondViewport.IsSVPFrame() && ps_r2_heatvision == 0)
+			GMBase.r_dsgraph_extract_native_ui();
 		GMBase.r_dsgraph_render_hud();
 		GMBase.r_dsgraph_render_lods(true,true);
 		// Details/grass are one of the largest avoidable draw-list costs in the
@@ -585,7 +592,10 @@ void CRender::Render()
 	if (g_hud)
 	{
 		const SRenderPhaseToken hudPhase = BeginRenderPhase(RenderPhaseHud);
-		if (g_hud->RenderActiveItemUIQuery())
+		// Hidden attachment carriers (built-in suit screens) have no glass packet.
+		// Defer the UI itself independently of the sorted screen classification.
+		if (g_hud->RenderActiveItemUIQuery() && !(Target->upscaler_active() &&
+			!Device.m_SecondViewport.IsSVPFrame() && ps_r2_heatvision == 0))
 			GMBase.r_dsgraph_render_hud_ui();
 		if (g_hud->RenderCamAttachedUIQuery())
 			GMBase.r_dsgraph_render_cam_ui();

@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#if RENDER == R_R4
+#include "../xrRenderPC_R4/Dlss/DlssNativeUi.h"
+#endif
 
 #include "../../xrEngine/render.h"
 #include "../../xrEngine/irenderable.h"
@@ -326,6 +329,60 @@ void CDSGraphManager::r_dsgraph_render_ScopeSorted()  //  Redotix99: for 3D Shad
 	// Rendering
 	RImplementation.rmNear();
 	r_dsgraph_render_graph_sorted(RGraph.mapScopeHUDSorted, true);
+	RImplementation.rmNormal();
+}
+#endif
+
+#if RENDER == R_R4
+void CDSGraphManager::r_dsgraph_extract_native_ui()
+{
+	// Hold PDA screens and WearableDevices screen glass for the native pass.
+	// Attachment widgets draw directly through RenderActiveItemUI, outside these
+	// queues. Their glass must follow them instead of being baked into the scene.
+	RGraph.hasNativeHudAttachments = false;
+	dlss::ExtractNativeUi(RGraph.mapHUDSorted.Sorted, RGraph.mapHUDNativeUi, [this](const auto& item)
+	{
+		for (const auto& pass : item.pSE->passes)
+		{
+			if (!pass->T) continue;
+			for (const auto& texture : *pass->T)
+			{
+				if (!texture.second) continue;
+				if (texture.second->cName == "$user$ui") return true;
+				if (dlss::IsWearableScreenGlass(texture.second->cName.c_str()))
+				{
+					RGraph.hasNativeHudAttachments = true;
+					return true;
+				}
+			}
+		}
+		return false;
+	});
+	// Do not leave a second copy in an emissive or distortion scene pass.
+	dlss::RemoveNativeUiDuplicates(RGraph.mapHUDSorted.Emissive, RGraph.mapHUDNativeUi);
+	dlss::RemoveNativeUiDuplicates(RGraph.mapHUDSorted.Distort, RGraph.mapHUDNativeUi);
+	if (strstr(Core.Params, "-upscaler_ui_diag"))
+	{
+		static u32 lastCount = u32(-1);
+		const u32 count = u32(RGraph.mapHUDNativeUi.size());
+		if (lastCount != count)
+		{
+			lastCount = count;
+			Msg("* [UPSCALER/UI] native screens=%u wearable=%u frame=%u", count,
+				RGraph.hasNativeHudAttachments ? 1 : 0, Device.dwFrame);
+		}
+	}
+}
+
+void CDSGraphManager::r_dsgraph_render_native_ui(bool renderHudUi)
+{
+	PROF_EVENT("r_dsgraph_render_native_ui");
+	// Draw widgets once, at display resolution with the unjittered HUD projection,
+	// before the sorted PDA/glass meshes, preserving the forward-pass ordering.
+	if (renderHudUi) r_dsgraph_render_hud_ui();
+	CHudInitializer initializer(true);
+	RImplementation.rmNear();
+	r_dsgraph_render_graph_sorted(RGraph.mapHUDNativeUi, true);
 	RImplementation.rmNormal();
 }
 #endif

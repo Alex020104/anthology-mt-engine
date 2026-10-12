@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+  <string id="ui_mcm_anthology_upscaler_dlss_preset"><text>DLSS reconstruction model</text></string>
+  <string id="ui_mcm_anthology_upscaler_dlss_preset_desc"><text>Default lets NVIDIA choose the model. J/K/L/M are explicit NGX presets; availability and results depend on the GPU and DLSS runtime. Applies after renderer restart. Does not affect FSR.</text></string>
+  <string id="ui_mcm_anthology_upscaler_backend_notes"><text>Native DX11 integration adapted from brodrigz. FSR 3.1.2 is built into the engine and needs feature level 11.1; DLSS needs RTX and nvngx_dlss.dll. Main-view reconstruction is separate from PiP; frame generation is not included.</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_default"><text>Default (NVIDIA)</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_j"><text>J</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_k"><text>K</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_l"><text>L</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_m"><text>M</text></string>
+</string_table>

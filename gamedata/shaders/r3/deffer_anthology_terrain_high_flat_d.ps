@@ -1,5 +1,7 @@
-// DX11 seasonal terrain must use the SSS height pipeline, including MCM.
-#ifdef SM_5
+// Use SSS terrain only with its matching gbuffer and vertex interface.
+#define USE_TDETAIL
+#include "common.h"
+#if defined(SM_5) && defined(SSFX_MV_LOADED)
 #define ANTHOLOGY_SEASONAL_TERRAIN
 #include "deffer_terrain_high_flat_d.ps"
 #else
@@ -9,11 +11,11 @@ uniform float4 anthology_flora_style;
 #endif
 #define USE_TDETAIL
 #include "common.h"
-#include "screenspace_mvectors.h"
+
 
 // Default mode follows the stock terrain pass, including its lighting channels.
 #define main anthology_default_terrain_high
-#include "deffer_impl_flat_d.ps"
+#include "deffer_impl_flat.ps"
 #undef main
 
 // Private headers cannot be overridden by SSS settings or ripple helpers.
@@ -48,14 +50,18 @@ f_deffer main(p_bumped I)
     [branch] if (abs(anthology_flora_style.x - 4.0) < 0.1)
     {
         f_deffer snow = anthology_snow_ground(I.position.xyz, float3(I.M1.z, I.M2.z, I.M3.z), s_base.Sample(smp_base, I.tcdh));
+#ifdef SSFX_MV_LOADED
         snow.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
         return snow;
     }
 
     if (anthology_flora_style.x >= 5.5f)
     {
         f_deffer original = anthology_default_terrain_high(I);
+#ifdef SSFX_MV_LOADED
         original.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
         return original;
     }
 
@@ -206,7 +212,9 @@ f_deffer main(p_bumped I)
         float4(I.position.xyz + Ne.xyz * def_virtualh / 2.0h, ms),
         float4(D.rgb, G));
     // Ground must overwrite prior grass/HUD velocity and mask values.
+#ifdef SSFX_MV_LOADED
     result.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
     return result;
 }
 

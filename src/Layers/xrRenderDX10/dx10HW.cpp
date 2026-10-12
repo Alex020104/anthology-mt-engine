@@ -8,6 +8,7 @@
 #include <d3dx9.h>
 #ifdef USE_DX11
 # include <d3d11_4.h>
+# include "../xrRenderPC_R4/UpscalerRuntime.h"
 # include <dxgi1_5.h>
 #endif
 #pragma warning(default:4995)
@@ -746,6 +747,9 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
 
 void CHW::DestroyDevice()
 {
+#ifdef USE_DX11
+    g_AnthologyUpscaler.ShutdownDevice();
+#endif
     //	Destroy state managers
     StateManager.Reset();
     RSManager.ClearStateArray();

@@ -1,3 +1,4 @@
+#include "dlss_contract.h"
 /**
  * @ Version: SCREEN SPACE SHADERS - UPDATE 22
  * @ Description: Screen Space Shadows - Direct Light + Far Shadows
@@ -71,7 +72,7 @@ float4 main(p_screen I) : SV_Target
 	float vel = length(Motion_Vectors.xy);
 
 	// Prev Position + Reprojection UV
-	float4 prev_P = s_prev_pos.Sample( smp_rtlinear, (tc - Motion_Vectors.xy) );
+	float4 prev_P = s_prev_pos.Sample( smp_rtlinear, dlss_reproject(tc - Motion_Vectors.xy) );
 
 	// Disocclusion
 	float docc = saturate(abs(1.0f - P.z / prev_P.z));
@@ -84,10 +85,10 @@ float4 main(p_screen I) : SV_Target
 	rnd = rnd * (1.0f / screen_res.xy) * 0.5f * saturate(1.0f - vel * 10); //0.5f;
 
 	// Previous frame + Reprojection UV + Noise
-	float4 prev = sss_image.Sample(smp_rtlinear, (tc + rnd) - Motion_Vectors.xy);
+	float4 prev = sss_image.Sample(smp_rtlinear, dlss_reproject((tc + rnd) - Motion_Vectors.xy));
 
 	// Offscreen check	
-	float outoffsrc = any((tc - Motion_Vectors.xy) < 0) + any((tc - Motion_Vectors.xy) > 1.0);
+	float outoffsrc = any(dlss_reproject(tc - Motion_Vectors.xy) < 0) + any(dlss_reproject(tc - Motion_Vectors.xy) > 1.0);
 	outoffsrc = lerp(outoffsrc, prev.a, 0.95f); // Use previous offscreen samples
 
 	// 0 Current frame ~ 1 Prev frame

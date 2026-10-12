@@ -1,3 +1,4 @@
+#include "dlss_contract.h"
 /**
  * @ Version: SCREEN SPACE SHADERS - UPDATE 22
  * @ Description: Screen Space Shadows - Extend Shadows
@@ -89,7 +90,7 @@ float4 main(p_screen I) : SV_Target
 		}
 
 		// Prev Position + Reprojection UV
-		float4 prev_P = s_prev_pos.Sample( smp_linear, (tc - Motion_Vectors.xy) );
+		float4 prev_P = s_prev_pos.Sample( smp_linear, dlss_reproject(tc - Motion_Vectors.xy) );
 
 		// Disocclusion
 		float docc = saturate(abs(1.0f - P.z / prev_P.z)) * 2.5f;
@@ -98,14 +99,14 @@ float4 main(p_screen I) : SV_Target
 		docc *= 1.0f + 10.0f * Motion_Vectors.z;
 
 		// Offscreen check	
-		int outoffsrc = any((tc - Motion_Vectors.xy) < 0) + any((tc - Motion_Vectors.xy) > 1.0);
+		int outoffsrc = any(dlss_reproject(tc - Motion_Vectors.xy) < 0) + any(dlss_reproject(tc - Motion_Vectors.xy) > 1.0);
 		
 		// AA Noise
 		float2 rnd = hash22(tc * 100 + timers.xx * 100) * 2.0f - 1.0f;
 		rnd = rnd * (1.0f / screen_res.xy) * 0.25f;
 
 		// Previous frame + Reprojection UV + Noise
-		float4 prev = sss_image.Sample(smp_linear, (I.tc0 + rnd) - Motion_Vectors.xy);
+		float4 prev = sss_image.Sample(smp_linear, dlss_reproject((I.tc0 + rnd) - Motion_Vectors.xy));
 
 		// 0 Current frame ~ 1 Prev frame
 		sss = lerp(sss, prev, saturate(0.97f - (outoffsrc + docc + vel)));

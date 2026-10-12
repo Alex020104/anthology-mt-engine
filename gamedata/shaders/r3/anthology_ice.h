@@ -1,6 +1,8 @@
 // Adapted from Ascii1457's Screen Space Shaders ICE VERSION (Update 13).
 // https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+#ifdef SSFX_MV_LOADED
 #include "check_screenspace.h"
+#endif
 #include "anthology_ice_ray.h"
 #if defined(SSFX_FOG) && !defined(ANTHOLOGY_ICE_FOG_READY)
 #include "screenspace_fog.h"

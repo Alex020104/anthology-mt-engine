@@ -1,0 +1,5 @@
+DLSS/FSR DX11 integration adapted from brodrigz, revision 00093f6.
+This software contains source code provided by NVIDIA Corporation.
+Preserved SDK license and third-party notices accompany this update.
+SSS, Beefs NVGs, Heat Vision, Wearable Devices and R.A.K addon shaders
+remain adaptations of the respective addon authors' work.

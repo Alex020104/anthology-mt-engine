@@ -1,7 +1,6 @@
 #pragma once
 
-#include "OverlayAPI/FSR3Wrapper.h"
-#include "OverlayAPI/DLSSWrapper.h"
+#include "Dlss/Fsr3D3D11.h"
 
 enum EAnthologyUpscaler : u32
 {
@@ -23,13 +22,16 @@ public:
 	void EndGpuProfile();
 	bool Dispatch(ID3D11Resource* color, ID3D11Resource* motion, ID3D11Resource* depth,
 		ID3D11Resource* output, ID3D11Resource* reactive, bool resetHistory);
-    void Shutdown();
+    void Shutdown(); // Release render targets, retain NGX device lifetime.
+    void ShutdownDevice();
+    bool ResolveRenderSize(u32& width, u32& height);
 
     bool IsEnabled() const { return m_mode != AnthologyUpscalerOff; }
     u32 Mode() const { return m_mode; }
     u32 RenderWidth() const { return m_renderWidth; }
     u32 RenderHeight() const { return m_renderHeight; }
     float ResolveRenderScale() const;
+    Fvector2 PreviousJitterPixels() const { return m_previousJitter; }
 
 private:
 	void ResetTemporalState();
@@ -51,14 +53,16 @@ private:
 	double m_gpuMaxMs = 0.0;
 	u32 m_jitterFrame = u32(-1);
 	u32 m_jitterPhase = 0;
+    Fvector2 m_previousJitter = {};
 	u32 m_lastDispatchFrame = 0;
 	u32 m_lastDispatchTime = 0;
 	bool m_historyValid = false;
 	Fvector m_previousCameraPosition = {};
 	Fvector m_previousCameraDirection = {};
 	float m_previousFov = 0.f;
-    CFSR3Wrapper m_fsr3;
-    CDLSSWrapper m_dlss;
+	int m_previousHeatvision = 0;
+    fsr3::D3D11Backend m_fsr3;
+    dlss::D3D11Backend m_dlss;
     u32 m_mode = AnthologyUpscalerOff;
     u32 m_renderWidth = 0;
     u32 m_renderHeight = 0;

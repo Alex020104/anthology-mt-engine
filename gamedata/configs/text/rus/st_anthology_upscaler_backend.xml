@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+  <string id="ui_mcm_anthology_upscaler_dlss_preset"><text>Модель реконструкции DLSS</text></string>
+  <string id="ui_mcm_anthology_upscaler_dlss_preset_desc"><text>По умолчанию модель выбирает NVIDIA. J/K/L/M — явные пресеты NGX; доступность и результат зависят от видеокарты и версии DLSS. Применяется после перезапуска рендера. На FSR не влияет.</text></string>
+  <string id="ui_mcm_anthology_upscaler_backend_notes"><text>Интеграция DX11 адаптирована из ветки brodrigz. FSR 3.1.2 встроен в движок и требует feature level 11.1; DLSS — RTX и nvngx_dlss.dll. Основной кадр обрабатывается отдельно от PiP. Генерации кадров здесь нет.</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_default"><text>По умолчанию (NVIDIA)</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_j"><text>J</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_k"><text>K</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_l"><text>L</text></string>
+  <string id="ui_mcm_lst_anthology_dlss_m"><text>M</text></string>
+</string_table>

@@ -1,3 +1,4 @@
+#include "dlss_contract.h"
 uniform float4 ssfx_issvp;
 #define SSFX_PIP_SSR_NOISE_TIME (timers.x * (1.0f - step(0.5f, ssfx_issvp.x)))
 /**
@@ -109,7 +110,7 @@ float4 main(p_screen I) : SV_Target
 	float2 uv_rp = float2(current.x - previous.x, current.y - previous.y);
 	uv_rp = float2(uv_rp.x, -uv_rp.y) * 0.5f;
 	
-	uv_rp = lerp(Motion_Vectors.xy, uv_rp, HUD_mask);
+	uv_rp = lerp(Motion_Vectors.xy, uv_rp, HUD_mask) - dlss_history_offset();
 
 	// Prev Position + Reprojection UV
 	float4 prev_P = s_prev_pos.Sample( smp_linear, (tc - uv_rp) );
