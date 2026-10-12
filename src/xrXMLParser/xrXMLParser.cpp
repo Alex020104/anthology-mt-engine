@@ -2,6 +2,7 @@
 #pragma hdrstop
 
 #include "xrXMLParser.h"
+#include "../xrCore/profiler.h"
 
 extern void XMLLuaCallback(CXml &m_xml, LPCSTR xml_string);
 
@@ -120,6 +121,8 @@ void CXml::Load(LPCSTR path_alias, LPCSTR path, LPCSTR _xml_filename)
 //инициализация и загрузка XML файла
 void CXml::Load(LPCSTR path, LPCSTR xml_filename)
 {
+    PROF_EVENT("XML.Load");
+    PROF_TAG("File", xml_filename);
 	xr_strcpy(m_xml_file_name, xml_filename);
 	// Load and parse xml file
 
@@ -140,7 +143,10 @@ void CXml::Load(LPCSTR path, LPCSTR xml_filename)
 	}
 
 	m_root = m_Doc.FirstChildElement();
-	XMLLuaCallback(*this, (LPCSTR)W.pointer());
+    {
+        PROF_EVENT("XML.DXMLCallback");
+        XMLLuaCallback(*this, (LPCSTR)W.pointer());
+    }
 }
 
 void CXml::LoadFromString(LPCSTR xml_string)

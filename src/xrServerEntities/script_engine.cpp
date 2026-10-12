@@ -386,6 +386,7 @@ extern bool unlocalizerPassed;
 
 void CScriptEngine::init()
 {
+    PROF_EVENT("Lua.Initialize");
 #ifdef USE_LUA_STUDIO
     bool lua_studio_connected = !!m_lua_studio_world;
     if (lua_studio_connected)
@@ -471,6 +472,7 @@ void CScriptEngine::remove_script_process(const EScriptProcessors& process_id)
 
 void CScriptEngine::load_common_scripts()
 {
+    PROF_EVENT("Lua.LoadCommonScripts");
 #ifdef DBG_DISABLE_SCRIPTS
     return;
 #endif
@@ -554,6 +556,7 @@ void CScriptEngine::process_file(LPCSTR file_name, bool reload_modules)
 
 void CScriptEngine::register_script_classes()
 {
+    PROF_EVENT("Lua.RegisterScriptClasses");
 #ifdef DBG_DISABLE_SCRIPTS
     return;
 #endif

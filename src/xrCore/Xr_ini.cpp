@@ -1300,6 +1300,8 @@ void CInifile::Load(IReader* F, LPCSTR path
 )
 {
 	R_ASSERT(F);
+    PROF_EVENT("INI.Load");
+    PROF_TAG("File", m_file_name ? m_file_name : "<memory>");
 	
 	static shared_str DLTX_DELETE = "DLTX_DELETE";
 	string_path currentFileName;

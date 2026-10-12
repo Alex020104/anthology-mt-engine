@@ -1244,6 +1244,9 @@ HRESULT CRender::shader_compile(
 	DWORD Flags,
 	void*& result)
 {
+    PROF_EVENT("Render.ShaderCompileOrCache");
+    PROF_TAG("Shader", name);
+    PROF_TAG("Target", pTarget);
 	D3D_SHADER_MACRO defines [128];
 	int def_it = 0;
 	char c_smapsize [32];

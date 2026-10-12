@@ -62,6 +62,7 @@ private:
 #	define PROF_FRAME(...) OPTICK_FRAME(__VA_ARGS__)
 #	define PROF_EVENT(...) OPTICK_EVENT(__VA_ARGS__)
 #	define PROF_EVENT_DYNAMIC(Name) OPTICK_EVENT_DYNAMIC(Name)
+#   define PROF_TAG(Name, Value) OPTICK_TAG(Name, Value)
 #	define START_PROFILE(a) { PROF_EVENT(a)
 #	define STOP_PROFILE		}
 #else
@@ -76,4 +77,5 @@ private:
 #	define PROF_FRAME(...)
 #	define PROF_EVENT(...)
 #	define PROF_EVENT_DYNAMIC(...) {};
+#   define PROF_TAG(Name, Value)
 #endif

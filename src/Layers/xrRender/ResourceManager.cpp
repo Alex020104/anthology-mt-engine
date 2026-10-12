@@ -383,6 +383,7 @@ void CResourceManager::Delete(const Shader* S)
 
 void CResourceManager::DeferredUpload()
 {
+    PROF_EVENT("Render.UploadTextures");
 	if (!RDEVICE.b_is_Ready) return;
 
 	Msg("CResourceManager::DeferredUpload -> START, size = %d", m_textures.size());

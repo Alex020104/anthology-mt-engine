@@ -37,6 +37,9 @@
 
 #include "CustomHUD.h"
 #include "EngineThreading.h"
+#if XRCORE_PROFILER == PROFILER_OPTICK
+#include <shellapi.h>
+#endif
 #include "IGame_Level.h"
 
 #include "Rain.h"
@@ -312,6 +315,92 @@ extern u32 g_screenmode;
 
 #if XRCORE_PROFILER == PROFILER_OPTICK
 int psOptickCaptureFrames = 0;
+static u32 optickCaptureFramesLeft = 0;
+static string_path optickCapturePath = {};
+static bool optickCaptureSavePending = false;
+static bool optickStartupCapturing = false;
+static u32 optickStartupMenuFrame = u32(-1);
+static s64 optickStartupEntryTime = 0;
+static double optickStartupPreEntryMs = 0;
+
+static void SetOptickCapturePath(LPCSTR name)
+{
+    if (FS.path_exist("$logs$"))
+        FS.update_path(optickCapturePath, "$logs$", name);
+    else
+        xr_strcpy(optickCapturePath, name);
+}
+
+void OptickStartupBegin(s64 entryTime, s64 earlyInitFinish)
+{
+    // Core.Params (including commandline.txt) is initialized too late for this capture.
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv)
+        return;
+    bool requested = false;
+    for (int i = 1; i < argc; ++i)
+        requested |= lstrcmpiW(argv[i], L"-optickstartup") == 0;
+    LocalFree(argv);
+    if (!requested)
+        return;
+
+    Optick::RegisterThread("X-RAY Primary thread");
+    const auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
+    if (!Optick::StartCapture(mode, 1000, false))
+        return;
+    // Apply the request now, rather than waiting for the first on_idle().
+    Optick::Update();
+    Optick::BeginFrame(Optick::FrameType::CPU, entryTime);
+    optickStartupCapturing = true;
+    optickStartupEntryTime = entryTime;
+
+    // Preserve LuaJIT's first-allocation rule; record its measured interval afterwards.
+    Optick::EventStorage* storage = *Optick::GetEventStorageSlotForCurrentThread();
+    Optick::Event::Add(storage, Optick::EventDescription::Create("Startup.LuaJITReserve", __FILE__, __LINE__), entryTime, earlyInitFinish);
+    Optick::Event::Add(storage, Optick::EventDescription::Create("Startup.OptickInitialize", __FILE__, __LINE__), earlyInitFinish, Optick::GetHighPrecisionTime());
+
+    FILETIME creation, exit, kernel, user, now;
+    if (GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user))
+    {
+        GetSystemTimeAsFileTime(&now);
+        const s64 measuredAt = Optick::GetHighPrecisionTime();
+        ULARGE_INTEGER creationTime, currentTime;
+        creationTime.LowPart = creation.dwLowDateTime;
+        creationTime.HighPart = creation.dwHighDateTime;
+        currentTime.LowPart = now.dwLowDateTime;
+        currentTime.HighPart = now.dwHighDateTime;
+        const double sinceEntryMs = double(measuredAt - entryTime) * 1000.0 / Optick::GetHighPrecisionFrequency();
+        optickStartupPreEntryMs = double(s64(currentTime.QuadPart) - s64(creationTime.QuadPart)) / 10000.0 - sinceEntryMs;
+        if (optickStartupPreEntryMs < 0)
+            optickStartupPreEntryMs = 0;
+        string64 value;
+        xr_sprintf(value, "%.3f", optickStartupPreEntryMs);
+        Optick::AttachSummary("Startup before WinMain (approx. ms)", value);
+    }
+}
+
+void OptickStartupMenuRendered()
+{
+    if (optickStartupCapturing && !g_pGameLevel)
+        optickStartupMenuFrame = Device.dwFrame;
+}
+
+void OptickStartupFramePresented()
+{
+    if (!optickStartupCapturing || g_pGameLevel || optickStartupMenuFrame != Device.dwFrame)
+        return;
+    PROF_EVENT("Startup.FirstMenuPresent");
+    const double entryToMenuMs = double(Optick::GetHighPrecisionTime() - optickStartupEntryTime) * 1000.0 / Optick::GetHighPrecisionFrequency();
+    string64 value;
+    xr_sprintf(value, "%.3f", entryToMenuMs);
+    Optick::AttachSummary("Startup WinMain to first menu Present (ms)", value);
+    xr_sprintf(value, "%.3f", optickStartupPreEntryMs + entryToMenuMs);
+    Optick::AttachSummary("Startup process to first menu Present (approx. ms)", value);
+    optickStartupCapturing = false;
+    // Save at the next frame boundary, after scopes and secondary tasks have finished.
+    optickCaptureSavePending = true;
+}
 #endif
 
 CTimer FreezeTimer;
@@ -354,25 +443,25 @@ void CRenderDevice::on_idle()
 	}
 
 #if XRCORE_PROFILER == PROFILER_OPTICK
-    static u32 optickCaptureFramesLeft = 0;
-    static string_path optickCapturePath = {};
-    static bool optickCaptureSavePending = false;
+    if (optickStartupCapturing && !optickCapturePath[0])
+    {
+        string64 captureName;
+        xr_sprintf(captureName, "MT_optick_startup_p%lu_t%u.opt", GetCurrentProcessId(), TimerAsync());
+        SetOptickCapturePath(captureName);
+        Msg("* [OPTICK] Capturing startup to first main menu Present: %s", optickCapturePath);
+    }
 
-    if (optickCaptureFramesLeft == 0 && !optickCaptureSavePending && psOptickCaptureFrames > 0)
+    if (!optickStartupCapturing && optickCaptureFramesLeft == 0 && !optickCaptureSavePending && psOptickCaptureFrames > 0)
     {
         const u32 frameCount = u32(psOptickCaptureFrames);
         psOptickCaptureFrames = 0;
 
         string64 captureName;
         xr_sprintf(captureName, "MT_optick_f%u_t%u_%u_frames.opt", dwFrame + 1, TimerAsync(), frameCount);
-        if (FS.path_exist("$logs$"))
-            FS.update_path(optickCapturePath, "$logs$", captureName);
-        else
-            xr_strcpy(optickCapturePath, captureName);
-
         const auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
         if (Optick::StartCapture(mode, 1000, false))
         {
+            SetOptickCapturePath(captureName);
             optickCaptureFramesLeft = frameCount;
             Msg("* [OPTICK] Capturing %u frames to %s", frameCount, optickCapturePath);
         }
@@ -683,6 +772,7 @@ void CRenderDevice::Run()
 {
     // Retain main-thread registration when PPL executes a nested task during wait().
     PROF_THREAD("X-RAY Primary thread");
+    START_PROFILE("Startup.MainLoopInitialize");
 	// DUMP_PHASE;
 	g_bLoaded = FALSE;
 	Log("Starting engine...");
@@ -707,6 +797,7 @@ void CRenderDevice::Run()
 
 	//m_pRender->ClearTarget();
 	SetForegroundWindow(m_hWnd);
+    STOP_PROFILE;
 	message_loop();
 
 	seqAppEnd.Process(rp_AppEnd);

@@ -238,6 +238,7 @@ PROTECT_API void InitSettings()
 
 PROTECT_API void InitConsole()
 {
+    PROF_EVENT("Startup.Console");
 	////SECUROM_MARKER_SECURITY_ON(5)
 
 #ifdef DEDICATED_SERVER
@@ -278,11 +279,13 @@ void destroyInput()
 
 PROTECT_API void InitSound1()
 {
+    PROF_EVENT("Startup.SoundStage1");
 	CSound_manager_interface::_create(0);
 }
 
 PROTECT_API void InitSound2()
 {
+    PROF_EVENT("Startup.SoundStage2");
 	CSound_manager_interface::_create(1);
 }
 
@@ -320,6 +323,7 @@ void destroyEngine()
 
 void execUserScript()
 {
+    PROF_EVENT("Startup.UserConfig");
 	Console->Execute("default_controls");
 	Console->ExecuteScript(Console->ConfigFile);
     if (Console->GetBool("dump_cvar_enable"))
@@ -588,6 +592,7 @@ void clearDiscordPresence()
 
 void Startup()
 {
+    START_PROFILE("Startup.AppInitialization");
 #ifndef DEDICATED_SERVER
 	fill_vid_monitor_list();
 #endif
@@ -669,6 +674,7 @@ void Startup()
 		Msg("[ReShade]: ReShade not installed or version too old - didn't load compatibility addon");
 
 	// Main cycle
+    STOP_PROFILE;
 	Msg("* [x-ray]: Starting Main Loop");
 	//Memory.mem_usage();
 
@@ -1047,6 +1053,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 #endif // DEDICATED_SERVER
 
 	// Title window
+    START_PROFILE("Startup.SplashWindow");
     logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
    
 	HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);
@@ -1084,6 +1091,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 	);
 	
 	UpdateWindow(logoWindow);
+    STOP_PROFILE;
 
 	// AVI
 	g_bIntroFinished = TRUE;
@@ -1273,9 +1281,16 @@ int APIENTRY WinMain(HINSTANCE hInstance,
                      char* lpCmdLine,
                      int nCmdShow)
 {
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    const s64 optickEntryTime = Optick::GetHighPrecisionTime();
+#endif
   // Initialize LuaJIT low-memory pool FIRST, before any DLLs load and fragment
 	// the lower 2GB address space.
 	XR_EARLY_INIT();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    OptickStartupBegin(optickEntryTime, Optick::GetHighPrecisionTime());
+    const s64 optickPlatformStart = Optick::GetHighPrecisionTime();
+#endif
   
 	// Enable per-monitor DPI awareness so GetMonitorInfo returns real pixel sizes.
 	// Without this, monitors with different DPI scaling report wrong resolutions
@@ -1311,6 +1326,11 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	DllMainXrPhysics(NULL, DLL_PROCESS_ATTACH, NULL);
 
 	DllMainXrCore(NULL, DLL_THREAD_ATTACH, NULL);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    if (Optick::IsActive())
+        Optick::Event::Add(*Optick::GetEventStorageSlotForCurrentThread(),
+            Optick::EventDescription::Create("Startup.PlatformInitialize", __FILE__, __LINE__), optickPlatformStart, Optick::GetHighPrecisionTime());
+#endif
 
 	__try
 	{

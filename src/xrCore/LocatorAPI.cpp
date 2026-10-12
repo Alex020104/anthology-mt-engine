@@ -337,6 +337,8 @@ IReader* open_chunk(void* ptr, u32 ID)
 
 void CLocatorAPI::LoadArchive(archive& A, LPCSTR entrypoint)
 {
+    PROF_EVENT("VFS.LoadArchiveIndex");
+    PROF_TAG("Archive", A.path.c_str());
 	// Create base path
 	string_path fs_entry_point;
 	fs_entry_point[0] = 0;
@@ -460,6 +462,8 @@ void CLocatorAPI::archive::close()
 
 void CLocatorAPI::ProcessArchive(LPCSTR _path)
 {
+    PROF_EVENT("VFS.OpenArchive");
+    PROF_TAG("Archive", _path);
 	// find existing archive
 	shared_str path = _path;
 
@@ -597,6 +601,8 @@ bool ignore_path(const char* _path)
 
 bool CLocatorAPI::Recurse(const char* path)
 {
+    PROF_EVENT("VFS.ScanDirectory");
+    PROF_TAG("Directory", path);
 	string_path scanPath;
 	xr_strcpy(scanPath, sizeof(scanPath), path);
 	xr_strcat(scanPath, ".xrignore");
@@ -746,6 +752,7 @@ IReader* CLocatorAPI::setup_fs_ltx(LPCSTR fs_name)
 
 void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 {
+    PROF_EVENT("VFS.Initialize");
 	char _delimiter = '|'; //','
 	if (m_Flags.is(flReady))return;
 	CTimer t;

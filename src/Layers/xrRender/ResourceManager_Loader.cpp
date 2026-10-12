@@ -51,6 +51,7 @@ void CResourceManager::OnDeviceDestroy(BOOL)
 
 void CResourceManager::OnDeviceCreate(IReader* F)
 {
+    PROF_EVENT("Render.LoadResources");
 	if (!RDEVICE.b_is_Ready) return;
 
 	string256 name;

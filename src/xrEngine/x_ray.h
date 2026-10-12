@@ -75,6 +75,12 @@ public:
 
 extern ENGINE_API CApplication* pApp;
 
+#if XRCORE_PROFILER == PROFILER_OPTICK
+void ENGINE_API OptickStartupBegin(s64 entryTime, s64 earlyInitFinish);
+void ENGINE_API OptickStartupMenuRendered();
+void ENGINE_API OptickStartupFramePresented();
+#endif
+
 //Discord
 struct rpc_info
 {

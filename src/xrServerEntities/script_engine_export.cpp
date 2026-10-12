@@ -25,6 +25,7 @@
 
 void export_classes	(lua_State *L)
 {
+    PROF_EVENT("Lua.ExportBindings");
 #ifdef XRSE_FACTORY_EXPORTS
 	CScriptPropertiesListHelper::script_register(L);
 #else

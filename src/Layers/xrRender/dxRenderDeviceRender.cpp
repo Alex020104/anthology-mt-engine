@@ -3,6 +3,7 @@
 
 #include "ResourceManager.h"
 #include "../../xrEngine/shader_bus.h"
+#include "../../xrEngine/x_ray.h"
 
 // a shader bus texture lane's $user$bus_ alias and the texture it shows
 struct bus_texture_slot
@@ -482,7 +483,13 @@ void dxRenderDeviceRender::End()
 # endif
 
 	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady) {
+        PROF_EVENT("Render.Present");
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        if (HW.m_pSwapChain->Present(present_interval, present_flags) == S_OK)
+            OptickStartupFramePresented();
+#else
 		HW.m_pSwapChain->Present(present_interval, present_flags);
+#endif
 	}
 #else //!USE_DX10 || USE_DX11
 	CHK_DX(HW.pDevice->EndScene());

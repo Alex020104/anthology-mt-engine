@@ -69,6 +69,8 @@ CSoundRender_Core::~CSoundRender_Core()
 
 void CSoundRender_Core::_initialize(int stage)
 {
+    PROF_EVENT("Sound.Initialize");
+    PROF_TAG("Stage", stage);
 	Timer.Start();
 
 	// load environment

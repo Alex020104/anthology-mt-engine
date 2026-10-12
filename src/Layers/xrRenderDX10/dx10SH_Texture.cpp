@@ -482,6 +482,7 @@ void CTexture::Preload()
 void CTexture::Load()
 {
 	PROF_EVENT("CTexture::Load");
+    PROF_TAG("Texture", cName.c_str());
 
 	if (flags.bLoaded || flags.bLoading) return;
 	flags.bLoading = true;

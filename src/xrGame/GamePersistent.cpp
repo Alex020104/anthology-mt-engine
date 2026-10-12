@@ -155,6 +155,7 @@ extern void init_game_globals();
 
 void CGamePersistent::OnAppStart()
 {
+    PROF_EVENT("Startup.GamePersistentAppStart");
 	// load game materials
 	GMLib.Load();
 	init_game_globals();
