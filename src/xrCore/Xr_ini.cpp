@@ -135,7 +135,7 @@ void CInifile::InsertIntoDATA(xr_unordered_flat_map<shared_str, Items>& FinalDat
 	DATA.reserve(FinalData.size());
 	for (auto& SectPair : FinalData)
 	{
-        DATA.push_back({ SectPair.first, SectPair.second });
+        DATA.push_back({ SectPair.first, std::move(SectPair.second) });
 	}
 	std::sort(DATA.begin(), DATA.end(), [](const Sect& a, const Sect& b)
 	{
@@ -377,8 +377,9 @@ void CInifile::StashCurrentSection(
 		}
 		else
 		{
-			BaseData.emplace(CurrentBase->Name, *CurrentBase);
-			SectionToFilename[CurrentBase->Name] = currentFileName;
+			const shared_str sectionName = CurrentBase->Name;
+			BaseData.emplace(sectionName, std::move(*CurrentBase));
+			SectionToFilename[sectionName] = currentFileName;
 		}
 		xr_delete(CurrentBase);
 	}
@@ -399,8 +400,9 @@ void CInifile::StashCurrentSection(
 		}
 		else
 		{
-			OverrideData.emplace(CurrentOverride->Name, *CurrentOverride);
-			OverrideToFilename[CurrentOverride->Name].insert(currentFileName);
+			const shared_str sectionName = CurrentOverride->Name;
+			OverrideData.emplace(sectionName, std::move(*CurrentOverride));
+			OverrideToFilename[sectionName].insert(currentFileName);
 		}
 		xr_delete(CurrentOverride);
 	}
@@ -466,10 +468,14 @@ void CInifile::LTXLoad (
 	Sect* CurrentOverride = 0;
 	MezzStringBuffer str;
 	MezzStringBuffer str2;
+	MezzStringBuffer value_raw;
 
 	BOOL bInsideSTR = FALSE;
 	BOOL bIsCurrentSectionOverride = FALSE;
 	BOOL bHasLoadedModFiles = FALSE;
+	// Includes share and change currentFileName. Preserve its existing provenance semantics.
+	string_path provenancePath = {};
+	shared_str provenanceName;
 
 	static auto InsertParentStringsInMap = [](shared_str SectionName, xr_unordered_flat_map<shared_str, RStringVec>& ParentMap)
 	{
@@ -573,7 +579,7 @@ void CInifile::LTXLoad (
 				xr_string ModFileName = It->name.c_str();
 
 				// Determine if we should load this mod file, or if it's meant for a different root file
-				static auto bIsModfileMeantForMeFunc = [](FS_FileSet AmbiguousFiles, xr_string ModFileName)
+				static auto bIsModfileMeantForMeFunc = [](const FS_FileSet& AmbiguousFiles, const xr_string& ModFileName)
 				{
 					for (auto It2 = AmbiguousFiles.begin(); It2 != AmbiguousFiles.end(); ++It2)
 					{
@@ -813,7 +819,6 @@ void CInifile::LTXLoad (
 			// name = value
 			bool bIsDelete = str[0] == '!';
 
-			MezzStringBuffer value_raw;
 			char* name = (char*)(str + (bIsDelete ? 1 : 0));
 			char* t = strchr(name, '=');
 			if (t)
@@ -865,8 +870,13 @@ void CInifile::LTXLoad (
 			}
 			I.second = bIsDelete ? DLTX_DELETE.c_str() : (str2[0] ? str2.GetBuffer() : NULL);
 
-			auto fname = toLowerCaseCopy(trimCopy(getFilename(std::string(currentFileName))));
-			I.filename = fname.c_str();
+			if (!provenanceName || xr_strcmp(provenancePath, currentFileName) != 0)
+			{
+				xr_strcpy(provenancePath, currentFileName);
+				auto fname = toLowerCaseCopy(trimCopy(getFilename(std::string(currentFileName))));
+				provenanceName = fname.c_str();
+			}
+			I.filename = provenanceName;
 			I.depth = depth;
 
 			if (*I.first || *I.second)
@@ -1000,7 +1010,7 @@ CInifile::Items CInifile::MergeSections(
 	return Result;
 }
 
-CInifile::Items CInifile::EvaluateSection(
+const CInifile::Items& CInifile::EvaluateSection(
 	shared_str SectionName,
 	EvaluationsContext& Evaluations,
 	string_path currentFileName
@@ -1082,7 +1092,8 @@ CInifile::Items CInifile::EvaluateSection(
 					BaseData[parent].Name = parent;
 				}
 			}
-			Items ParentData = EvaluateSection(parent, Evaluations, currentFileName);
+			// Consume before another evaluation can rehash the flat cache and invalidate the reference.
+			const Items& ParentData = EvaluateSection(parent, Evaluations, currentFileName);
 			ResolvedParents = MergeSections(ResolvedParents, ParentData, DeletedItems, false);
 		}
 	}
