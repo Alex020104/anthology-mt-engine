@@ -1,5 +1,8 @@
 // Each history entry is a freshly rendered lens frame, never a repeated main view.
 #include "common.h"
+#ifndef SSFX_MV_LOADED
+static const float4 ssfx_jitter = 0;
+#endif
 Texture2D<float4> s_svp_scene;
 Texture2D<float4> s_svp_history;
 Texture2D<float4> s_svp_motion;

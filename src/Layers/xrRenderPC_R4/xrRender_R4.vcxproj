@@ -503,8 +503,9 @@
     <ClInclude Include="r4.h" />
     <ClInclude Include="r4_rendertarget.h" />
     <ClInclude Include="UpscalerRuntime.h" />
-    <ClInclude Include="OverlayAPI\DLSSWrapper.h" />
-    <ClInclude Include="OverlayAPI\FSR3Wrapper.h" />
+    <ClInclude Include="Dlss\DlssD3D11.h" />
+    <ClInclude Include="Dlss\Fsr3D3D11.h" />
+    <ClInclude Include="Dlss\DlssTemporal.h" />
     <ClInclude Include="r4_rendertarget_wallmarks.h" />
     <ClInclude Include="R_Backend_LOD.h" />
     <ClInclude Include="SMAP_Allocator.h" />
@@ -736,8 +737,15 @@
     <ClCompile Include="r4_R_render.cpp" />
     <ClCompile Include="SnowRenderer.cpp" />
     <ClCompile Include="UpscalerRuntime.cpp" />
-    <ClCompile Include="OverlayAPI\DLSSWrapper.cpp" />
-    <ClCompile Include="OverlayAPI\FSR3Wrapper.cpp" />
+    <ClCompile Include="Dlss\DlssD3D11.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="Dlss\Fsr3D3D11.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="R_Backend_LOD.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx10EventWrapper.cpp" />
     <ClCompile Include="stdafx.cpp">
@@ -763,6 +771,7 @@
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
   </ItemGroup>
+  <Import Project="..\..\..\sdk\FSR3\fsr3_dx11.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

@@ -64,6 +64,9 @@ void dump_collision_hit(CPHMovementControl *movement_control)
 void CMovementManager::apply_collision_hit(CPHMovementControl* movement_control)
 {
 	VERIFY(movement_control);
+	// The character can be destroyed before its pending collision hit is consumed.
+	if (!movement_control || !movement_control->CharacterExist() || !movement_control->PhysicsRefObject())
+		return;
 	if (object().g_Alive() && !fsimilar(0.f, movement_control->gcontact_HealthLost))
 	{
 #ifdef	DEBUG

@@ -1,0 +1,201 @@
+{
+  "name": "Anthology_Engine_Test_2026-10-12",
+  "date": "2026-10-12",
+  "type": "cumulative-tester-update",
+  "target": "Existing Anomaly 1.5.3 / Anthology v170 with matching addons",
+  "full_game": false,
+  "files": [
+    {
+      "path": "01_В_папку_игры/bin/AnomalyDX11.exe",
+      "sha256": "1e72e7ce37dd61463ee07770cb5a8a0ba095add4836065e23ede38839cf9f174",
+      "bytes": 31114752
+    },
+    {
+      "path": "01_В_папку_игры/bin/AnomalyDX11AVX.exe",
+      "sha256": "d3c2408bf047d56e8ac89221fa3a5fc316aa91c191fa82302b6d11b9e07af2cf",
+      "bytes": 31014400
+    },
+    {
+      "path": "01_В_папку_игры/bin/nvngx_dlss.dll",
+      "sha256": "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983",
+      "bytes": 58956912
+    },
+    {
+      "path": "01_В_папку_игры/db/configs/configs_anthology.xdb0",
+      "sha256": "7e102749bea6af1ead1373eb923368dc3c609985f57d3d13c1775bb2a3ebc4a1",
+      "bytes": 12993323
+    },
+    {
+      "path": "01_В_папку_игры/db/configs/scripts_anthology.xdb0",
+      "sha256": "257556442768c55e63ecc55843239cf2aa7a2b2b1373e1c88086b76e0ea77ace",
+      "bytes": 1556964
+    },
+    {
+      "path": "01_В_папку_игры/db/mods/shaders_anthology.xdb1",
+      "sha256": "277dddf4647949d5a8efa9327927a3d42f7ac5fc75ccff46a48d2bda663f649a",
+      "bytes": 193185
+    },
+    {
+      "path": "01_В_папку_игры/db/shaders_anthology_runtime_seasons.xdb0",
+      "sha256": "cfe593b52295f737ed133fa9efb3728863e8b71e064cea45c8f34ab969ede126",
+      "bytes": 25222188
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GAM] Heat Vision — Тепловизор/gamedata/shaders/r3/heatvision.ps",
+      "sha256": "0e718a4d98137c6215057bd9805cee547f10f730fce05e7c5ad116f6491ae12d",
+      "bytes": 1940
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GAM] Heat Vision — Тепловизор/gamedata/shaders/r3/infrared.h",
+      "sha256": "69d37983c8fc2389a0e4f41e72003a5f6ca22700b09c45c76864aca4338c17f8",
+      "bytes": 5747
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GAM] Wearable Devices/gamedata/shaders/r3/wd_body.vs",
+      "sha256": "944853a34112cf5de6de4f9101b8dc7f382e1fb49196081ca01fb61887e27b2d",
+      "bytes": 2150
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GAM] Wearable Devices/gamedata/shaders/r3/wd_crt.s",
+      "sha256": "434f01f78c82289fcdccbdab7ed36bc8c4b90ff1e1ad33e7a3216b57307a0799",
+      "bytes": 398
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GAM] Wearable Devices/gamedata/shaders/r3/wd_crt_vektor.s",
+      "sha256": "3ffc15b5f9278889a0dd7f92b93d101e5ee5160dda4d01d36e9d71522f8a8f10",
+      "bytes": 405
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GAM] Wearable Devices/gamedata/shaders/r3/wd_occlude.h",
+      "sha256": "c420c91ecb0627a001a8a66309504784d3a5f7d036d6d4e12922e08f4ed16aa9",
+      "bytes": 828
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GAM] Wearable Devices/gamedata/shaders/r3/wd_ui.s",
+      "sha256": "0f1ea5cdcf23ed4025f35ed4abc60dca707ae3a2ba674d5b5b9142623efd7c3c",
+      "bytes": 396
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] Beefs NVGs Shaders — Шейдеры для приборов ночного видения2/gamedata/shaders/r3/night_vision.h",
+      "sha256": "142714c42b7607d8f88e538da702a24e9b46a40f4f9c1eeba210e2006876ee53",
+      "bytes": 27087
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/deffer_anthology_terrain_high_flat_d.ps",
+      "sha256": "879c0ad7181ca5eef46ca9775db3f1ba82bb90699a06e2c966e41d041a6eb368",
+      "bytes": 9111
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/deffer_anthology_terrain_low_flat.ps",
+      "sha256": "74e69ddbf8df8742879fba6d248d64338f4b0e2ae3d67460f2edc36eba1b4403",
+      "bytes": 2721
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/deffer_anthology_terrain_mid_flat.ps",
+      "sha256": "c42989188c1d29bf32f96c94e743156d108ca793d35c2f35e450fe7263c8bfc7",
+      "bytes": 3991
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/deffer_impl_flat.ps",
+      "sha256": "207d36c3d2e8123ca85ee083404b028a8bb3748bf68f0bc3cb89a0f9016e9578",
+      "bytes": 6603
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/deffer_terrain_low_flat.ps",
+      "sha256": "6b8163d85143157a213126403522c3813ad923146a22bd7b83d77cab1bcf15da",
+      "bytes": 1357
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/dlss_contract.h",
+      "sha256": "9ba94d1b99975571a56b78bcefe59a666a0c6f65794f3861743436e74b6737d3",
+      "bytes": 605
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/ssfx_ao.ps",
+      "sha256": "c21a58a00750c7705284299a4391ca7b58102d67c43583a07bbbf41143486a11",
+      "bytes": 7640
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/ssfx_il.ps",
+      "sha256": "280ec704d67956c6040c6a3087c5fb121fd3a4eba4ae9b66ec57d242c0e1749f",
+      "bytes": 5110
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/ssfx_ssr.ps",
+      "sha256": "5a873fde3e989ba4d986ef2f5d94115cb600918a547f59b270138225a3714cee",
+      "bytes": 5042
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/ssfx_sss.ps",
+      "sha256": "6d4fc9d38f8e15a4528a933f60944f339b0b71b1afaeb8e00781c7444fbf7750",
+      "bytes": 3401
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/ssfx_sss_ext.ps",
+      "sha256": "41fcf7e7b4994d2a2c4a9e75915d5ac4bdea9b12d08a06982b5e172fe042a1f9",
+      "bytes": 3427
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[GFX] ScreenSpaceShaders Update 23.5 — Обновление шейдеров/gamedata/shaders/r3/ssfx_water_ssr.ps",
+      "sha256": "63dbb307ad2f26aa617f7ccb1ca62f821c6472515645faf808668af576eb667e",
+      "bytes": 5544
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[WPN][0][WPN][R.A.K Weapon Pack Adaptation Global Anomaly BASE (OBT)]/gamedata/shaders/r3/models_lfo_light_dot_weapons_simple.ps",
+      "sha256": "da0e4fc71f580e17977e1572ee666f5964aa83ccb4b52451d466a66f73147f8f",
+      "bytes": 600
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[WPN][1.2][SCP][R.A.K Weapon Pack Adaptation Global Anomaly 2DSS (OBT)]/gamedata/shaders/r3/infrared.h",
+      "sha256": "69d37983c8fc2389a0e4f41e72003a5f6ca22700b09c45c76864aca4338c17f8",
+      "bytes": 5747
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[WPN][1.2][SCP][R.A.K Weapon Pack Adaptation Global Anomaly 2DSS (OBT)]/gamedata/shaders/r3/models_lfo_light_dot_weapons.ps",
+      "sha256": "cd1199da2edb5686055c75f8c6075e311e6203b18a907052fe5ba2bce63abdd3",
+      "bytes": 580
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[WPN][1.2][SCP][R.A.K Weapon Pack Adaptation Global Anomaly 2DSS (OBT)]/gamedata/shaders/r3/night_vision.h",
+      "sha256": "c8c5f2ee73f5a63d3a4f5643916e95976a984e9a72bd7891c45bec4c40dfd6f6",
+      "bytes": 17624
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[WPN][1][SCP][R.A.K Weapon Pack Adaptation Global Anomaly 3DSS (OBT)]/gamedata/shaders/r3/models_lfo_light_dot_weapons.ps",
+      "sha256": "e563fafc02e51597bbe23ca9d180da572feacb0283c57deb911601d5b381cd16",
+      "bytes": 758
+    },
+    {
+      "path": "02_В_папку_MO2/mods/[WPN][1][SCP][R.A.K Weapon Pack Adaptation Global Anomaly 3DSS (OBT)]/gamedata/shaders/r3/models_lfo_light_dot_weapons_simple.ps",
+      "sha256": "fa5dabd2c0cbdb86b46d6073c624a3a9a8b8845f0e9f32e716f6a3e3e8923e07",
+      "bytes": 579
+    },
+    {
+      "path": "03_В_папку_LAN/bin/AnomalyDX11AVX_LAN.exe",
+      "sha256": "df801d80a1e5c1ce51445b6bb4e3075ebaafb0da63523f384b8357321241a168",
+      "bytes": 31017984
+    },
+    {
+      "path": "03_В_папку_LAN/bin/AnomalyDX11_LAN.exe",
+      "sha256": "50764c038e64301a891e32f13da0ea2e96d51739b48eee11dda9900fce7723f3",
+      "bytes": 31118848
+    },
+    {
+      "path": "03_В_папку_LAN/bin/nvngx_dlss.dll",
+      "sha256": "3975567b8943c53acce397f2b72380092f84f162d00b0d2c7d08a1025c563983",
+      "bytes": 58956912
+    }
+  ],
+  "validation": {
+    "builds_passed": 4,
+    "final_sp_avx_runs": 3,
+    "qa_pngs": 184,
+    "lfo_fixed_variants_compiled": 60,
+    "lfo_original_x3536_reproductions": 20,
+    "lfo_runtime_retested": false,
+    "controlled_fps_comparison": false,
+    "lan_network_session_tested": false,
+    "long_run_stability_confirmed": false
+  },
+  "build_note": "EXEs are the already tested working-tree builds before source commit; no rebuild solely for Git metadata."
+}

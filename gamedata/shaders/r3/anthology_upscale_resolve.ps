@@ -13,11 +13,13 @@ float3 display_color(float2 uv)
     return anthology_upscale_linear.x > 0.5 ? pow(c, 1.0 / 2.2) : c;
 }
 
+#include "anthology_upscale_cas.h"
+
 float4 main(p_screen I) : SV_Target
 {
     float2 uv = I.tc0;
     float2 raster_uv = uv + anthology_jitter_uv.xy;
-    float3 color = display_color(uv);
+    float3 color = DlssCas(uv).rgb;
     float4 mv = s_motion.SampleLevel(smp_nofilter, raster_uv, 0);
     if (anthology_upscale_linear.y <= 0 || mv.z > 0.5 || mv.w >= 1.5 || ssfx_motionblur.z > 0)
         return float4(color, 1);

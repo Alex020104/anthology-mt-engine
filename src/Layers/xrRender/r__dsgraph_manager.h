@@ -96,6 +96,10 @@ public:
 	void r_dsgraph_capture_hud();
 	void r_dsgraph_render_hud();
 	void r_dsgraph_render_hud_ui();
+#if RENDER == R_R4
+    void r_dsgraph_extract_native_ui();
+    void r_dsgraph_render_native_ui(bool renderHudUi);
+#endif
 	void r_dsgraph_render_lods(bool _setup_zb, bool _clear);
 	void r_dsgraph_render_sorted(bool render_hud = true);
 	void r_dsgraph_render_sorted_hud();

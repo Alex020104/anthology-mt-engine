@@ -3,7 +3,7 @@
 uniform float4 anthology_flora_style;
 #endif
 #include "common.h"
-#include "screenspace_mvectors.h"
+
 
 // Default mode follows the stock terrain pass, including its lighting channels.
 #define main anthology_default_terrain_low
@@ -27,14 +27,18 @@ f_deffer main(p_flat I)
     [branch] if (abs(anthology_flora_style.x - 4.0) < 0.1)
     {
         f_deffer snow = anthology_snow_ground(I.position.xyz, I.N.xyz, s_base.Sample(smp_base, I.tcdh));
+#ifdef SSFX_MV_LOADED
         snow.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
         return snow;
     }
 
     if (anthology_flora_style.x >= 5.5f)
     {
         f_deffer original = anthology_default_terrain_low(I);
+#ifdef SSFX_MV_LOADED
         original.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
         return original;
     }
 
@@ -66,6 +70,8 @@ f_deffer main(p_flat I)
         float4(I.position.xyz + Ne * def_virtualh / 2.0h, 0.95f),
         float4(D.rgb, 0.001f));
     // Ground must overwrite prior grass/HUD velocity and mask values.
+#ifdef SSFX_MV_LOADED
     result.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
     return result;
 }

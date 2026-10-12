@@ -432,6 +432,49 @@ LPCSTR xr_ToUTF8(LPCSTR input, int max_length)
 
 //Discord Rich Presence - Rezy ------------------------------------------------
 
+namespace
+{
+constexpr const char* anthologyDiscordName = "S.T.A.L.K.E.R Anomaly A.N.T.H.O.LO.G.Y";
+constexpr discord::ClientId anomalyDiscordApplication = 477910171964801060;
+discord::ClientId anthologyDiscordApplication = anomalyDiscordApplication;
+char anthologyDiscordImage[128] = "gamelogo";
+bool anthologyDiscordCustom = false;
+
+void LoadAnthologyDiscordSettings()
+{
+    // Public application ID and asset key only. No Discord tokens in game files.
+    anthologyDiscordApplication = anomalyDiscordApplication;
+    anthologyDiscordCustom = false;
+    xr_strcpy(anthologyDiscordImage, "gamelogo");
+    string_path path;
+    if (!FS.exist(path, "$game_config$", "discord_anthology.ltx")) return;
+    CInifile config(path, TRUE, TRUE, FALSE);
+    constexpr LPCSTR section = "discord_anthology";
+    if (!config.section_exist(section) || !config.line_exist(section, "application_id")) return;
+    LPCSTR value = config.r_string(section, "application_id");
+    if (!value || !*value) return;
+    u64 id = 0;
+    for (const char* c = value; *c; ++c)
+    {
+        if (*c < '0' || *c > '9' || id > (0x7fffffffffffffffULL - (*c - '0')) / 10)
+        {
+            Msg("! [Discord RPC] Invalid Anthology application_id; retaining Anomaly application");
+            return;
+        }
+        id = id * 10 + (*c - '0');
+    }
+    if (!id) return; // Setup template: app has not been created yet.
+    anthologyDiscordApplication = static_cast<discord::ClientId>(id);
+    anthologyDiscordCustom = true;
+    xr_strcpy(anthologyDiscordImage, "anthology_engine");
+    if (config.line_exist(section, "large_image"))
+    {
+        LPCSTR image = config.r_string(section, "large_image");
+        if (image && *image && xr_strlen(image) < sizeof(anthologyDiscordImage)) xr_strcpy(anthologyDiscordImage, image);
+    }
+}
+}
+
 void DiscordLog(discord::LogLevel level, std::string message)
 {
 	Msg("[Discord RPC]: %s", message.c_str());
@@ -441,7 +484,7 @@ void updateDiscordPresence()
 {
 	PROF_EVENT();
 
-	if (!use_discord)
+	if (!use_discord || !discord_core)
 		return;
 
 	static char details_buffer[128];
@@ -451,8 +494,8 @@ void updateDiscordPresence()
 	if (discord_gameinfo.mainmenu)
 	{
 		snprintf(state_buffer, 128, discord_strings.mainmenu);
-		discordPresence.GetAssets().SetLargeImage("gamelogo");
-		discordPresence.GetAssets().SetLargeText("");
+		discordPresence.GetAssets().SetLargeImage(anthologyDiscordImage);
+		discordPresence.GetAssets().SetLargeText(anthologyDiscordName);
 		discordPresence.GetAssets().SetSmallImage("");
 		discordPresence.GetAssets().SetSmallText("");
 			
@@ -460,16 +503,16 @@ void updateDiscordPresence()
 		if (discord_gameinfo.ingame)
 			snprintf(state_buffer, 128, discord_strings.paused);
 		else
-			discordPresence.SetDetails("");
+			discordPresence.SetDetails(anthologyDiscordName);
 	}	
 
 	// Loading
 	else if (discord_gameinfo.loadscreen)
 	{
 		snprintf(state_buffer, 128, discord_strings.loading);
-		discordPresence.SetDetails("");
-		discordPresence.GetAssets().SetLargeImage("gamelogo");
-		discordPresence.GetAssets().SetLargeText("");
+		discordPresence.SetDetails(anthologyDiscordName);
+		discordPresence.GetAssets().SetLargeImage(anthologyDiscordImage);
+		discordPresence.GetAssets().SetLargeText(anthologyDiscordName);
 		discordPresence.GetAssets().SetSmallImage("");
 		discordPresence.GetAssets().SetSmallText("");
 		discord_gameinfo.ex_update = true;
@@ -496,7 +539,7 @@ void updateDiscordPresence()
 		//Faction, Rank, Rep
 		if (discord_gameinfo.faction && discord_gameinfo.faction_name)
 		{
-			discordPresence.GetAssets().SetSmallImage(discord_gameinfo.faction);
+			discordPresence.GetAssets().SetSmallImage(anthologyDiscordCustom ? "" : discord_gameinfo.faction);
 			char rank_faction_rep[128];
 			if (discord_gameinfo.rank_name && discord_gameinfo.reputation)
 				snprintf(rank_faction_rep, 128, "%s | %s", discord_gameinfo.rank_name, discord_gameinfo.reputation);
@@ -583,7 +626,7 @@ void updateDiscordPresence()
 		}
 
 		// Level Icon
-		if (discord_gameinfo.level && discord_gameinfo.level_icon_index)
+		if (!anthologyDiscordCustom && discord_gameinfo.level && discord_gameinfo.level_icon_index)
 		{
 			char icon_buffer[32];
 			snprintf(icon_buffer, 32, "%s_%i", discord_gameinfo.level, discord_gameinfo.level_icon_index);
@@ -591,13 +634,19 @@ void updateDiscordPresence()
 		}
 	}
 
+    if (anthologyDiscordCustom)
+        discordPresence.GetAssets().SetLargeImage(anthologyDiscordImage);
+    // The legacy SDK's application title comes from the Developer Portal. Keep
+    // the pack identity visible in details while the standalone app is pending.
+    if (!anthologyDiscordCustom) discordPresence.SetDetails(anthologyDiscordName);
 	discordPresence.SetState(state_buffer);
 	discord_core->ActivityManager().UpdateActivity(discordPresence, [](discord::Result result) {});
 }
 
 void Init_Discord()
 {
-	auto result = discord::Core::Create(477910171964801060, DiscordCreateFlags_NoRequireDiscord, &discord_core);
+	LoadAnthologyDiscordSettings();
+    auto result = discord::Core::Create(anthologyDiscordApplication, DiscordCreateFlags_NoRequireDiscord, &discord_core);
 	
 	if (result != discord::Result::Ok)
 	{
@@ -612,8 +661,15 @@ void Init_Discord()
 	//Set up basic RPC
 	StartTime = time(0);
 	discordPresence.SetType(discord::ActivityType::Playing);
+    discordPresence.SetName(anthologyDiscordName);
+    discordPresence.SetDetails(anthologyDiscordName);
+    discordPresence.GetAssets().SetLargeText(anthologyDiscordName);
+    Msg("[Discord RPC] application=%llu custom=%u asset=%s", static_cast<unsigned long long>(anthologyDiscordApplication),
+        unsigned(anthologyDiscordCustom), anthologyDiscordImage);
+    if (!anthologyDiscordCustom)
+        Msg("[Discord RPC] Anthology branding awaits a public application_id in configs/discord_anthology.ltx");
 	discordPresence.GetTimestamps().SetStart(StartTime);
-	discordPresence.GetAssets().SetLargeImage("gamelogo");
+	discordPresence.GetAssets().SetLargeImage(anthologyDiscordImage);
 	discord_core->ActivityManager().UpdateActivity(discordPresence, [](discord::Result result) {});
 }
 

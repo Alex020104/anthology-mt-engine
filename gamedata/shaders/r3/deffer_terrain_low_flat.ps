@@ -11,7 +11,7 @@ uniform float4 anthology_flora_style;
  */
 
 #include "common.h"
-#include "screenspace_mvectors.h"
+
 
 #include "anthology_snow_ground.h"
 f_deffer 	main	( p_flat I 		)
@@ -19,7 +19,9 @@ f_deffer 	main	( p_flat I 		)
     [branch] if (abs(anthology_flora_style.x - 4.0) < 0.1)
     {
         f_deffer snow = anthology_snow_ground(I.position.xyz, I.N.xyz, s_base.Sample(smp_base, I.tcdh));
+#ifdef SSFX_MV_LOADED
         snow.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
         return snow;
     }
 
@@ -38,7 +40,9 @@ f_deffer 	main	( p_flat I 		)
                         float4	(D.rgb, G));	// OUT: rgb.gloss
 
     // Motion vectors
+#ifdef SSFX_MV_LOADED
     O.velocity = ssfx_mv_calc(I.vel_curr, I.vel_prev, 0, 0);
+#endif
 
     return O;
 }

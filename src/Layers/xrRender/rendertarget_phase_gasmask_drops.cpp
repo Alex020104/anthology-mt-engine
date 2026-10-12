@@ -10,6 +10,9 @@ void CRenderTarget::phase_gasmask_drops()
 	float d_W = 1.0f;
 	float w = float(GetMainRenderWidth());
 	float h = float(GetMainRenderHeight());
+#ifdef USE_DX11
+    if (m_upscaleDisplayEffects) { w = float(Device.dwWidth); h = float(Device.dwHeight); }
+#endif
 
 	Fvector2 p0, p1;
 #if defined(USE_DX10) || defined(USE_DX11)	
@@ -23,8 +26,13 @@ void CRenderTarget::phase_gasmask_drops()
 	//////////////////////////////////////////////////////////////////////////
 	//Set MSAA/NonMSAA rendertarget
 #if defined(USE_DX10) || defined(USE_DX11)
-	ref_rt& dest_rt = RImplementation.o.dx10_msaa ? rt_Generic : rt_Color;
+	#ifdef USE_DX11
+    ref_rt& dest_rt = PostprocessColor();
+#else
+    ref_rt& dest_rt = RImplementation.o.dx10_msaa ? rt_Generic : rt_Color;
+#endif
 	u_setrt(dest_rt, nullptr, nullptr, nullptr);
+    RImplementation.rmNormal();
 #else
 	u_setrt(rt_Generic_0, nullptr, nullptr, nullptr);
 #endif		
@@ -52,6 +60,10 @@ void CRenderTarget::phase_gasmask_drops()
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 	
 #if defined(USE_DX10) || defined(USE_DX11)
-	HW.pContext->CopyResource(rt_Generic_0->pSurface, dest_rt->pSurface);
+	#ifdef USE_DX11
+    HW.pContext->CopyResource(PostprocessSource()->pSurface, dest_rt->pSurface);
+#else
+    HW.pContext->CopyResource(rt_Generic_0->pSurface, dest_rt->pSurface);
+#endif
 #endif
 };

@@ -7,7 +7,11 @@
  */
 
 #ifndef SSFX_READY
+#ifdef SSFX_MV_LOADED
 #include "screenspace_common.h"
+#else
+#include "anthology_ice_common.h"
+#endif
 #endif
 #include "anthology_ice_settings.h"
 

@@ -1013,6 +1013,9 @@ void CPHMovementControl::DestroyCharacter()
 
 	m_character->Destroy();
     m_character->SetPhysicsRefObject(NULL);
+	gcontact_HealthLost = 0.f;
+	gcontact_Power = 0.f;
+	fContactSpeed = 0.f;
 	phcapture_destroy(m_capture);
 }
 

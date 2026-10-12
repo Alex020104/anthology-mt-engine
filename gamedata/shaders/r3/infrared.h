@@ -71,7 +71,15 @@ float3 greyscale(float3 img)
 float3 infrared(gbuffer_data gbd, float2 HPos, float2 Tex0) 
 {
     float depth = gbd.P.z;
-    float3 hotness = s_heat.Load(int3(Tex0 * screen_res.xy, 0 ), 0);
+    uint heat_width, heat_height;
+#ifdef USE_MSAA
+    uint heat_samples;
+    s_heat.GetDimensions(heat_width, heat_height, heat_samples);
+#else
+    s_heat.GetDimensions(heat_width, heat_height);
+#endif
+    int2 heat_pixel = clamp(int2(Tex0 * float2(heat_width, heat_height)), int2(0, 0), int2(heat_width, heat_height) - 1);
+    float3 hotness = s_heat.Load(int3(heat_pixel, 0), 0).rgb;
     float3 mixed;
     
     if (hotness.r > 0.0) 

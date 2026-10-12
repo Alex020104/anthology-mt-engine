@@ -600,7 +600,11 @@ public:
 	void phase_pp(bool upscaledSource = false);
 	void phase_upscale(bool temporal);
 	bool m_upscaleLinearOutput = false;
-	void phase_upscale_finish();
+    void phase_upscale_finish();
+    void phase_upscale_display_effects();
+    bool m_upscaleDisplayEffects = false;
+    ref_rt& PostprocessColor();
+    ref_rt& PostprocessSource() { return m_upscaleDisplayEffects ? rt_UpscaleOutput : rt_Generic_0; }
 	void phase_upscale_reticle();
 	void draw_upscale_aux(int element);
 	bool begin_svp_quality_pass();

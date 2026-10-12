@@ -1,3 +1,4 @@
+#include "dlss_contract.h"
 /**
  * @ Version: SCREEN SPACE SHADERS - UPDATE 21
  * @ Description: AO implementation (GTAO Enabled)
@@ -193,7 +194,7 @@ float4 main(p_screen I) : SV_Target
 	rnd = rnd * (1.0f / screen_res.xy) * 0.25f;
 
 	float2 full_tc = tc;
-	float2 Rep_Tc = (full_tc + rnd) - Motion_Vectors.xy;
+	float2 Rep_Tc = dlss_reproject((full_tc + rnd) - Motion_Vectors.xy);
 
 	float4 prev = ssfx_ao.Sample(smp_rtlinear, clamp(Rep_Tc / ao_setup.x, 0.0f, float2(0.999f, 0.99f) / ao_setup.x));
 

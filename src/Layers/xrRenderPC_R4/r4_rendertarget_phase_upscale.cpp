@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "r4_rendertarget.h"
 #include "UpscalerRuntime.h"
+#include "../../xrEngine/customhud.h"
 
 void CRenderTarget::phase_upscale(bool temporal)
 {
@@ -68,19 +69,8 @@ void CRenderTarget::phase_upscale(bool temporal)
             rt_UpscaleReactive->pSurface,
             resetHistory);
 		g_AnthologyUpscaler.EndGpuProfile();
-		// Both integrations submit compute work outside RCache. Release every CS
-		// resource/UAV slot before sampling the output as a pixel-shader SRV; this
-		// also prevents stale vendor bindings from leaking into the next frame.
-		ID3D11ShaderResourceView* nullSrvs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
-		ID3D11UnorderedAccessView* nullUavs[D3D11_PS_CS_UAV_REGISTER_COUNT] = {};
-		HW.pContext->CSSetShaderResources(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT, nullSrvs);
-		HW.pContext->CSSetUnorderedAccessViews(0, D3D11_PS_CS_UAV_REGISTER_COUNT, nullUavs, nullptr);
-		HW.pContext->CSSetShader(nullptr, nullptr, 0);
-		// NGX and FidelityFX issue commands directly on the immediate context and
-		// may replace viewport, shaders, input layout, buffers and pipeline state.
-		// Force XRay to bind its complete fullscreen-present state again instead
-		// of trusting stale backend caches left from before the vendor dispatch.
-		RCache.InvalidateExternalState();
+        // The donor backends swap a private D3D11 context state. All engine
+        // bindings are restored on return; do not invalidate/rebuild them here.
 		m_upscalerResetHistory = !resolved || Device.dwPrecacheFrame > 0;
     }
 
@@ -131,6 +121,7 @@ void CRenderTarget::draw_upscale_aux(int element)
     RCache.set_Element(s_upscale_aux->E[element]);
     RCache.set_c("anthology_upscale_linear", m_upscaleLinearOutput ? 1.f : 0.f,
         !Device.m_SecondViewport.IsSVPFrame() && RImplementation.o.ssfx_motionblur ? ps_ssfx_motionblur.y : 0.f, 0.f, 0.f);
+    RCache.set_c("anthology_upscale_sharpness", Device.m_SecondViewport.IsSVPFrame() ? 0.f : ps_r4_upscaler_sharpness, 0.f, 0.f, 0.f);
     RCache.set_c("anthology_core_res", float(m_renderWidth), float(m_renderHeight),
         1.f / m_renderWidth, 1.f / m_renderHeight);
     RCache.set_c("anthology_jitter_uv", g_main_taa_jitter_pixels.x / m_renderWidth,
@@ -145,7 +136,8 @@ void CRenderTarget::phase_upscale_finish()
 {
     const bool motionBlur = !Device.m_SecondViewport.IsSVPFrame() &&
         RImplementation.o.ssfx_motionblur && ps_ssfx_motionblur.y > 0.f;
-    if (!m_upscaleLinearOutput && !motionBlur) return;
+    const bool sharpen = !Device.m_SecondViewport.IsSVPFrame() && ps_r4_upscaler_sharpness > 0.f;
+    if (!m_upscaleLinearOutput && !motionBlur && !sharpen) return;
     u_setrt(rt_UpscalePost, nullptr, nullptr, nullptr);
     draw_upscale_aux(1);
     unbind_svp_resources();
@@ -176,4 +168,53 @@ void CRenderTarget::phase_upscale_reticle()
     g_upscale_reticle_pass = false;
     unbind_svp_resources();
     rt_Generic_temp->pTexture->surface_set(rt_Generic_temp->pSurface);
+}
+
+void CRenderTarget::phase_upscale_display_effects()
+{
+    // Thermal belongs to scene reconstruction; its 2D scope overlay remains a
+    // display pass. Hidden script-UI carriers need no visible glass packet.
+    const bool thermal = ps_r2_heatvision > 0;
+    auto& graph = RImplementation.GMBase;
+    const bool itemUi = !thermal && g_hud && g_hud->RenderActiveItemUIQuery();
+    if (itemUi || !graph.RGraph.mapHUDNativeUi.empty())
+    {
+        unbind_svp_resources();
+        u_setrt(Device.dwWidth, Device.dwHeight, nullptr, nullptr, nullptr, rt_UpscaleHudDepth->pZRT);
+        HW.pContext->ClearDepthStencilView(rt_UpscaleHudDepth->pZRT, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.f, 0);
+        draw_upscale_aux(0);
+        unbind_svp_resources();
+        u_setrt(rt_UpscaleOutput, nullptr, nullptr, rt_UpscaleHudDepth->pZRT);
+        RCache.set_ColorWriteEnable();
+        RCache.set_CullMode(CULL_CCW);
+        g_upscale_reticle_pass = true;
+        graph.r_dsgraph_render_native_ui(itemUi);
+        g_upscale_reticle_pass = false;
+    }
+    // Reuse the original shaders with a display-sized source alias. Lens frames
+    // never enter this path, and screen noise never becomes temporal input.
+    m_upscaleDisplayEffects = true;
+    unbind_svp_resources();
+    rt_Generic_0->pTexture->surface_set(rt_UpscaleOutput->pSurface);
+    // The earlier blur pyramid contains only the internal-resolution world.
+    // NVG near-focus must also include the native PDA and WD widgets.
+    if (!thermal)
+    {
+        if (ps_r2_nightvision > 0) phase_blur();
+        if (ps_r2_mask_control.x > 0)
+        {
+            phase_gasmask_dudv();
+            if (ps_r2_drops_control.x > 0) phase_gasmask_drops();
+        }
+        if (ps_r2_nightvision > 0) phase_nightvision();
+    }
+    if (scope_fake_enabled && !Device.m_SecondViewport.IsSVPActive()) phase_fakescope();
+    unbind_svp_resources();
+    rt_Generic_0->pTexture->surface_set(rt_Generic_0->pSurface);
+    m_upscaleDisplayEffects = false;
+}
+
+ref_rt& CRenderTarget::PostprocessColor()
+{
+    return m_upscaleDisplayEffects ? rt_UpscalePost : (RImplementation.o.dx10_msaa ? rt_Generic : rt_Color);
 }
