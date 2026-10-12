@@ -3,6 +3,7 @@
 
 void CRenderTarget::phase_smaa()
 {
+    PROF_EVENT("RenderTarget.SMAA");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -104,6 +105,7 @@ void CRenderTarget::phase_smaa()
 
 void CRenderTarget::phase_ssfx_taa()
 {
+    PROF_EVENT("RenderTarget.SSFX.TAA");
 	u32 Offset = 0;
 	Fvector2 p0, p1;
 

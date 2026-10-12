@@ -8,6 +8,7 @@ IC bool SortLights(light* i, light* j)
 
 void CRenderTarget::phase_blur()
 {
+    PROF_EVENT("RenderTarget.Blur");
 	//Get common data
 	u32 Offset = 0;
 	float d_Z = EPS_S;
@@ -187,6 +188,7 @@ void CRenderTarget::phase_blur()
 
 void CRenderTarget::phase_ssfx_ssr()
 {
+    PROF_EVENT("RenderTarget.SSFX.SSR");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -417,6 +419,7 @@ void CRenderTarget::phase_ssfx_volumetric_blur()
 
 void CRenderTarget::phase_ssfx_water_blur()
 {
+    PROF_EVENT("RenderTarget.SSFX.WaterBlur");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -503,6 +506,7 @@ void CRenderTarget::phase_ssfx_water_blur()
 
 void CRenderTarget::phase_ssfx_water_waves()
 {
+    PROF_EVENT("RenderTarget.SSFX.WaterWaves");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -542,6 +546,7 @@ void CRenderTarget::phase_ssfx_water_waves()
 
 void CRenderTarget::phase_ssfx_sss()
 {
+    PROF_EVENT("RenderTarget.SSFX.SSS");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(255, 255, 255, 255);
@@ -631,6 +636,7 @@ void CRenderTarget::phase_ssfx_sss()
 
 void CRenderTarget::phase_ssfx_sss_ext(light_Package& LP)
 {
+    PROF_EVENT("RenderTarget.SSFX.SSSExtended");
 	static shared_str strLights("lights_data");
 	static light* LightSlot[8];
 	static u32 sss_currentframe;
@@ -916,6 +922,7 @@ void CRenderTarget::phase_ssfx_sss_ext(light_Package& LP)
 
 void CRenderTarget::phase_ssfx_fog_scattering()
 {
+    PROF_EVENT("RenderTarget.SSFX.FogScattering");
 	u32 Offset = 0;
 	Fvector2 p0, p1;
 
@@ -985,6 +992,7 @@ void CRenderTarget::phase_ssfx_fog_scattering()
 
 void CRenderTarget::phase_ssfx_motion_blur()
 {
+    PROF_EVENT("RenderTarget.SSFX.MotionBlur");
 	u32 Offset = 0;
 	Fvector2 p0, p1;
 

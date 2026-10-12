@@ -406,7 +406,7 @@ void CResourceManager::DeferredUpload()
 	this_thread_id = GetCurrentThreadId();
 	xr_parallel_foreach(textures.begin(), textures.end(), [](CTexture* texture)
 	{
-		if (this_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
+        PROF_THREAD_IF(this_thread_id != GetCurrentThreadId(), "X-Ray PPL Thread");
 		texture->Load();
 	});
 

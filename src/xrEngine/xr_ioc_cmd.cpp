@@ -1089,6 +1089,17 @@ Fvector3 ssfx_wetness_multiplier = Fvector3().set(1.0f, 0.3f, 0.0f);
 
 BOOL dump_cvar_enable = TRUE;
 
+#if XRCORE_PROFILER == PROFILER_OPTICK
+extern int psOptickCaptureFrames;
+
+class CCC_OptickCapture : public CCC_Integer
+{
+public:
+    CCC_OptickCapture(LPCSTR name) : CCC_Integer(name, &psOptickCaptureFrames, 0, 10000) {}
+    void Save(IWriter*) override {} // Capture requests must not repeat on config reload.
+};
+#endif
+
 void CCC_Register()
 {
 	// General
@@ -1098,6 +1109,9 @@ void CCC_Register()
 	CMD1(CCC_Disconnect, "disconnect");
 	CMD1(CCC_SaveCFG, "cfg_save");
 	CMD1(CCC_LoadCFG, "cfg_load");
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    CMD1(CCC_OptickCapture, "optick_do");
+#endif
 	CMD1(CCC_DumpCVars, "dump_cvar");
         CMD4(CCC_Integer, "dump_cvar_enable", &dump_cvar_enable, 0, 1);
 	CMD1(CCC_RenderDocCapture, "rdoc_capture");

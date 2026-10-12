@@ -12,6 +12,7 @@
 
 void CRender::render_menu()
 {
+    PROF_EVENT("Render.Menu");
 	PIX_EVENT(render_menu);
 	//	Globals
 	RCache.set_CullMode(CULL_CCW);
@@ -64,6 +65,7 @@ extern u32 g_r;
 
 void CRender::Render()
 {
+    PROF_EVENT("Render.Frame");
 	PIX_EVENT_C(CRender_Render, dx10_marker_frame);
 	dx10_annotate_frame();
 
@@ -136,6 +138,7 @@ void CRender::Render()
 
     if (RImplementation.o.ssfx_motionvectors)
     {
+        PROF_EVENT("Render.MotionVectors.Sky");
         Target->u_setrt(Device.dwWidth, Device.dwHeight, 0, 0, Target->rt_ssfx_motion_vectors->pRT, 0);
 
         FLOAT ColorRGBA[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -158,6 +161,7 @@ void CRender::Render()
 	//******* Main render :: PART-0	-- first
 	{
 		PIX_EVENT_C(DEFER_PART0_SPLIT, dx10_marker_gbuffer);
+        PROF_EVENT("Render.GBuffer.Part0.Split");
 		// level, SPLIT
 		Target->phase_scene_begin();
 		GMBase.r_dsgraph_render_static(0);
@@ -178,6 +182,7 @@ void CRender::Render()
 
 	{
 		PIX_EVENT(DEFER_TEST_LIGHT_VIS);
+        PROF_EVENT("Render.Lights.Visibility");
 		//******* Occlusion testing of volume-limited light-sources
 		Target->phase_occq();
 		LP_normal.clear();
@@ -188,6 +193,7 @@ void CRender::Render()
 	//******* Main render :: PART-1 (second)
 	{
 		PIX_EVENT_C(DEFER_PART1_SPLIT, dx10_marker_gbuffer);
+        PROF_EVENT("Render.GBuffer.Part1");
 		// level
 		Target->phase_scene_begin();
 		GMBase.r_dsgraph_capture_hud();
@@ -201,6 +207,7 @@ void CRender::Render()
 	if (Wallmarks)
 	{
 		PIX_EVENT(DEFER_WALLMARKS);
+        PROF_EVENT("Render.Wallmarks");
 		Target->phase_wallmarks();
 
 		Wallmarks->Render(); // wallmarks has priority as normal geometry
@@ -210,6 +217,7 @@ void CRender::Render()
 	if (RImplementation.o.dx10_msaa)
 	{
 		PIX_EVENT(MARK_MSAA_EDGES);
+        PROF_EVENT("Render.MSAA.MarkEdges");
 		Target->mark_msaa_edges();
 	}
 
@@ -217,6 +225,7 @@ void CRender::Render()
 	if (ps_r2_ls_flags.test(R3FLAG_DYN_WET_SURF))
 	{
 		PIX_EVENT(DEFER_RAIN);
+        PROF_EVENT("Render.Rain");
 		render_rain();
 	}
 
@@ -235,6 +244,7 @@ void CRender::Render()
 
 		if (RImplementation.o.ssfx_sss && !Device.m_SecondViewport.IsSVPFrame())
 		{
+            PROF_EVENT("Render.SSS");
 			static bool sss_rendered, sss_extended_rendered;
 
 			// SSS Shadows
@@ -275,6 +285,7 @@ void CRender::Render()
 	if (bSUN) //bSUN && Device.dwFrame & 1 --Delayed sun update. Worth to check it in future
 	{
 		PIX_EVENT_C(DEFER_SUN, dx10_marker_lights);
+        PROF_EVENT("Render.Sun");
 		RImplementation.stats.l_visible ++;
 		render_sun_cascades();
 		Target->increment_light_marker();
@@ -285,6 +296,7 @@ void CRender::Render()
 
 	{
 		PIX_EVENT_C(DEFER_SELF_ILLUM, dx10_marker_lights);
+        PROF_EVENT("Render.Emissive");
 		Target->phase_accumulator();
 		// Render emissive geometry, stencil - write 0x0 at pixel pos
 		RCache.set_xform_project(Device.mProject);
@@ -304,6 +316,7 @@ void CRender::Render()
 
 	if (RImplementation.o.ssfx_bloom)
 	{
+        PROF_EVENT("Render.BloomEmissive");
 		// Render Emissive on `rt_ssfx_bloom_emissive`
 		FLOAT ColorRGBA[4] = { 0,0,0,0 };
 		HW.pContext->ClearRenderTargetView(Target->rt_ssfx_bloom_emissive->pRT, ColorRGBA);
@@ -317,6 +330,7 @@ void CRender::Render()
 	// Lighting, non dependant on OCCQ
 	{
 		PIX_EVENT_C(DEFER_LIGHT_NO_OCCQ, dx10_marker_lights);
+        PROF_EVENT("Render.Lights.Normal");
 		Target->phase_accumulator();
 		render_lights(LP_normal);
 	}
@@ -324,6 +338,7 @@ void CRender::Render()
 	// Lighting, dependant on OCCQ
 	{
 		PIX_EVENT_C(DEFER_LIGHT_OCCQ, dx10_marker_lights);
+        PROF_EVENT("Render.Lights.Pending");
 		render_lights(LP_pending);
 	}
 
@@ -337,6 +352,7 @@ void CRender::Render()
 	// Postprocess
 	{
 		PIX_EVENT_C(DEFER_LIGHT_COMBINE, dx10_marker_lights);
+        PROF_EVENT("Render.Combine");
 		Target->phase_combine();
 	}
 
@@ -348,6 +364,7 @@ void CRender::Render()
 
 void CRender::render_forward()
 {
+    PROF_EVENT("Render.Forward");
 	RImplementation.o.distortion = RImplementation.o.distortion_enabled; // enable distorion
 
 	//******* Main render - second order geometry (the one, that doesn't support deffering)
@@ -392,6 +409,7 @@ void CRender::render_Reticle()
 
 void CRender::RenderToTarget(RRT target)
 {
+    PROF_EVENT("Render.CopyToTarget");
 	ref_rt* RT = nullptr;
 
 	switch (target)

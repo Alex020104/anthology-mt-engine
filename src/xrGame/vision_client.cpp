@@ -68,7 +68,7 @@ void vision_client::eye_pp_s2()
 	this_thread_id = GetCurrentThreadId();
 	Device.secondary_tasks.run([=]()
 	{
-		if (this_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
+        PROF_THREAD_IF(this_thread_id != GetCurrentThreadId(), "X-Ray PPL Thread");
 		feel_vision_update(m_position, float(dwDT) / 1000.f, visual().transparency_threshold());
 	});
 

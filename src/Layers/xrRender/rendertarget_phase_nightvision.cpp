@@ -2,6 +2,7 @@
 
 void CRenderTarget::phase_nightvision()
 {
+    PROF_EVENT("RenderTarget.NightVision");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -56,6 +57,7 @@ void CRenderTarget::phase_nightvision()
 //crookr
 void CRenderTarget::phase_fakescope()
 {
+    PROF_EVENT("RenderTarget.FakeScope");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -147,6 +149,7 @@ void CRenderTarget::phase_fakescope()
 //--DSR-- HeatVision_start
 void CRenderTarget::phase_heatvision()
 {
+    PROF_EVENT("RenderTarget.HeatVision");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -201,6 +204,7 @@ void CRenderTarget::phase_heatvision()
 #if defined(USE_DX11)	//  Redotix99: for 3D Shader Based Scopes 		(sorry for using the nightvision phase file)
 void CRenderTarget::phase_3DSSReticle()
 {
+    PROF_EVENT("RenderTarget.ScopeReticle3D");
 	HW.pContext->CopyResource(rt_Generic_2->pTexture->surface_get(), RImplementation.Target->rt_Position->pTexture->surface_get());
 
 	HW.pContext->CopyResource(rt_Generic_temp->pTexture->surface_get(), rt_Generic_0->pTexture->surface_get());

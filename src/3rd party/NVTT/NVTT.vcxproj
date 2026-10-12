@@ -155,7 +155,10 @@
     <ClCompile Include="src\nvmath\TriBox.cpp" />
     <ClCompile Include="src\nvtt\CompressDXT.cpp" />
     <ClCompile Include="src\nvtt\CompressionOptions.cpp" />
-    <ClCompile Include="src\nvtt\Compressor.cpp" />
+    <ClCompile Include="src\nvtt\Compressor.cpp">
+      <!-- MSVC 14.33 hits C1001 in this file when optimizing without /GL. -->
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='ProfiledDX11|x64'">Disabled</Optimization>
+    </ClCompile>
     <ClCompile Include="src\nvtt\CompressRGB.cpp" />
     <ClCompile Include="src\nvtt\cuda\CudaCompressDXT.cpp" />
     <ClCompile Include="src\nvtt\cuda\CudaUtils.cpp" />

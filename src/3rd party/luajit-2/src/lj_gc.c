@@ -29,6 +29,27 @@
 #include "lj_allocprof.h"
 #endif
 
+/* Use the existing Optick C API; ordinary and Verified builds compile this out. */
+#if defined(XRCORE_PROFILER) && XRCORE_PROFILER == 1 && !defined(USE_VERIFY_IN_RELEASE)
+#include "../../optick-git/src/optick_capi.h"
+#include <intrin.h>
+#define GC_PROFILE_BEGIN(name) \
+  static volatile __int64 gc_profile_description = 0; \
+  uint64_t gc_profile_id = (uint64_t)_InterlockedCompareExchange64(&gc_profile_description, 0, 0); \
+  uint64_t gc_profile_event; \
+  if (!gc_profile_id) { \
+    uint64_t created = OptickAPI_CreateEventDescription(name, sizeof(name)-1, __FILE__, sizeof(__FILE__)-1, __LINE__); \
+    uint64_t existing = (uint64_t)_InterlockedCompareExchange64(&gc_profile_description, (__int64)created, 0); \
+    gc_profile_id = existing ? existing : created; \
+  } \
+  gc_profile_event = OptickAPI_PushEvent(gc_profile_id)
+#define GC_PROFILE_END() \
+  do { if (gc_profile_event) OptickAPI_PopEvent(gc_profile_event); } while (0)
+#else
+#define GC_PROFILE_BEGIN(name)
+#define GC_PROFILE_END()
+#endif
+
 #define GCSTEPSIZE	1024u
 #define GCSWEEPMAX	40
 #define GCSWEEPCOST	10
@@ -572,6 +593,7 @@ void lj_gc_freeall(global_State *g)
 static void atomic(global_State *g, lua_State *L)
 {
   size_t udsize;
+  GC_PROFILE_BEGIN("LuaGC.Atomic");
 
   gc_mark_uv(g);  /* Need to remark open upvalues (the thread may be dead). */
   gc_propagate_gray(g);  /* Propagate any left-overs. */
@@ -600,6 +622,7 @@ static void atomic(global_State *g, lua_State *L)
   g->strempty.marked = g->gc.currentwhite;
   setmref(g->gc.sweep, &g->gc.root);
   g->gc.estimate = g->gc.total - (MSize)udsize;  /* Initial estimate. */
+  GC_PROFILE_END();
 }
 
 /* GC state machine. Returns a cost estimate for each step performed. */
@@ -683,6 +706,7 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
   global_State *g = G(L);
   MSize lim;
   int32_t ostate = g->vmstate;
+  GC_PROFILE_BEGIN("LuaGC.Step");
   setvmstate(g, GC);
   lim = (GCSTEPSIZE/100) * g->gc.stepmul;
   if (lim == 0)
@@ -694,17 +718,20 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
     if (g->gc.state == GCSpause) {
       g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
       g->vmstate = ostate;
+      GC_PROFILE_END();
       return 1;  /* Finished a GC cycle. */
     }
   } while ((int32_t)lim > 0);
   if (g->gc.debt < GCSTEPSIZE) {
     g->gc.threshold = g->gc.total + GCSTEPSIZE;
     g->vmstate = ostate;
+    GC_PROFILE_END();
     return -1;
   } else {
     g->gc.debt -= GCSTEPSIZE;
     g->gc.threshold = g->gc.total;
     g->vmstate = ostate;
+    GC_PROFILE_END();
     return 0;
   }
 }
@@ -735,6 +762,7 @@ void lj_gc_fullgc(lua_State *L)
 {
   global_State *g = G(L);
   int32_t ostate = g->vmstate;
+  GC_PROFILE_BEGIN("LuaGC.FullCollection");
   setvmstate(g, GC);
   if (g->gc.state <= GCSatomic) {  /* Caught somewhere in the middle. */
     setmref(g->gc.sweep, &g->gc.root);  /* Sweep everything (preserving it). */
@@ -752,6 +780,7 @@ void lj_gc_fullgc(lua_State *L)
   do { gc_onestep(L); } while (g->gc.state != GCSpause);
   g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
   g->vmstate = ostate;
+  GC_PROFILE_END();
 }
 
 /* -- Write barriers ------------------------------------------------------ */

@@ -310,6 +310,10 @@ float GetMonitorRefresh()
 extern int ps_framelimiter;
 extern u32 g_screenmode;
 
+#if XRCORE_PROFILER == PROFILER_OPTICK
+int psOptickCaptureFrames = 0;
+#endif
+
 CTimer FreezeTimer;
 void mt_FreezeThread(void *ptr) {
 	float freezetime = 0.f;
@@ -349,7 +353,51 @@ void CRenderDevice::on_idle()
 		return;
 	}
 
-	PROF_FRAME("Main Thread");
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    static u32 optickCaptureFramesLeft = 0;
+    static string_path optickCapturePath = {};
+    static bool optickCaptureSavePending = false;
+
+    if (optickCaptureFramesLeft == 0 && !optickCaptureSavePending && psOptickCaptureFrames > 0)
+    {
+        const u32 frameCount = u32(psOptickCaptureFrames);
+        psOptickCaptureFrames = 0;
+
+        string64 captureName;
+        xr_sprintf(captureName, "MT_optick_f%u_t%u_%u_frames.opt", dwFrame + 1, TimerAsync(), frameCount);
+        if (FS.path_exist("$logs$"))
+            FS.update_path(optickCapturePath, "$logs$", captureName);
+        else
+            xr_strcpy(optickCapturePath, captureName);
+
+        const auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
+        if (Optick::StartCapture(mode, 1000, false))
+        {
+            optickCaptureFramesLeft = frameCount;
+            Msg("* [OPTICK] Capturing %u frames to %s", frameCount, optickCapturePath);
+        }
+        else
+            Msg("! [OPTICK] Cannot start optick_do: another capture is already active");
+    }
+
+    if (optickCaptureSavePending)
+        PROF_STOP_CAPTURE(false);
+#endif
+
+    // End the completed frame and apply StopCapture before dumping its event storage.
+    PROF_FRAME("X-RAY Primary thread");
+
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    if (optickCaptureSavePending)
+    {
+        PROF_SAVE_CAPTURE(optickCapturePath);
+        optickCaptureSavePending = false;
+        Msg("* [OPTICK] Capture saved: %s", optickCapturePath);
+    }
+    // Loading frames may return early; save only at the next frame boundary.
+    if (optickCaptureFramesLeft > 0 && --optickCaptureFramesLeft == 0)
+        optickCaptureSavePending = true;
+#endif
 
 #ifdef DEDICATED_SERVER
     u32 FrameStartTime = TimerGlobal.GetElapsed_ms();
@@ -546,7 +594,10 @@ void CRenderDevice::on_idle()
 #endif 
 	Device.isRendering = false;
 
-	secondary_tasks.wait();
+    {
+        PROF_EVENT("Frame task barrier");
+        secondary_tasks.wait();
+    }
 
 	if (psLua_ParallelGC_debug && psLua_ParallelGC && Device.LuaGCDebug)
 	{
@@ -630,6 +681,8 @@ void mt_DiscordThread(void*)
 
 void CRenderDevice::Run()
 {
+    // Retain main-thread registration when PPL executes a nested task during wait().
+    PROF_THREAD("X-RAY Primary thread");
 	// DUMP_PHASE;
 	g_bLoaded = FALSE;
 	Log("Starting engine...");

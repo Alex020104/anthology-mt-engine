@@ -166,6 +166,7 @@ void XRay::Engine::GameThread()
     // Reduces stutters since less work will be done in main GC step or no work at all
     static auto LuaGC = []()
     {
+        PROF_THREAD("Lua GC");
         PROF_EVENT("seqLuaGC");
         // Do at least once
         do
