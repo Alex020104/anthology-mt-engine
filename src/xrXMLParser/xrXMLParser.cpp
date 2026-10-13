@@ -134,7 +134,10 @@ void CXml::Load(LPCSTR path, LPCSTR xml_filename)
 	W.w_stringZ("");
 	FS.r_close(F);
 
-	m_Doc.Parse(&m_Doc, (LPCSTR)W.pointer());
+	{
+		PROF_EVENT("XML.ParseOriginal");
+		m_Doc.Parse(&m_Doc, (LPCSTR)W.pointer());
+	}
 	if (m_Doc.Error())
 	{
 		string1024 str;
@@ -151,6 +154,7 @@ void CXml::Load(LPCSTR path, LPCSTR xml_filename)
 
 void CXml::LoadFromString(LPCSTR xml_string)
 {
+	PROF_EVENT("XML.ParseFromString");
 	ClearInternal();
 	m_Doc.Parse(&m_Doc, xml_string);
 	if (m_Doc.Error())

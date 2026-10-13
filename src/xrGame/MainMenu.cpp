@@ -177,6 +177,7 @@ extern bool IsGameTypeSingle();
 
 void CMainMenu::Activate(bool bActivate)
 {
+	PROF_EVENT("Startup.MainMenuActivate");
 	if (!!m_Flags.test(flActive) == bActivate) return;
 	if (m_Flags.test(flGameSaveScreenshot)) return;
 	if ((m_screenshotFrame == Device.dwFrame) ||
@@ -229,8 +230,6 @@ void CMainMenu::Activate(bool bActivate)
 			Device.seqRender.Remove(g_pGameLevel);
 			CCameraManager::ResetPP();
 		}
-        else
-            Console->Execute("stat_memory");
 
 		Device.seqRender.Add(this, 4); // 1-console 2-cursor 3-tutorial
 

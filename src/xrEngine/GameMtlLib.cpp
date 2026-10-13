@@ -7,6 +7,23 @@
 
 #include "../xrCore/mezz_stringbuffer.h"
 
+namespace
+{
+xr_string NormalizeMaterialName(LPCSTR name)
+{
+	xr_string result = name ? name : "";
+	std::transform(result.begin(), result.end(), result.begin(),
+		[](unsigned char character) { return static_cast<char>(tolower(character)); });
+	return result;
+}
+
+u64 MaterialPairKey(int first, int second)
+{
+	return (u64(static_cast<u32>(first)) << 32) | static_cast<u32>(second);
+}
+}
+
+
 CGameMtlLibrary GMLib;
 //CSound_manager_interface* Sound = NULL;
 #ifdef _EDITOR
@@ -220,6 +237,17 @@ void CGameMtlLibrary::Load()
 	}
 #endif // DEBUG_PRINT_MATERIAL
 
+	xr_unordered_flat_map<xr_string, SGameMtl*> materialByName;
+	xr_unordered_flat_map<int, u16> materialIndexById;
+	materialByName.reserve(materials.size());
+	materialIndexById.reserve(materials.size());
+	for (u32 index = 0; index < materials.size(); ++index)
+	{
+		SGameMtl* material = materials[index];
+		materialByName.emplace(NormalizeMaterialName(material->m_Name.c_str()), material);
+		materialIndexById.emplace(material->ID, static_cast<u16>(index));
+	}
+
 	OBJ = fs.open_chunk(GAMEMTLS_CHUNK_MTLS_PAIR);
 	if (OBJ)
 	{
@@ -232,6 +260,11 @@ void CGameMtlLibrary::Load()
 		}
 		OBJ->close();
 	}
+
+	xr_unordered_flat_map<u64, SGameMtlPair*> pairByMaterials;
+	pairByMaterials.reserve(material_pairs.size());
+	for (SGameMtlPair* pair : material_pairs)
+		pairByMaterials.emplace(MaterialPairKey(pair->GetMtl0(), pair->GetMtl1()), pair);
 
 	string_path materialPairsLtxName;
 	if (FS.exist(materialPairsLtxName, _game_data_, "materials\\material_pairs", ".ltx"))
@@ -251,8 +284,10 @@ void CGameMtlLibrary::Load()
 				continue;
 			}
 
-			int m1 = GetMaterialID(materials[0].c_str());
-			int m2 = GetMaterialID(materials[1].c_str());
+			const auto firstMaterial = materialByName.find(NormalizeMaterialName(materials[0].c_str()));
+			const auto secondMaterial = materialByName.find(NormalizeMaterialName(materials[1].c_str()));
+			const int m1 = firstMaterial == materialByName.end() ? GAMEMTL_NONE_ID : firstMaterial->second->ID;
+			const int m2 = secondMaterial == materialByName.end() ? GAMEMTL_NONE_ID : secondMaterial->second->ID;
 
 			if (m1 == GAMEMTL_NONE_ID) {
 				Msg("![material_pairs.ltx] encountered unknown material %s in string %s, skip", materials[0].c_str(), secStr.c_str());
@@ -263,11 +298,10 @@ void CGameMtlLibrary::Load()
 				continue;
 			}
 
-			auto material = std::find_if(material_pairs.begin(), material_pairs.end(), [&m1, &m2](SGameMtlPair* m) {
-				return m1 == m->GetMtl0() && m2 == m->GetMtl1();
-			});
+			const u64 pairKey = MaterialPairKey(m1, m2);
+			const auto material = pairByMaterials.find(pairKey);
 
-			if (material == material_pairs.end()) {
+			if (material == pairByMaterials.end()) {
 				M = xr_new<SGameMtlPair>(this);
 				if (biggestId == biggestIdStart) {
 					for (const auto& m : material_pairs) {
@@ -280,10 +314,11 @@ void CGameMtlLibrary::Load()
 				M->ID_parent = -1;
 				M->SetPair(m1, m2);
 				material_pairs.push_back(M);
+				pairByMaterials.emplace(pairKey, M);
 
 				Msg("[material_pairs.ltx] Adding new material pair %s | %s, id %d", GetMaterialByID(M->GetMtl0())->m_Name.c_str(), GetMaterialByID(M->GetMtl1())->m_Name.c_str(), M->ID);
 			} else {
-				M = *material;
+				M = material->second;
 
 				Msg("[material_pairs.ltx] Changing existing material pair %s | %s, id %d", GetMaterialByID(M->GetMtl0())->m_Name.c_str(), GetMaterialByID(M->GetMtl1())->m_Name.c_str(), M->ID);
 			}
@@ -292,19 +327,16 @@ void CGameMtlLibrary::Load()
 				auto s = materialsLtx->r_string(sec.Name, "breaking_sounds");
 				M->BreakingSoundsStr = s ? s : "";
 				M->OwnProps.set(SGameMtlPair::flBreakingSounds, 1);
-				M->CreateSoundsImpl(M->BreakingSounds, s);
 			}
 			if (materialsLtx->line_exist(sec.Name, "step_sounds")) {
 				auto s = materialsLtx->r_string(sec.Name, "step_sounds");
 				M->StepSoundsStr = s ? s : "";
 				M->OwnProps.set(SGameMtlPair::flStepSounds, 1);
-				M->CreateSoundsImpl(M->StepSounds, s);
 			}
 			if (materialsLtx->line_exist(sec.Name, "collide_sounds")) {
 				auto s = materialsLtx->r_string(sec.Name, "collide_sounds");
 				M->CollideSoundsStr = s ? s : "";
 				M->OwnProps.set(SGameMtlPair::flCollideSounds, 1);
-				M->CreateSoundsImpl(M->CollideSounds, s);
 			}
 			if (materialsLtx->line_exist(sec.Name, "collide_particles")) {
 				auto s = materialsLtx->r_string(sec.Name, "collide_particles");
@@ -344,13 +376,29 @@ void CGameMtlLibrary::Load()
 #endif // DEBUG_PRINT_MATERIAL
 
 #ifndef _EDITOR
+	{
+		PROF_EVENT("Materials.SoundResources");
+		xr_vector<xr_string> soundNames;
+		for (const SGameMtlPair* pair : material_pairs)
+			pair->CollectSoundNames(soundNames);
+		if (Sound)
+			Sound->source_prefetch_prepare(soundNames);
+		for (SGameMtlPair* pair : material_pairs)
+			pair->CreateSoundResources();
+		if (Sound)
+			Sound->source_prefetch_finish();
+	}
 	material_count = (u32)materials.size();
 	material_pairs_rt.resize(material_count * material_count, 0);
 	for (GameMtlPairIt p_it = material_pairs.begin(); material_pairs.end() != p_it; ++p_it)
 	{
 		SGameMtlPair* S = *p_it;
-		int idx0 = GetMaterialIdx(S->mtl0) * material_count + GetMaterialIdx(S->mtl1);
-		int idx1 = GetMaterialIdx(S->mtl1) * material_count + GetMaterialIdx(S->mtl0);
+		const auto first = materialIndexById.find(S->mtl0);
+		const auto second = materialIndexById.find(S->mtl1);
+		VERIFY(first != materialIndexById.end());
+		VERIFY(second != materialIndexById.end());
+		int idx0 = first->second * material_count + second->second;
+		int idx1 = second->second * material_count + first->second;
 		material_pairs_rt[idx0] = S;
 		material_pairs_rt[idx1] = S;
 	}

@@ -434,6 +434,8 @@ public:
 
 	virtual void object_relcase(CObject* obj) = 0;
 	virtual const Fvector& listener_position() = 0;
+	virtual void source_prefetch_prepare(const xr_vector<xr_string>&) {}
+	virtual void source_prefetch_finish() {}
 #ifdef __BORLANDC__
 	virtual SoundEnvironment_LIB*	get_env_library			()																						= 0;
 	virtual void					refresh_env_library		()																						= 0;

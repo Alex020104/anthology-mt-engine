@@ -3,6 +3,7 @@
 #include "SoundRender.h"
 #include "SoundRender_Environment.h"
 #include "SoundRender_Cache.h"
+#include "SoundRender_Source.h"
 
 class CNotificationClient;
 
@@ -47,6 +48,7 @@ protected:
 
 	// Containers
 	xr_unordered_map<xr_string, CSoundRender_Source*> s_sources;
+	xr_unordered_map<xr_string, PreparedSoundSource> m_prepared_sources;
 	xr_vector<CSoundRender_Emitter*> s_emitters;
 	u32 s_emitters_u; // emitter update marker
 	xr_vector<CSoundRender_Target*> s_targets;
@@ -125,6 +127,8 @@ public:
 	virtual BOOL is_ready() { return bReady; }
 
 	virtual void object_relcase(CObject* obj);
+	virtual void source_prefetch_prepare(const xr_vector<xr_string>& sources) override;
+	virtual void source_prefetch_finish() override { m_prepared_sources.clear(); }
 	void i_create_all_sources();
 
 	virtual float get_occlusion_to(const Fvector& hear_pt, const Fvector& snd_pt, float dispersion = 0.2f);

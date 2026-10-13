@@ -39,6 +39,7 @@
 #include "EngineThreading.h"
 #if XRCORE_PROFILER == PROFILER_OPTICK
 #include <shellapi.h>
+#include <evntrace.h>
 #endif
 #include "IGame_Level.h"
 
@@ -339,21 +340,56 @@ void OptickStartupBegin(s64 entryTime, s64 earlyInitFinish)
     if (!argv)
         return;
     bool requested = false;
+    bool traceRequested = false;
     for (int i = 1; i < argc; ++i)
+    {
         requested |= lstrcmpiW(argv[i], L"-optickstartup") == 0;
+        traceRequested |= lstrcmpiW(argv[i], L"-optickstartuptrace") == 0;
+    }
     LocalFree(argv);
-    if (!requested)
+    if (!requested && !traceRequested)
         return;
 
     Optick::RegisterThread("X-RAY Primary thread");
-    const auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
-    if (!Optick::StartCapture(mode, 1000, false))
+    auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
+    ULONG traceQueryStatus = ERROR_WMI_INSTANCE_NOT_FOUND;
+    if (traceRequested)
+    {
+        struct
+        {
+            EVENT_TRACE_PROPERTIES properties;
+            WCHAR loggerName[1024];
+            WCHAR logFileName[MAX_PATH];
+        } query{};
+        query.properties.Wnode.BufferSize = sizeof(query);
+        query.properties.LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
+        query.properties.LogFileNameOffset = sizeof(EVENT_TRACE_PROPERTIES) + sizeof(query.loggerName);
+        traceQueryStatus = QueryTraceW(0, KERNEL_LOGGER_NAMEW, &query.properties);
+        // Optick's ETW backend stops an existing kernel logger before retrying.
+        // Preserve other tracing sessions by requesting ETW only when none exists.
+        if (traceQueryStatus == ERROR_WMI_INSTANCE_NOT_FOUND)
+            mode = static_cast<Optick::Mode::Type>(mode | Optick::Mode::AUTOSAMPLING |
+                Optick::Mode::SWITCH_CONTEXT | Optick::Mode::SYS_CALLS);
+    }
+    if (!Optick::StartCapture(mode, traceRequested ? 250 : 1000, false))
         return;
     // Apply the request now, rather than waiting for the first on_idle().
     Optick::Update();
     Optick::BeginFrame(Optick::FrameType::CPU, entryTime);
     optickStartupCapturing = true;
     optickStartupEntryTime = entryTime;
+
+    if (traceRequested)
+    {
+        string_path traceSummary;
+        if (traceQueryStatus == ERROR_WMI_INSTANCE_NOT_FOUND)
+            xr_strcpy(traceSummary, "Requested: CPU stacks at 250 Hz, context switches and system calls");
+        else if (traceQueryStatus == ERROR_SUCCESS)
+            xr_strcpy(traceSummary, "Skipped: another NT Kernel Logger session is active");
+        else
+            xr_sprintf(traceSummary, "Skipped: NT Kernel Logger query failed (%lu)", traceQueryStatus);
+        Optick::AttachSummary("Startup kernel trace", traceSummary);
+    }
 
     // Preserve LuaJIT's first-allocation rule; record its measured interval afterwards.
     Optick::EventStorage* storage = *Optick::GetEventStorageSlotForCurrentThread();

@@ -87,7 +87,10 @@ void IGame_Persistent::OnAppDeactivate()
 void IGame_Persistent::OnAppStart()
 {
 #ifndef _EDITOR
-	Environment().load();
+	{
+		PROF_EVENT("Startup.Environment");
+		Environment().load();
+	}
 #endif
 
 	// Texture Prefetch Config

@@ -859,15 +859,27 @@ void CEnvironment::load()
 	if (!CurrentEnv)
 		create_mixer();
 
-	m_pRender->OnLoad();
+	{
+		PROF_EVENT("Environment.RenderLoad");
+		m_pRender->OnLoad();
+	}
 	//tonemap = Device.Resources->_CreateTexture("$user$tonemap"); //. hack
 	if (!eff_Rain) eff_Rain = xr_new<CEffect_Rain>();
 	if (!eff_LensFlare) eff_LensFlare = xr_new<CLensFlare>();
 	if (!eff_Thunderbolt) eff_Thunderbolt = xr_new<CEffect_Thunderbolt>();
 
-	load_weathers();
-	load_weather_effects();
-	load_sun();
+	{
+		PROF_EVENT("Environment.WeatherCycles");
+		load_weathers();
+	}
+	{
+		PROF_EVENT("Environment.WeatherEffects");
+		load_weather_effects();
+	}
+	{
+		PROF_EVENT("Environment.Sun");
+		load_sun();
+	}
 }
 
 void CEnvironment::unload()

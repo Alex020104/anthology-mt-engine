@@ -1220,7 +1220,6 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 #endif
 		//. InitInput ( );
 		Engine.External.Initialize();
-		Console->Execute("stat_memory_async");
 
 		Startup();
 		Core._destroy();

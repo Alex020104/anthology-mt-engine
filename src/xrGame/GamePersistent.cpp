@@ -157,8 +157,14 @@ void CGamePersistent::OnAppStart()
 {
     PROF_EVENT("Startup.GamePersistentAppStart");
 	// load game materials
-	GMLib.Load();
-	init_game_globals();
+	{
+		PROF_EVENT("Startup.GameMaterials");
+		GMLib.Load();
+	}
+	{
+		PROF_EVENT("Startup.GameGlobals");
+		init_game_globals();
+	}
 	inherited::OnAppStart();
 	m_pUI_core = xr_new<ui_core>();
 	m_pMainMenu = xr_new<CMainMenu>();
