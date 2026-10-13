@@ -1583,6 +1583,7 @@ BOOL CInifile::section_exist(LPCSTR S) const
 
 BOOL CInifile::line_exist(LPCSTR S, LPCSTR L) const
 {
+	PROF_EVENT("INI.LineExists");
 	if (!section_exist(S)) return FALSE;
 
 	Sect& I = r_section(S);
@@ -1616,6 +1617,7 @@ BOOL CInifile::section_exist(const shared_str& S) const { return section_exist(*
 //--------------------------------------------------------------------------------------
 CInifile::Sect& CInifile::r_section(LPCSTR S) const
 {
+	PROF_EVENT("INI.ReadSection");
 	R_ASSERT2(S && strlen(S),
 	         "Empty section (null\\'') passed into CInifile::r_section(). See info above ^, check your configs and 'call stack'.")
 	; //--#SM+#--
@@ -1634,6 +1636,7 @@ CInifile::Sect& CInifile::r_section(LPCSTR S) const
 
 LPCSTR CInifile::r_string(LPCSTR S, LPCSTR L) const
 {
+	PROF_EVENT("INI.ReadString");
 	if (!S || !L || !strlen(S) || !strlen(L)) //--#SM+#-- [fix for one of "xrDebug - Invalid handler" error log]
 	{
 		Msg("!![ERROR] CInifile::r_string: S = [%s], L = [%s]", S, L);

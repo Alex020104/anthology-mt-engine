@@ -144,13 +144,17 @@ void CResourceManager::_ParseList(sh_list& dest, LPCSTR names)
 
 ShaderElement* CResourceManager::_CreateElement(ShaderElement& S)
 {
+	PROF_EVENT("Resources.CreateElement");
 	if (S.passes.empty()) return 0;
 
 	xrCriticalSectionGuard guard(creationGuard);
 
-	// Search equal in shaders array
-	for (u32 it = 0; it < v_elements.size(); it++)
-		if (S.equal(*(v_elements[it]))) return v_elements[it];
+	{
+		PROF_EVENT("Resources.FindElement");
+		PROF_TAG("Candidates", static_cast<u32>(v_elements.size()));
+		for (u32 it = 0; it < v_elements.size(); it++)
+			if (S.equal(*(v_elements[it]))) return v_elements[it];
+	}
 
 	// Create _new_ entry
 	ShaderElement* N = xr_new<ShaderElement>(S);
@@ -490,13 +494,17 @@ void	CResourceManager::ED_UpdateTextures(AStringVec* names)
 
 Shader* CResourceManager::_CreateShader(Shader* InShader)
 {
+	PROF_EVENT("Resources.CreateShader");
 	xrCriticalSectionGuard guard(creationGuard);
 
-	// Search equal in shaders array
-	for (Shader* it : v_shaders)
 	{
-		if (InShader->equal(it))
-			return it;
+		PROF_EVENT("Resources.FindShader");
+		PROF_TAG("Candidates", static_cast<u32>(v_shaders.size()));
+		for (Shader* it : v_shaders)
+		{
+			if (InShader->equal(it))
+				return it;
+		}
 	}
 
 	// Create _new_ entry

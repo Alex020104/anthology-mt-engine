@@ -77,10 +77,15 @@ void CResourceManager::_DeleteState(const SState* state)
 //--------------------------------------------------------------------------------------------------------------
 SPass* CResourceManager::_CreatePass(const SPass& proto)
 {
+	PROF_EVENT("Resources.CreatePass");
 	xrCriticalSectionGuard guard(creationGuard);
-	for (u32 it = 0; it < v_passes.size(); it++)
-		if (v_passes[it]->equal(proto))
-			return v_passes[it];
+	{
+		PROF_EVENT("Resources.FindPass");
+		PROF_TAG("Candidates", static_cast<u32>(v_passes.size()));
+		for (u32 it = 0; it < v_passes.size(); it++)
+			if (v_passes[it]->equal(proto))
+				return v_passes[it];
+	}
 
 	SPass* P = xr_new<SPass>();
 	P->dwFlags |= xr_resource_flagged::RF_REGISTERED;
@@ -337,12 +342,17 @@ void CResourceManager::_DeletePS(const SPS* ps)
 
 R_constant_table* CResourceManager::_CreateConstantTable(R_constant_table& C)
 {
+	PROF_EVENT("Resources.CreateConstantTable");
 	if (C.empty()) return NULL;
 
 	xrCriticalSectionGuard guard(creationGuard);
-	for (u32 it = 0; it < v_constant_tables.size(); it++)
-		if (v_constant_tables[it]->equal(C))
-			return v_constant_tables[it];
+	{
+		PROF_EVENT("Resources.FindConstantTable");
+		PROF_TAG("Candidates", static_cast<u32>(v_constant_tables.size()));
+		for (u32 it = 0; it < v_constant_tables.size(); it++)
+			if (v_constant_tables[it]->equal(C))
+				return v_constant_tables[it];
+	}
 
 	auto NewElem = xr_new<R_constant_table>(C);
 	//NewElem->_copy(C);
@@ -614,12 +624,17 @@ bool cmp_tl(const std::pair<u32, ref_texture>& _1, const std::pair<u32, ref_text
 
 STextureList* CResourceManager::_CreateTextureList(STextureList& L)
 {
+	PROF_EVENT("Resources.CreateTextureList");
 	xrCriticalSectionGuard guard(creationGuard);
 	std::sort(L.begin(), L.end(), cmp_tl);
-	for (u32 it = 0; it < lst_textures.size(); it++)
 	{
-		STextureList* base = lst_textures[it];
-		if (L.equal(*base)) return base;
+		PROF_EVENT("Resources.FindTextureList");
+		PROF_TAG("Candidates", static_cast<u32>(lst_textures.size()));
+		for (u32 it = 0; it < lst_textures.size(); it++)
+		{
+			STextureList* base = lst_textures[it];
+			if (L.equal(*base)) return base;
+		}
 	}
 	STextureList* lst = xr_new<STextureList>(L);
 	//lst->_copy(L);
