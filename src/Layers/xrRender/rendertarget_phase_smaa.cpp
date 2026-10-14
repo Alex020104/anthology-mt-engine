@@ -34,6 +34,10 @@ void CRenderTarget::phase_smaa()
 	CHK_DX( HW.pDevice->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L) );
 #endif
 
+#ifdef USE_DX11
+    if (!DrawNativeScreenQuad(s_smaa->E[0], w, h))
+#endif
+    {
 	// Fill vertex buffer
 	FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
 	pv->set(0, float(h), d_Z, d_W, C, p0.x, p1.y); pv++;
@@ -46,6 +50,7 @@ void CRenderTarget::phase_smaa()
 	RCache.set_Element(s_smaa->E[0]);
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+    }
 
 	//////////////////////////////////////////////////////////////////////////
 	//Blending
@@ -58,8 +63,12 @@ void CRenderTarget::phase_smaa()
 	CHK_DX( HW.pDevice->Clear(0L, NULL, D3DCLEAR_TARGET, D3DCOLOR_ARGB(0, 0, 0, 0), 1.0f, 0L) );	
 #endif
 
+#ifdef USE_DX11
+    if (!DrawNativeScreenQuad(s_smaa->E[1], w, h))
+#endif
+    {
 	// Fill vertex buffer
-	pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
+	FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
 	pv->set(0, float(h), d_Z, d_W, C, p0.x, p1.y); pv++;
 	pv->set(0, 0, d_Z, d_W, C, p0.x, p0.y); pv++;
 	pv->set(float(w), float(h), d_Z, d_W, C, p1.x, p1.y); pv++;
@@ -70,6 +79,7 @@ void CRenderTarget::phase_smaa()
 	RCache.set_Element(s_smaa->E[1]);
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+    }
 
 	//////////////////////////////////////////////////////////////////////////
 	//Set MSAA/NonMSAA rendertarget
@@ -83,8 +93,12 @@ void CRenderTarget::phase_smaa()
 	RCache.set_CullMode(CULL_NONE);
 	RCache.set_Stencil(FALSE);
 
+#ifdef USE_DX11
+    if (!DrawNativeScreenQuad(s_smaa->E[2], w, h))
+#endif
+    {
 	// Fill vertex buffer
-	pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
+	FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
 	pv->set(0, float(h), d_Z, d_W, C, p0.x, p1.y); pv++;
 	pv->set(0, 0, d_Z, d_W, C, p0.x, p0.y); pv++;
 	pv->set(float(w), float(h), d_Z, d_W, C, p1.x, p1.y); pv++;
@@ -95,6 +109,7 @@ void CRenderTarget::phase_smaa()
 	RCache.set_Element(s_smaa->E[2]);
 	RCache.set_Geometry(g_combine);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+    }
 
 #if defined(USE_DX10) || defined(USE_DX11)
 	HW.pContext->CopyResource(rt_Generic_0->pTexture->surface_get(), dest_rt->pTexture->surface_get());

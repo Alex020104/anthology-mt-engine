@@ -1302,6 +1302,12 @@ CRenderTarget::CRenderTarget()
 
 CRenderTarget::~CRenderTarget()
 {
+    native_quad_geometry.destroy();
+    if (native_quad_vertices) HW.stats_manager.decrement_stats_vb(native_quad_vertices);
+    if (native_quad_indices) HW.stats_manager.decrement_stats_ib(native_quad_indices);
+    _RELEASE(native_quad_vertices);
+    _RELEASE(native_quad_indices);
+
 	_RELEASE(t_ss_async);
 
 	// Textures
@@ -1517,4 +1523,47 @@ bool CRenderTarget::use_minmax_sm_this_frame()
 	default:
 		return false;
 	}
+}
+
+bool CRenderTarget::DrawNativeScreenQuad(const ref_selement& element, float width, float height)
+{
+    PROF_EVENT("Render.Fullscreen.NativeQuad");
+    if (!element || !_valid(width) || !_valid(height) || width <= 0.f || height <= 0.f)
+        return false;
+    if (!native_quad_geometry || native_quad_width != width || native_quad_height != height)
+    {
+        PROF_EVENT("Render.Fullscreen.CreateQuad");
+        native_quad_geometry.destroy();
+        if (native_quad_vertices) HW.stats_manager.decrement_stats_vb(native_quad_vertices);
+        if (native_quad_indices) HW.stats_manager.decrement_stats_ib(native_quad_indices);
+        _RELEASE(native_quad_vertices);
+        _RELEASE(native_quad_indices);
+        FVF::TL vertices[4];
+        const u32 color = color_rgba(0, 0, 0, 255);
+        vertices[0].set(0.f, height, EPS_S, 1.f, color, 0.f, 1.f);
+        vertices[1].set(0.f, 0.f, EPS_S, 1.f, color, 0.f, 0.f);
+        vertices[2].set(width, height, EPS_S, 1.f, color, 1.f, 1.f);
+        vertices[3].set(width, 0.f, EPS_S, 1.f, color, 1.f, 0.f);
+        const u16 indices[6] = {0, 1, 2, 2, 1, 3};
+        D3D11_BUFFER_DESC desc{};
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.ByteWidth = sizeof(vertices);
+        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA data{};
+        data.pSysMem = vertices;
+        if (FAILED(HW.pDevice->CreateBuffer(&desc, &data, &native_quad_vertices))) return false;
+        HW.stats_manager.increment_stats_vb(native_quad_vertices);
+        desc.ByteWidth = sizeof(indices);
+        desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        data.pSysMem = indices;
+        if (FAILED(HW.pDevice->CreateBuffer(&desc, &data, &native_quad_indices))) return false;
+        HW.stats_manager.increment_stats_ib(native_quad_indices);
+        native_quad_geometry.create(FVF::F_TL, native_quad_vertices, native_quad_indices);
+        native_quad_width = width;
+        native_quad_height = height;
+    }
+    RCache.set_Element(element);
+    RCache.set_Geometry(native_quad_geometry);
+    RCache.Render(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+    return true;
 }

@@ -17,7 +17,12 @@ private:
 	u32 dwWidth;
 	u32 dwHeight;
 	u32 dwAccumulatorClearMark;
+    ref_geom native_quad_geometry;
+    ID3DVertexBuffer* native_quad_vertices = nullptr;
+    ID3DIndexBuffer* native_quad_indices = nullptr;
+    float native_quad_width = 0.f, native_quad_height = 0.f;
 public:
+    bool DrawNativeScreenQuad(const ref_selement& element, float width, float height);
 	enum eStencilOptimizeMode
 	{
 		SO_Light = 0,
