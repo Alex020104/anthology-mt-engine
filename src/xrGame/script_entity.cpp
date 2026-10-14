@@ -772,6 +772,7 @@ void CScriptEntity::process_sound_callbacks()
 	for (; I != E; ++I)
 	{
 		PROF_EVENT("Sound: deferred Lua hearing callback");
+        const u64 callback_start = Device.LuaGCAlwaysActive() ? CPU::QPC() : 0;
 		object().callback(GameObject::eSound)(
 			object().lua_game_object(),
 			(*I).m_game_object_id,
@@ -779,6 +780,7 @@ void CScriptEntity::process_sound_callbacks()
 			(*I).m_position,
 			(*I).m_sound_power
 		);
+        if (callback_start) Device.LuaGCAllocationSafePoint(CPU::QPC() - callback_start);
 	}
 
 	m_saved_sounds.clear();

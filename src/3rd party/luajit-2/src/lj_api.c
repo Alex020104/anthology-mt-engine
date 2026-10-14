@@ -1140,6 +1140,30 @@ LUA_API int lua_resume(lua_State *L, int nargs)
 
 /* -- GC and memory management -------------------------------------------- */
 
+LUA_API void lua_gcmetrics(lua_State *L, size_t *total, size_t *threshold, size_t *debt, int *phase)
+{
+  global_State *g = G(L);
+  if (total) *total = g->gc.total;
+  if (threshold) *threshold = g->gc.threshold;
+  if (debt) *debt = g->gc.debt;
+  if (phase) *phase = g->gc.state;
+}
+
+LUA_API void lua_gcincremental(lua_State *L, int enabled)
+{
+  G(L)->gc.incremental = (uint8_t)(enabled != 0);
+}
+
+LUA_API int lua_gcstep_one(lua_State *L, int data)
+{
+  global_State *g = G(L);
+  MSize amount = data > 0 ? (MSize)data << 10 : 0;
+  g->gc.threshold = amount <= g->gc.total ? g->gc.total - amount : 0;
+  return lj_gc_step(L) > 0;
+}
+
+LUA_API const void* lua_vmidentity(lua_State *L) { return G(L); }
+
 LUA_API int lua_gc(lua_State *L, int what, int data)
 {
   global_State *g = G(L);

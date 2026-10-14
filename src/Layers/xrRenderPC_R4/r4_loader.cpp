@@ -22,6 +22,7 @@
 
 void CRender::level_Load(IReader* fs)
 {
+    PROF_EVENT("LoadGame.RenderResources");
 	R_ASSERT(0!=g_pGameLevel);
 	R_ASSERT(!b_loaded);
 
@@ -34,6 +35,7 @@ void CRender::level_Load(IReader* fs)
 	//	g_pGamePersistent->LoadTitle		("st_loading_shaders");
 	g_pGamePersistent->LoadTitle();
 	{
+        PROF_EVENT("LoadGame.LevelShaders");
 		chunk = fs->open_chunk(fsL_SHADERS);
 		R_ASSERT2(chunk, "Level doesn't builded correctly.");
 		u32 count = chunk->r_u32();
@@ -88,7 +90,9 @@ void CRender::level_Load(IReader* fs)
 		// Details
 		//		g_pGamePersistent->LoadTitle("st_loading_details");
 		g_pGamePersistent->LoadTitle();
+        START_PROFILE("LoadGame.Details");
 		Details->Load();
+        STOP_PROFILE;
 	}
 
 	// Sectors
@@ -100,7 +104,9 @@ void CRender::level_Load(IReader* fs)
 	Load3DFluid();
 
 	// HOM
+    START_PROFILE("LoadGame.HOM");
 	HOM.Load();
+    STOP_PROFILE;
 
 	// Lights
 	// pApp->LoadTitle			("Loading lights...");
@@ -115,6 +121,7 @@ void CRender::level_Load(IReader* fs)
 
 void CRender::level_Unload()
 {
+    PROF_EVENT("LoadGame.RenderUnload");
 	if (0 == g_pGameLevel) return;
 	if (!b_loaded) return;
 
@@ -200,6 +207,7 @@ void CRender::level_Unload()
 
 void CRender::LoadBuffers(CStreamReader* base_fs, BOOL _alternative)
 {
+    PROF_EVENT("LoadGame.GeometryBuffers");
 	R_ASSERT2(base_fs, "Could not load geometry. File not found.");
 	dxRenderDeviceRender::Instance().Resources->Evict();
 	//	u32	dwUsage					= D3DUSAGE_WRITEONLY;
@@ -210,6 +218,7 @@ void CRender::LoadBuffers(CStreamReader* base_fs, BOOL _alternative)
 
 	// Vertex buffers
 	{
+        PROF_EVENT("LoadGame.VertexBuffers");
 		// Use DX9-style declarators
 		CStreamReader* fs = base_fs->open_chunk(fsL_VB);
 		R_ASSERT2(fs, "Could not load geometry. File 'level.geom?' corrupted.");
@@ -255,6 +264,7 @@ void CRender::LoadBuffers(CStreamReader* base_fs, BOOL _alternative)
 
 	// Index buffers
 	{
+        PROF_EVENT("LoadGame.IndexBuffers");
 		CStreamReader* fs = base_fs->open_chunk(fsL_IB);
 		u32 count = fs->r_u32();
 		_IB.resize(count);
@@ -286,6 +296,7 @@ void CRender::LoadBuffers(CStreamReader* base_fs, BOOL _alternative)
 
 void CRender::LoadVisuals(IReader* fs)
 {
+    PROF_EVENT("LoadGame.Visuals");
 	IReader* chunk = 0;
 	u32 index = 0;
 	dxRender_Visual* V = 0;
@@ -305,6 +316,7 @@ void CRender::LoadVisuals(IReader* fs)
 
 void CRender::LoadLights(IReader* fs)
 {
+    PROF_EVENT("LoadGame.Lights");
 	// lights
 	Lights.Load(fs);
 	Lights.LoadHemi();

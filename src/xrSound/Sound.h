@@ -207,6 +207,7 @@ public:
 	IC void clone(const ref_sound& from, esound_type sound_type, int game_type);
 
 	IC void destroy();
+    IC void destroy_deferred();
 
 	IC void play(CObject* O, u32 flags = 0, float delay = 0.f);
 	IC void play_at_pos(CObject* O, const Fvector& pos, u32 flags = 0, float delay = 0.f);
@@ -412,6 +413,7 @@ public:
 	virtual void attach_tail(ref_sound& S, LPCSTR fName) = 0;
 	virtual void clone(ref_sound& S, const ref_sound& from, esound_type sound_type, int game_type) = 0;
 	virtual void destroy(ref_sound& S) = 0;
+    virtual void destroy_deferred(ref_sound& S) { destroy(S); }
 	virtual void stop_emitters() = 0;
 	virtual int pause_emitters(bool val) = 0;
 
@@ -487,6 +489,11 @@ IC void ref_sound::destroy()
 {
 	VERIFY(!::Sound->i_locked());
 	::Sound->destroy(*this);
+}
+
+IC void ref_sound::destroy_deferred()
+{
+    ::Sound->destroy_deferred(*this);
 }
 
 IC void ref_sound::play(CObject* O, u32 flags, float d)

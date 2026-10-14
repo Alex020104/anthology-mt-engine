@@ -2,6 +2,7 @@
 #include "gamepersistent.h"
 #include "../xrEngine/fmesh.h"
 #include "../xrEngine/xr_ioconsole.h"
+#include "../xrEngine/x_ray.h"
 #include "../xrEngine/gamemtllib.h"
 #include "../Include/xrRender/Kinematics.h"
 #include "profiler.h"
@@ -869,6 +870,9 @@ void CGamePersistent::OnEvent(EVENT E, u64 P1, u64 P2)
 {
 	if (E == eQuickLoad)
 	{
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickLoadGameBegin(LPCSTR(P1));
+#endif
 		PROF_EVENT("eQuickLoad");
 		if (Device.Paused())
 			Device.Pause(FALSE, TRUE, TRUE, "eQuickLoad");
@@ -983,8 +987,6 @@ void CGamePersistent::OnRenderPPUI_PP()
 }
 
 #include "string_table.h"
-#include "../xrEngine/x_ray.h"
-
 void CGamePersistent::LoadTitle(bool change_tip, shared_str map_name)
 {
     {

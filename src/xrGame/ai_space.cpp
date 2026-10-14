@@ -97,6 +97,8 @@ CAI_Space::~CAI_Space()
 
 void CAI_Space::load(LPCSTR level_name)
 {
+    PROF_EVENT("LoadGame.AISpace");
+    PROF_TAG("Level", level_name);
 	VERIFY(m_game_graph);
 
 	unload(true);
@@ -133,7 +135,9 @@ void CAI_Space::load(LPCSTR level_name)
 	level_graph().level_id(current_level.id());
 	if (m_patrol_path_storage)
 		m_patrol_path_storage->resolve_level(&level_graph(), &cross_table(), &game_graph());
+    START_PROFILE("LoadGame.StaticCover");
 	m_cover_manager->compute_static_cover();
+    STOP_PROFILE;
 	m_moving_objects->on_level_load();
 
 	VERIFY(!m_doors_manager);

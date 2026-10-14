@@ -1448,9 +1448,14 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 	}
 	else if (E == eStart)
 	{
-		PROF_EVENT("CApplication::OnEvent: eStart");
 		LPSTR op_server = LPSTR(P1);
 		LPSTR op_client = LPSTR(P2);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        LPCSTR loadOption = op_server ? strstr(op_server, "/load") : nullptr;
+        if (loadOption && strstr(op_server, "/alife") && (loadOption[5] == 0 || loadOption[5] == '/'))
+            OptickLoadGameBegin(op_server);
+#endif
+		PROF_EVENT("CApplication::OnEvent: eStart");
 		Level_Current = u32(-1);
 		R_ASSERT(0 == g_pGameLevel);
 		R_ASSERT(0 != g_pGamePersistent);
@@ -1489,6 +1494,11 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 	}
 	else if (E == eDisconnect)
 	{
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        if (!Engine.Event.Peek("KERNEL:start"))
+            OptickLoadGameCancel("Disconnected");
+#endif
+        PROF_EVENT("LoadGame.Disconnect");
 		ls_header[0] = '\0';
 		ls_tip_number[0] = '\0';
 		ls_tip[0] = '\0';
@@ -1550,6 +1560,7 @@ extern ENGINE_API BOOL g_bootComplete = FALSE;
 
 void CApplication::LoadBegin()
 {
+    PROF_EVENT("LoadGame.LoadBegin");
 	ll_dwReference++;
 	if (1 == ll_dwReference)
 	{
@@ -1571,6 +1582,7 @@ void CApplication::LoadBegin()
 
 void CApplication::LoadEnd()
 {
+    PROF_EVENT("LoadGame.LoadEnd");
 	ll_dwReference--;
 	if (0 == ll_dwReference)
 	{
@@ -1578,6 +1590,9 @@ void CApplication::LoadEnd()
 		Msg("* phase cmem: %lld K", Memory.mem_usage() / 1024);
 		Console->Execute("stat_memory");
 		g_appLoaded = TRUE;
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickLoadGameStagesFinished();
+#endif
 		// DUMP_PHASE;
 	}
 }

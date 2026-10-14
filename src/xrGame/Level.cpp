@@ -292,6 +292,11 @@ extern CAI_Space* g_ai_space;
 
 CLevel::~CLevel()
 {
+    Device.ResetLuaGCState();
+    Device.LuaGC.clear();
+    Device.LuaGCDebug.clear();
+    Device.LuaGCPrepare.clear();
+    Device.LuaGCReadInfo.clear();
     PROF_EVENT("CLevel::~CLevel");
     //crash_saving::save_impl = nullptr; // CLevel not available, disable crash save
     xr_delete(g_player_hud);
@@ -1202,7 +1207,7 @@ void CLevel::script_gc()
 		m_ph_commander->update();
 		m_ph_commander_scripts->update();
 	}
-	if (!(psLua_ParallelGC && Device.LuaGC))
+	if (!Device.LuaGCAlwaysActive() && !(psLua_ParallelGC && Device.LuaGC))
 	{
 		PROF_EVENT("CLevel::script_gc");
 		lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLUA_GCSTEP);
@@ -1215,15 +1220,63 @@ bool CLevel::Load(u32 dwNum)
 {
     inherited::Load(dwNum);
     Msg("Device.LuaGC bind");
-    Device.LuaGC.bind(&CLevel::LuaGC);
-    Device.LuaGCDebug.bind(&CLevel::LuaGCDebug);
+    RestoreLuaGCBindings();
     return true;
 }
 
 // demonized: called from Device, via Device.LuaGC pointer
+static u32 lua_gc_completed_cycles = 0;
+static u32 lua_gc_seen_generation = 0;
+
+bool CLevel::RestoreLuaGCBindings()
+{
+    if (!Device.LuaGC) Device.LuaGC.bind(&CLevel::LuaGC);
+    if (!Device.LuaGCDebug) Device.LuaGCDebug.bind(&CLevel::LuaGCDebug);
+    if (!Device.LuaGCPrepare) Device.LuaGCPrepare.bind(&CLevel::LuaGCPrepare);
+    if (!Device.LuaGCReadInfo) Device.LuaGCReadInfo.bind(&CLevel::LuaGCReadInfo);
+    return Device.LuaGC && Device.LuaGCReadInfo && Device.LuaGCPrepare;
+}
+
+void CLevel::LuaGCPrepare(bool always)
+{
+    if (g_dedicated_server) return;
+    lua_State* state = ai().script_engine().lua();
+    if (!state) return;
+    lua_gcincremental(state, always ? 1 : 0);
+    lua_gc(state, always ? LUA_GCSTOP : LUA_GCRESTART, 0);
+}
+
+LuaGCInfo CLevel::LuaGCReadInfo()
+{
+    if (lua_gc_seen_generation != Device.LuaGCGeneration())
+    {
+        lua_gc_seen_generation = Device.LuaGCGeneration();
+        lua_gc_completed_cycles = 0;
+    }
+    LuaGCInfo info;
+    if (!g_dedicated_server)
+    {
+        lua_State* state = ai().script_engine().lua();
+        if (!state) return info;
+        info.vm = lua_vmidentity(state);
+        lua_gcmetrics(state, &info.heap_bytes, nullptr, nullptr, &info.phase);
+        info.cycles = lua_gc_completed_cycles;
+    }
+    return info;
+}
+
 int CLevel::LuaGC()
 {
-    return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
+    lua_State* state = ai().script_engine().lua();
+    if (!state) return -1;
+    if (!Device.LuaGCAlwaysActive())
+        return lua_gc(state, LUA_GCSTEP, psLua_ParallelGCStep);
+    R_ASSERT(Device.IsGameLogicThread());
+    const int result = lua_gcstep_one(state, 1);
+    // Keep allocation-triggered collection stopped between explicit slices.
+    lua_gc(state, LUA_GCSTOP, 0);
+    if (result) ++lua_gc_completed_cycles;
+    return result;
 }
 void CLevel::LuaGCDebug()
 {
@@ -1248,12 +1301,14 @@ extern int ps_r4_hdr10_pda; // NOTE: this is a hack to avoid double HDR tonemapp
 
 void CLevel::OnRender()
 {
+    PROF_EVENT("CLevel::OnRender");
 	// PDA
 	if (game && CurrentGameUI() && &CurrentGameUI()->GetPdaMenu() != nullptr)
 	{
 		CUIPdaWnd* pda = &CurrentGameUI()->GetPdaMenu();
 		if (psActorFlags.test(AF_3D_PDA) && pda->IsShown())
 		{
+            Device.WaitForGameLogic();
 			ps_r4_hdr10_pda = 1; // !!! HACK !!!
 
 			pda->Draw();
@@ -1306,6 +1361,7 @@ void CLevel::OnRender()
 		}
 	}
 
+    Device.ResumeLuaGCForRender();
 	inherited::OnRender();
 	if (!game)
 		return;

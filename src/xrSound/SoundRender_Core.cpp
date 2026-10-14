@@ -95,6 +95,7 @@ extern xr_vector<u8> g_target_temp_data_16;
 
 void CSoundRender_Core::_clear()
 {
+    drain_deferred_destroy();
 	bReady = FALSE;
 	cache.destroy();
 	env_unload();
@@ -409,6 +410,34 @@ void CSoundRender_Core::destroy(ref_sound& S)
 		E->stop(FALSE);
 	}
 	S._p = 0;
+}
+
+void CSoundRender_Core::destroy_deferred(ref_sound& S)
+{
+    if (!S._p) return;
+    PROF_EVENT("Sound.DeferredDestroy.Enqueue");
+    xrCriticalSection::raii guard(&deferred_destroy_lock);
+    deferred_destroy_queue.emplace_back();
+    deferred_destroy_queue.back().swap(S._p);
+}
+
+void CSoundRender_Core::drain_deferred_destroy()
+{
+	xr_vector<ref_sound_data_ptr> pending;
+	{
+		xrCriticalSection::raii guard(&deferred_destroy_lock);
+		if (deferred_destroy_queue.empty())
+			return;
+		pending.swap(deferred_destroy_queue);
+	}
+
+	PROF_EVENT("Sound.DeferredDestroy.Drain");
+	for (ref_sound_data_ptr& data : pending)
+	{
+		ref_sound sound;
+		sound._p.swap(data);
+		destroy(sound);
+	}
 }
 
 void CSoundRender_Core::_create_data(ref_sound_data& S, LPCSTR fName, esound_type sound_type, int game_type)

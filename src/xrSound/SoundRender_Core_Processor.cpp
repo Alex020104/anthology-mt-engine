@@ -25,6 +25,7 @@ void CSoundRender_Core::update(const Fvector& P, const Fvector& D, const Fvector
 	u32 it;
 
 	if (0 == bReady) return;
+    drain_deferred_destroy();
 
 	if (bPendingDeviceListRefresh)
 	{

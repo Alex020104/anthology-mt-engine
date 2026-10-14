@@ -125,27 +125,41 @@ void CALifeStorageManager::save(LPCSTR save_name_no_check, bool update_name)
 
 void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR file_name)
 {
+    PROF_EVENT("LoadGame.Deserialize");
+    PROF_TAG("Save", file_name);
 	//Alundaio: So we can get the fname to make our own custom save states
 #ifdef ENGINE_LUA_ALIFE_STORAGE_MANAGER_CALLBACKS
 	::luabind::functor<void> funct;
 	if (ai().script_engine().functor("alife_storage_manager.CALifeStorageManager_load", funct))
+    {
+        PROF_EVENT("LoadGame.StorageCallback");
 		funct(file_name);
+    }
 #endif
 	//-Alundaio
 
 	IReader source(buffer, buffer_size);
+    START_PROFILE("LoadGame.HeaderAndTime");
 	header().load(source);
 	time_manager().load(source);
+    STOP_PROFILE;
+    START_PROFILE("LoadGame.SpawnRegistry");
 	spawns().load(source, file_name);
+    STOP_PROFILE;
+    START_PROFILE("LoadGame.GraphRegistry");
 	graph().on_load();
+    STOP_PROFILE;
+    START_PROFILE("LoadGame.ObjectRegistry");
 	objects().load(source);
 	spawns().remap_legacy(objects().objects());
+    STOP_PROFILE;
 
 	VERIFY(can_register_objects());
 	can_register_objects(false);
 	CALifeObjectRegistry::OBJECT_REGISTRY::iterator B = objects().objects().begin();
 	CALifeObjectRegistry::OBJECT_REGISTRY::iterator E = objects().objects().end();
 	CALifeObjectRegistry::OBJECT_REGISTRY::iterator I;
+    START_PROFILE("LoadGame.RegisterObjects");
 	for (I = B; I != E; ++I)
 	{
 		ALife::_OBJECT_ID id = (*I).second->ID;
@@ -153,13 +167,18 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 		VERIFY(id == (*I).second->ID);
 		register_object((*I).second, false);
 	}
+    STOP_PROFILE;
 
+    START_PROFILE("LoadGame.RegistryContainer");
 	registry().load(source);
+    STOP_PROFILE;
 
 	can_register_objects(true);
 
+    START_PROFILE("LoadGame.ObjectCallbacks");
 	for (I = B; I != E; ++I)
 		(*I).second->on_register();
+    STOP_PROFILE;
 
 	if (!g_pGameLevel)
 		return;
@@ -169,6 +188,8 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 
 bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 {
+    PROF_EVENT("LoadGame.ReadSave");
+    PROF_TAG("Save", save_name_no_check);
 	LPCSTR game_saves_path = FS.get_path("$game_saves$")->m_Path;
 
 	string_path save_name;
@@ -213,17 +234,24 @@ bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 	*/
 	g_pGamePersistent->LoadTitle();
 
+    START_PROFILE("LoadGame.ResetSimulator");
 	unload();
 	reload(m_section);
+    STOP_PROFILE;
 
 	u32 source_count = stream->r_u32();
 	void* source_data = xr_malloc(source_count);
+    START_PROFILE("LoadGame.Decompress");
+    PROF_TAG("UncompressedBytes", source_count);
 	rtc_decompress(source_data, source_count, stream->pointer(), stream->length() - 3 * sizeof(u32));
+    STOP_PROFILE;
 	FS.r_close(stream);
 	load(source_data, source_count, file_name);
 	xr_free(source_data);
 
+    START_PROFILE("LoadGame.GroupCallbacks");
 	groups().on_after_game_load();
+    STOP_PROFILE;
 
 	VERIFY(graph().actor());
 

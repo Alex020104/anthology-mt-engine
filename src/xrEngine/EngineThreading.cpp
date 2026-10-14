@@ -180,7 +180,7 @@ void XRay::Engine::GameThread()
 
         } while (Device.isRendering && Device.LuaGCCount < psLua_ParallelGC_CallAmount);
     };
-    if (psLua_ParallelGC && Device.LuaGC)
+    if (!Device.LuaGCAlwaysActive() && psLua_ParallelGC && Device.LuaGC)
         Device.secondary_tasks.run(LuaGC);
 
 	{

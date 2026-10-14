@@ -158,6 +158,8 @@ CScriptEngine::CScriptEngine()
 
 CScriptEngine::~CScriptEngine()
 {
+    Device.ResetLuaGCState();
+    luabind::detail::set_entry_callback(nullptr);
 
 #ifdef USE_LUA_FUNCTOR_CACHE
 	m_cache_valid = false;
@@ -181,6 +183,7 @@ CScriptEngine::~CScriptEngine()
 
 void CScriptEngine::unload()
 {
+    Device.WaitForGameLogic();
 	lua_settop(lua(), m_stack_level);
 	m_last_no_file_length = 0;
 	*m_last_no_file = 0;
@@ -313,8 +316,17 @@ void lua_cast_failed(lua_State* L, LUABIND_TYPE_INFO info)
 	Debug.fatal(DEBUG_INFO, "LUA error: cannot cast lua value to %s", info->name());
 }
 
+static const void* game_lua_identity = nullptr;
+static void before_game_lua_entry(lua_State* state)
+{
+    if (lua_vmidentity(state) == game_lua_identity)
+        Device.WaitForGameLogic();
+}
+
 void CScriptEngine::setup_callbacks()
 {
+    game_lua_identity = lua_vmidentity(lua());
+    luabind::detail::set_entry_callback(&before_game_lua_entry);
 #ifdef USE_DEBUGGER
 #	ifndef USE_LUA_STUDIO
     if( debugger() )
@@ -386,6 +398,7 @@ extern bool unlocalizerPassed;
 
 void CScriptEngine::init()
 {
+    Device.ResetLuaGCState();
     PROF_EVENT("Lua.Initialize");
 #ifdef USE_LUA_STUDIO
     bool lua_studio_connected = !!m_lua_studio_world;
@@ -656,6 +669,7 @@ void CScriptEngine::add_no_file(LPCSTR file_name, u32 string_length)
 
 void CScriptEngine::collect_all_garbage()
 {
+    Device.WaitForGameLogic();
 	lua_gc(lua(), LUA_GCCOLLECT, 0);
 	lua_gc(lua(), LUA_GCCOLLECT, 0);
 }

@@ -310,6 +310,9 @@ public:
     IC CDebugRenderer& debug_renderer();
 	void __stdcall script_gc(); // GC-cycle
     static int LuaGC(); // GC that will called from Device via Device.LuaGC
+    static void LuaGCPrepare(bool always);
+    static LuaGCInfo LuaGCReadInfo();
+    bool RestoreLuaGCBindings() override;
     static void LuaGCDebug(); // GC that will called from Device via Device.LuaGCDebug
 	IC CPHCommander& ph_commander();
 	IC CPHCommander& ph_commander_scripts();

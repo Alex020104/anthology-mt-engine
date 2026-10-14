@@ -96,7 +96,9 @@ bool IGame_Level::Load(u32 dwNum)
 	xrCriticalSectionGuard guard(&lloadcs);
 	if (bReady) return TRUE;
 	extern xr_task_group prefetch_task;
+    START_PROFILE("LoadGame.PrefetchBarrier");
 	prefetch_task.wait();
+    STOP_PROFILE;
 	//SECUROM_MARKER_PERFORMANCE_ON(10)
 
 	// Initialize level data
@@ -120,7 +122,9 @@ bool IGame_Level::Load(u32 dwNum)
 	// CForms
 	// g_pGamePersistent->LoadTitle ("st_loading_cform");
 	g_pGamePersistent->LoadTitle();
+    START_PROFILE("LoadGame.CFORM");
 	ObjectSpace.Load( [](Fvector* V, int Vcnt, CDB::TRI* T, int Tcnt, void* params){g_pGameLevel->Load_GameSpecific_CFORM(T, Tcnt);});
+    STOP_PROFILE;
 	//Sound->set_geometry_occ ( &Static );
 	Sound->set_geometry_occ(ObjectSpace.GetStaticModel());
 	Sound->set_handler(_sound_event);
@@ -133,14 +137,22 @@ bool IGame_Level::Load(u32 dwNum)
 		g_hud = (CCustomHUD*)NEW_INSTANCE(CLSID_HUDMANAGER);
 
 	// Render-level Load
+    START_PROFILE("LoadGame.RenderLevel");
 	Render->level_Load(LL_Stream);
+    STOP_PROFILE;
 	// tscreate.FrameEnd ();
 	// Msg ("* S-CREATE: %f ms, %d times",tscreate.result,tscreate.count);
 
 	// Objects
+    START_PROFILE("LoadGame.EnvironmentModifiers");
 	g_pGamePersistent->Environment().mods_load();
+    STOP_PROFILE;
+    START_PROFILE("LoadGame.GameSpecificBefore");
 	R_ASSERT(Load_GameSpecific_Before());
+    STOP_PROFILE;
+    START_PROFILE("LoadGame.LevelObjects");
 	Objects.Load();
+    STOP_PROFILE;
 	//. ANDY R_ASSERT (Load_GameSpecific_After ());
 
 	// Done
@@ -189,6 +201,9 @@ void IGame_Level::OnRender()
 		{
 			PROF_EVENT("IGame_Level::OnRender: Render");
 			Render->Render();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+            OptickLoadGameLevelRendered();
+#endif
 		}
 	}
 	else

@@ -135,12 +135,14 @@ CSE_ALifeDynamicObject* CALifeObjectRegistry::get_object(IReader& file_stream)
 
 void CALifeObjectRegistry::load(IReader& file_stream)
 {
+    PROF_EVENT("LoadGame.ReadObjects");
 	Msg("* Loading objects...");
 	R_ASSERT2(file_stream.find_chunk(OBJECT_CHUNK_DATA), "Can't find chunk OBJECT_CHUNK_DATA!");
 
 	m_objects.clear();
 
 	u32 count = file_stream.r_u32();
+    PROF_TAG("Objects", count);
 	for (u32 I = 0; I < count; ++I)
 	{
 		CSE_ALifeDynamicObject* tpSE_Abstract = get_object(file_stream);

@@ -275,6 +275,9 @@ bool CLevel::net_start6()
 	else
 	{
 		Msg("! Failed to start client. Check the connection or level existance.");
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickLoadGameCancel("Failed to start level");
+#endif
 
 		if (m_connect_server_err == xrServer::ErrConnect && !psNET_direct_connect && !g_dedicated_server)
 		{

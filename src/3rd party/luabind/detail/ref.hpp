@@ -21,6 +21,7 @@
 // OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
+#include <luabind/detail/pcall.hpp>
 
 #include <cassert>
 #include <algorithm>
@@ -38,6 +39,7 @@ namespace luabind { namespace detail
 
 	inline void getref(lua_State* L, int r)
 	{
+		prepare_lua_call(L);
 		lua_rawgeti(L, LUA_REGISTRYINDEX, r);
 	}
 
@@ -73,6 +75,7 @@ namespace luabind { namespace detail
 
 		void set(lua_State* L_)
 		{
+			prepare_lua_call(L_);
 			reset();
 			L = L_;
 			m_ref = ref(L);
@@ -80,6 +83,7 @@ namespace luabind { namespace detail
 
 		void replace(lua_State* L_)
 		{
+			prepare_lua_call(L_);
 			lua_rawseti(L_, LUA_REGISTRYINDEX, m_ref);
 		}
 
@@ -96,7 +100,7 @@ namespace luabind { namespace detail
 
 		void reset()
 		{
-			if (L && m_ref != LUA_NOREF) unref(L, m_ref);
+			if (L && m_ref != LUA_NOREF) { prepare_lua_call(L); unref(L, m_ref); }
 			m_ref = LUA_NOREF;
 		}
 

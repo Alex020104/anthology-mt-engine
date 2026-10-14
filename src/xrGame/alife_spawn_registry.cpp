@@ -143,13 +143,16 @@ static bool ignore_save_incompatibility()
 
 void CALifeSpawnRegistry::load(IReader& file_stream, xrGUID* save_guid)
 {
+    PROF_EVENT("LoadGame.SpawnFile");
 	IReader* chunk;
 	chunk = file_stream.open_chunk(0);
 	m_header.load(*chunk);
 	chunk->close();
 
 	chunk = file_stream.open_chunk(1);
+    START_PROFILE("LoadGame.SpawnGraph");
 	m_spawns.load(*chunk);
+    STOP_PROFILE;
 	chunk->close();
 
 #if 0
@@ -179,7 +182,9 @@ void CALifeSpawnRegistry::load(IReader& file_stream, xrGUID* save_guid)
 	R_ASSERT2(m_chunk, "Spawn version mismatch - REBUILD SPAWN!");
 
 	VERIFY(!m_game_graph);
+    START_PROFILE("LoadGame.GameGraph");
 	m_game_graph = xr_new<CGameGraph>(*m_chunk);
+    STOP_PROFILE;
 
 	spawn_overlays::CSpawnOverlays overlays(*m_spawn_name);
 	if (save_guid)
@@ -197,12 +202,16 @@ void CALifeSpawnRegistry::load(IReader& file_stream, xrGUID* save_guid)
 	R_ASSERT2((header().graph_guid() == ai().game_graph().header().guid()) || ignore_save_incompatibility(),
 	          "Spawn doesn't correspond to the graph : REBUILD SPAWN!");
 
+    START_PROFILE("LoadGame.SpawnOverlays");
 	overlays.apply_objects(m_spawns, *m_game_graph);
+    STOP_PROFILE;
 
 	// after the graph: patrol_paths.ltx 'level =' sections resolve their points on it
 	chunk = file_stream.open_chunk(3);
 	R_ASSERT2(chunk, "Spawn version mismatch - REBUILD SPAWN!");
+    START_PROFILE("LoadGame.PatrolPaths");
 	ai().patrol_path_storage(*chunk);
+    STOP_PROFILE;
 	if (ai().m_patrol_path_storage)
 		overlays.add_paths(*ai().m_patrol_path_storage, *m_game_graph);
 	chunk->close();
@@ -214,9 +223,10 @@ void CALifeSpawnRegistry::load(IReader& file_stream, xrGUID* save_guid)
 	R_ASSERT2(!save_guid || (*save_guid == header().guid()) || legacy || ignore_save_incompatibility(),
 	          "Saved game doesn't correspond to the spawn : DELETE SAVED GAME!");
 
+    START_PROFILE("LoadGame.SpawnIndices");
 	build_story_spawns();
-
 	build_root_spawns();
+    STOP_PROFILE;
 
 	Msg("* %d spawn points are successfully loaded", m_spawns.vertex_count());
 }

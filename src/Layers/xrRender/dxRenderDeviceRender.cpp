@@ -482,20 +482,51 @@ void dxRenderDeviceRender::End()
 	}
 # endif
 
-	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady) {
-        PROF_EVENT("Render.Present");
-#if XRCORE_PROFILER == PROFILER_OPTICK
-        if (HW.m_pSwapChain->Present(present_interval, present_flags) == S_OK)
-            OptickStartupFramePresented();
+    if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady)
+    {
+        if (Device.HasPresentSlack())
+        {
+            PROF_EVENT("FramePacer.SubmitBeforeWait");
+#if defined(USE_DX11)
+            HW.pContext->Flush();
 #else
-		HW.m_pSwapChain->Present(present_interval, present_flags);
+            HW.pDevice->Flush();
 #endif
-	}
+        }
+        Device.BeforePresent();
+        HRESULT result;
+        {
+            PROF_EVENT("FramePacer.Present");
+            result = HW.m_pSwapChain->Present(present_interval, present_flags);
+        }
+        Device.AfterPresent(result == S_OK);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        if (result == S_OK)
+        {
+            OptickStartupFramePresented();
+            OptickLoadGameFramePresented();
+        }
+#endif
+    }
 #else //!USE_DX10 || USE_DX11
-	CHK_DX(HW.pDevice->EndScene());
-
-	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady)
-		HW.pDevice->Present(NULL, NULL, NULL, NULL);
+    CHK_DX(HW.pDevice->EndScene());
+    if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady)
+    {
+        Device.BeforePresent();
+        HRESULT result;
+        {
+            PROF_EVENT("FramePacer.Present");
+            result = HW.pDevice->Present(NULL, NULL, NULL, NULL);
+        }
+        Device.AfterPresent(result == S_OK);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        if (result == S_OK)
+        {
+            OptickStartupFramePresented();
+            OptickLoadGameFramePresented();
+        }
+#endif
+    }
 #endif //-USE_DX10
 	//HRESULT _hr		= HW.pDevice->Present( NULL, NULL, NULL, NULL );
 	//if				(D3DERR_DEVICELOST==_hr)	return;			// we will handle this later

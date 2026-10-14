@@ -475,6 +475,12 @@ public:
 			Log("! Can't start game without client. Arguments: '%s'.", args);
 			return;
 		}
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        LPCSTR loadOption = strstr(op_server, "/load");
+        if (!op_demo[0] && strstr(op_server, "/alife") && loadOption &&
+            (loadOption[5] == 0 || loadOption[5] == '/'))
+            OptickLoadGameBegin(op_server);
+#endif
 		if (g_pGameLevel)
 			Engine.Event.Defer("KERNEL:disconnect");
 

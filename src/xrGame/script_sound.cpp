@@ -65,7 +65,10 @@ CScriptSound::~CScriptSound()
 	THROW3(!m_sound._feedback(), "playing sound is not completed, but is destroying",
 	       m_sound._handle() ? m_sound._handle()->file_name() : "unknown");
 #endif
-	m_sound.destroy();
+    if (Device.LuaGCAlwaysActive())
+        m_sound.destroy_deferred();
+    else
+        m_sound.destroy();
 }
 
 Fvector CScriptSound::GetPosition() const

@@ -91,6 +91,7 @@ extern int psLua_ParallelGCStep;
 extern int psLua_ParallelGC_CallAmount;
 extern BOOL psLua_ParallelGC_debug;
 extern BOOL psLua_ParallelGC;
+extern BOOL psLuaGCAlways;
 extern BOOL lua_debug;
 BOOL lua_busy_hands_debug = TRUE;
 
@@ -426,6 +427,21 @@ static void full_memory_stats(bool assert = true)
 	dump_file_mappings();
 #endif // DEBUG
 }
+
+class CCC_LuaGCAlways : public CCC_Integer
+{
+public:
+    CCC_LuaGCAlways(LPCSTR name, int* value, int minimum, int maximum)
+        : CCC_Integer(name, value, minimum, maximum) {}
+    void Execute(LPCSTR args) override
+    {
+        Device.WaitForGameLogic();
+        CCC_Integer::Execute(args);
+        // Main owns the VM here. Re-enable automatic GC immediately on disable.
+        if (!psLuaGCAlways)
+            Device.ResetLuaGCState();
+    }
+};
 
 class CCC_MemStats : public IConsole_Command
 {
@@ -1251,6 +1267,10 @@ public:
 			return;
 		}
 
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickLoadGameBegin(saved_game);
+#endif
+        PROF_EVENT("LoadGame.SendLoadRequest");
 		/*     moved to level_network_messages.cpp
 		CSavedGameWrapper			wrapper(args);
 		if (wrapper.level_id() == ai().level_graph().level_id()) {
@@ -2757,6 +2777,7 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "lua_parallel_gc_call_amount", &psLua_ParallelGC_CallAmount, 1, 50);
 	CMD4(CCC_Integer, "lua_parallel_gc_debug", &psLua_ParallelGC_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_parallel_gc", &psLua_ParallelGC, 0, 1);
+    CMD4(CCC_LuaGCAlways, "lua_gc_always", &psLuaGCAlways, 0, 1);
 
 	CMD4(CCC_Integer, "lua_debug", &lua_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_use_functor_cache", &lua_use_functor_cache, 0, 1);

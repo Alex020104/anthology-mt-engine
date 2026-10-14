@@ -78,7 +78,8 @@ void CALifeGraphRegistry::setup_current_level()
 	this_thread_id = GetCurrentThreadId();
 	level_load.run([=]()
 	{
-		if (this_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
+        PROF_THREAD_IF(this_thread_id != GetCurrentThreadId(), "X-Ray PPL Thread");
+		PROF_EVENT("LoadGame.LevelLoadTask");
 		Level().Load(levelid);
 	});
 

@@ -200,7 +200,7 @@
       <Message>Generating LuaJIT VM object and headers</Message>
       <Command>"$(ProjectDir)gen_luajit_artifacts.bat" "$(Platform)"</Command>
       <Outputs>lj_vm.obj;lj_bcdef.h;lj_ffdef.h;lj_libdef.h;lj_recdef.h;jit\vmdef.lua;lj_folddef.h;host\minilua.exe;host\buildvm.exe;host\buildvm_arch.h</Outputs>
-      <AdditionalInputs>host\minilua.c;host\buildvm.c;host\buildvm_peobj.c;host\buildvm_lib.c;host\buildvm_asm.c;..\dynasm\dynasm.lua;lj_opt_fold.c;lib_base.c;lib_math.c;lib_bit.c;lib_string.c;lib_table.c;lib_io.c;lib_os.c;lib_package.c;lib_debug.c;lib_jit.c;lib_ffi.c</AdditionalInputs>
+      <AdditionalInputs>lj_obj.h;lj_gc.h;lua.h;vm_x86.dasc;host\minilua.c;host\buildvm.c;host\buildvm_peobj.c;host\buildvm_lib.c;host\buildvm_asm.c;..\dynasm\dynasm.lua;lj_opt_fold.c;lib_base.c;lib_math.c;lib_bit.c;lib_string.c;lib_table.c;lib_io.c;lib_os.c;lib_package.c;lib_debug.c;lib_jit.c;lib_ffi.c</AdditionalInputs>
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>

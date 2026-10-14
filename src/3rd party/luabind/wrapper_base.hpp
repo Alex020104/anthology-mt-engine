@@ -62,6 +62,7 @@ namespace luabind
             >;
 
 			lua_State* L = m_self.state();
+			detail::prepare_lua_call(L);
 			m_self.get(L);
             assert(!lua_isnil(L, -1));
 			detail::do_call_member_selection(L, name);

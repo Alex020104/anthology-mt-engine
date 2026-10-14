@@ -281,6 +281,7 @@ extern ENGINE_API BOOL bShowPauseString;
 void CHUDManager::RenderUI()
 {
 	PROF_EVENT("CHUDManager::RenderUI");
+    Device.WaitForGameLogic(); // Join before ui_lock: a GC finalizer may need UI state.
 	if (!psHUD_Flags.is(HUD_DRAW_RT2))
 		return;
 

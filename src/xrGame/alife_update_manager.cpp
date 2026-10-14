@@ -304,7 +304,9 @@ void CALifeUpdateManager::load(LPCSTR game_name, bool no_assert, bool new_only)
 #endif
 	//	g_pGamePersistent->LoadTitle		("st_server_connecting");
 	g_pGamePersistent->LoadTitle(true, g_pGameLevel->name());
+    START_PROFILE("LoadGame.LevelLoadBarrier");
 	level_load.wait();
+    STOP_PROFILE;
 }
 
 void CALifeUpdateManager::reload(LPCSTR section)

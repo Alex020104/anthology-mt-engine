@@ -48,11 +48,13 @@ bool CLevel::Load_GameSpecific_Before()
 
 bool CLevel::Load_GameSpecific_After()
 {
+    PROF_EVENT("LoadGame.GameSpecificAfter");
 	R_ASSERT(m_StaticParticles.empty());
 	// loading static particles
 	string_path fn_game;
 	if (FS.exist(fn_game, "$level$", "level.ps_static"))
 	{
+        PROF_EVENT("LoadGame.StaticParticles");
 		IReader* F = FS.r_open(fn_game);
 
 		u32 chunk = 0;
@@ -98,7 +100,9 @@ bool CLevel::Load_GameSpecific_After()
 	{
 		// loading static sounds
 		VERIFY(m_level_sound_manager);
+        START_PROFILE("LoadGame.StaticSounds");
 		m_level_sound_manager->Load();
+        STOP_PROFILE;
 
 		// loading sound environment
 		if (FS.exist(fn_game, "$level$", "level.snd_env"))
@@ -173,6 +177,7 @@ bool CLevel::Load_GameSpecific_After()
 	if (!g_dedicated_server)
 	{
 		// loading scripts
+        PROF_EVENT("LoadGame.LevelScripts");
 		ai().script_engine().remove_script_process(ScriptEngine::eScriptProcessorLevel);
 
 		if (pLevel->section_exist("level_scripts") && pLevel->line_exist("level_scripts", "script"))

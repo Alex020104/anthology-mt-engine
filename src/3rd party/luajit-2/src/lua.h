@@ -228,6 +228,14 @@ LUA_API int  (lua_status) (lua_State *L);
 #define LUA_GCSETSTEPMUL	7
 
 LUA_API int (lua_gc) (lua_State *L, int what, int data);
+LUA_API void lua_gcmetrics(lua_State *L, size_t *total, size_t *threshold, size_t *debt, int *phase);
+LUA_API int lua_gcstep_one(lua_State *L, int data);
+LUA_API void lua_gcincremental(lua_State *L, int enabled);
+LUA_API const void* lua_vmidentity(lua_State *L);
+enum {
+  LUA_GCPHASE_PAUSE, LUA_GCPHASE_MARK, LUA_GCPHASE_REMARK, LUA_GCPHASE_SEPARATE,
+  LUA_GCPHASE_ATOMIC, LUA_GCPHASE_SWEEPSTRING, LUA_GCPHASE_SWEEP, LUA_GCPHASE_FINALIZE
+};
 
 
 /*

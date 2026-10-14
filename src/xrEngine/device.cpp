@@ -55,24 +55,19 @@ ENGINE_API xr_atomic_bool g_bRendering = false;
 extern ENGINE_API float psHUD_FOV;
 
 BOOL g_bLoaded = FALSE;
+extern ENGINE_API BOOL g_appLoaded;
 ref_light precache_light = 0;
 
 BOOL mt_calc_bones = TRUE;
 BOOL psLua_ParallelGC = TRUE;
 BOOL psLua_ParallelGC_debug = FALSE;
+BOOL psLuaGCAlways = TRUE;
 
 extern discord::Core* discord_core;
 extern bool use_discord;
 
 extern Fvector4 ps_ssfx_grass_interactive;
-
-#ifdef ECO_RENDER
-std::chrono::high_resolution_clock::time_point tlastf = std::chrono::high_resolution_clock::now(), tcurrentf = std::
-	                                               chrono::high_resolution_clock::now();
-std::chrono::duration<float> time_span;
-ENGINE_API float refresh_rate = 0;
-#endif // ECO_RENDER
-
+ENGINE_API float refresh_rate = 0; // Renderer refresh selection still publishes this value.
 
 BOOL CRenderDevice::Begin()
 {
@@ -85,6 +80,7 @@ BOOL CRenderDevice::Begin()
 		break;
 
 	case IRenderDeviceRender::dsLost:
+        ResetFramePacing();
 		// If the device was lost, do not render until we get it back
 		Sleep(33);
 		return FALSE;
@@ -117,6 +113,7 @@ extern void CheckPrivilegySlowdown();
 
 void CRenderDevice::End(void)
 {
+    StopLuaGCWindow(LuaGCStopReason::End);
 	PROF_EVENT("Render: End");
 
 #ifndef DEDICATED_SERVER
@@ -323,6 +320,13 @@ static bool optickStartupCapturing = false;
 static u32 optickStartupMenuFrame = u32(-1);
 static s64 optickStartupEntryTime = 0;
 static double optickStartupPreEntryMs = 0;
+static bool optickLoadGameEnabled = false;
+static DWORD optickLoadGameMainThread = 0;
+static bool optickLoadGameCapturing = false;
+static u32 optickLoadGameNumber = 0;
+static u32 optickLoadGameRenderedFrame = u32(-1);
+static s64 optickLoadGameBeginTime = 0;
+static s64 optickLoadGameStagesEndTime = 0;
 
 static void SetOptickCapturePath(LPCSTR name)
 {
@@ -334,6 +338,7 @@ static void SetOptickCapturePath(LPCSTR name)
 
 void OptickStartupBegin(s64 entryTime, s64 earlyInitFinish)
 {
+    optickLoadGameMainThread = GetCurrentThreadId();
     // Core.Params (including commandline.txt) is initialized too late for this capture.
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -345,6 +350,7 @@ void OptickStartupBegin(s64 entryTime, s64 earlyInitFinish)
     {
         requested |= lstrcmpiW(argv[i], L"-optickstartup") == 0;
         traceRequested |= lstrcmpiW(argv[i], L"-optickstartuptrace") == 0;
+        optickLoadGameEnabled |= lstrcmpiW(argv[i], L"-optickloadgame") == 0;
     }
     LocalFree(argv);
     if (!requested && !traceRequested)
@@ -437,6 +443,97 @@ void OptickStartupFramePresented()
     // Save at the next frame boundary, after scopes and secondary tasks have finished.
     optickCaptureSavePending = true;
 }
+
+void OptickLoadGameBegin(LPCSTR saveName)
+{
+    // Script commands may arrive on an MT task; their main-thread start/quickload event also calls here.
+    if (!optickLoadGameEnabled || GetCurrentThreadId() != optickLoadGameMainThread || optickLoadGameCapturing)
+        return;
+    if (optickStartupCapturing || optickCaptureFramesLeft || optickCaptureSavePending || Optick::IsActive())
+    {
+        Msg("! [OPTICK] Cannot capture save loading: another capture is already active or pending save");
+        return;
+    }
+
+    const s64 begin = Optick::GetHighPrecisionTime();
+    const auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
+    if (!Optick::StartCapture(mode, 1000, false))
+        return;
+    Optick::Update();
+    Optick::BeginFrame(Optick::FrameType::CPU, begin);
+    optickLoadGameCapturing = true;
+    optickLoadGameBeginTime = begin;
+    optickLoadGameStagesEndTime = 0;
+    optickLoadGameRenderedFrame = u32(-1);
+
+    string64 captureName;
+    xr_sprintf(captureName, "MT_optick_loadgame_p%lu_n%u_t%u.opt", GetCurrentProcessId(), ++optickLoadGameNumber, Device.TimerAsync());
+    SetOptickCapturePath(captureName);
+    // The menu's start command also passes /single/alife/load after the save name.
+    string_path name;
+    strncpy_s(name, sizeof(name), saveName, _TRUNCATE);
+    if (LPSTR options = strchr(name, '/'))
+        *options = 0;
+    Optick::AttachSummary("LoadGame save", name);
+    PROF_EVENT("LoadGame.Request");
+    PROF_TAG("Save", name);
+    Msg("* [OPTICK] Capturing save loading through precache and first ready Present: %s", optickCapturePath);
+}
+
+void OptickLoadGameStagesFinished()
+{
+    if (GetCurrentThreadId() != optickLoadGameMainThread || !optickLoadGameCapturing || optickLoadGameStagesEndTime)
+        return;
+    optickLoadGameStagesEndTime = Optick::GetHighPrecisionTime();
+    PROF_EVENT("LoadGame.StagesFinished");
+    Optick::Event::Add(*Optick::GetEventStorageSlotForCurrentThread(),
+        Optick::EventDescription::Create("LoadGame.LoadStages", __FILE__, __LINE__),
+        optickLoadGameBeginTime, optickLoadGameStagesEndTime);
+}
+
+static void OptickLoadGameFinish(LPCSTR result)
+{
+    const s64 finish = Optick::GetHighPrecisionTime();
+    Optick::EventStorage* storage = *Optick::GetEventStorageSlotForCurrentThread();
+    Optick::Event::Add(storage, Optick::EventDescription::Create("LoadGame.Total", __FILE__, __LINE__),
+        optickLoadGameBeginTime, finish);
+    if (optickLoadGameStagesEndTime)
+        Optick::Event::Add(storage, Optick::EventDescription::Create("LoadGame.PrecacheAndFirstFrame", __FILE__, __LINE__),
+            optickLoadGameStagesEndTime, finish);
+    string64 value;
+    xr_sprintf(value, "%.3f", double(finish - optickLoadGameBeginTime) * 1000.0 / Optick::GetHighPrecisionFrequency());
+    Optick::AttachSummary("LoadGame request to finish (ms)", value);
+    Optick::AttachSummary("LoadGame result", result);
+    optickLoadGameCapturing = false;
+    // Match startup: dump only after frame scopes and secondary tasks have finished.
+    optickCaptureSavePending = true;
+}
+
+void OptickLoadGameLevelRendered()
+{
+    if (optickLoadGameCapturing && optickLoadGameStagesEndTime && g_appLoaded && g_loading_events.empty() &&
+        !Device.dwPrecacheFrame && g_pGameLevel && g_pGameLevel->bReady &&
+        g_pGameLevel->CurrentViewEntity() && !IsMainMenuActive())
+        optickLoadGameRenderedFrame = Device.dwFrame;
+}
+
+void OptickLoadGameFramePresented()
+{
+    if (!optickLoadGameCapturing || optickLoadGameRenderedFrame != Device.dwFrame)
+        return;
+    PROF_EVENT("LoadGame.FirstReadyPresent");
+    // A keypress prompt may still cover the ready scene; do not include the user's wait.
+    Optick::AttachSummary("LoadGame endpoint", "First ready level Present after precache; excludes keypress wait");
+    OptickLoadGameFinish("Loaded");
+}
+
+void OptickLoadGameCancel(LPCSTR reason)
+{
+    if (!optickLoadGameCapturing)
+        return;
+    PROF_EVENT("LoadGame.Cancelled");
+    OptickLoadGameFinish(reason);
+}
 #endif
 
 CTimer FreezeTimer;
@@ -471,9 +568,11 @@ void CRenderDevice::on_idle()
 {
 
 	FreezeTimer.Start();
+    frame_pacer_in_frame = false; // FrameMove may issue a loading-screen Present.
 
 	if (!b_is_Ready)
 	{
+        ResetFramePacing();
 		Sleep(100);
 		return;
 	}
@@ -487,7 +586,7 @@ void CRenderDevice::on_idle()
         Msg("* [OPTICK] Capturing startup to first main menu Present: %s", optickCapturePath);
     }
 
-    if (!optickStartupCapturing && optickCaptureFramesLeft == 0 && !optickCaptureSavePending && psOptickCaptureFrames > 0)
+    if (!optickStartupCapturing && !optickLoadGameCapturing && optickCaptureFramesLeft == 0 && !optickCaptureSavePending && psOptickCaptureFrames > 0)
     {
         const u32 frameCount = u32(psOptickCaptureFrames);
         psOptickCaptureFrames = 0;
@@ -579,6 +678,9 @@ void CRenderDevice::on_idle()
 	}
 
 	FrameMove();
+    BeginLuaGCFrame();
+    if (dwPrecacheFrame) ResetFramePacing();
+    else BeginFramePacing();
 
     if (g_pGamePersistent != nullptr)
     {
@@ -668,32 +770,9 @@ void CRenderDevice::on_idle()
 	Device.LuaGCDone = false;
 	Device.LuaGCCount = 0;
 
-	secondary_tasks.run(&XRay::Engine::GameThread);
+	StartGameLogic();
 	
-#ifdef ECO_RENDER // ECO_RENDER START
-	if (Device.Paused() || IsMainMenuActive() || ps_framelimiter)
-	{
-		PROF_EVENT("Eco Render");
 
-		if (refresh_rate == 0)
-			refresh_rate = GetMonitorRefresh();
-
-		float rr;
-
-		if (ps_framelimiter)
-			rr = 1.f / ps_framelimiter;
-		else
-			rr = refresh_rate;
-
-		time_span = std::chrono::duration_cast<std::chrono::duration<float>>(tcurrentf - tlastf);
-		while (time_span.count() < rr)
-		{
-			tcurrentf = std::chrono::high_resolution_clock::now();
-			time_span = std::chrono::duration_cast<std::chrono::duration<float>>(tcurrentf - tlastf);
-		}
-		tlastf = std::chrono::high_resolution_clock::now();
-	}
-#endif // ECO_RENDER END
 
 #ifndef DEDICATED_SERVER
 	Statistic->RenderTOTAL_Real.FrameStart();
@@ -718,11 +797,15 @@ void CRenderDevice::on_idle()
 	Statistic->RenderTOTAL.accum = Statistic->RenderTOTAL_Real.accum;
 #endif 
 	Device.isRendering = false;
+    StopLuaGCWindow(LuaGCStopReason::FrameBarrier);
 
     {
         PROF_EVENT("Frame task barrier");
+        JoinGameLogic();
         secondary_tasks.wait();
     }
+
+    FinishLuaGCFrame();
 
 	if (psLua_ParallelGC_debug && psLua_ParallelGC && Device.LuaGCDebug)
 	{
@@ -836,9 +919,21 @@ void CRenderDevice::Run()
     STOP_PROFILE;
 	message_loop();
 
+    ShutdownLuaGCWorker();
+	secondary_tasks.wait();
 	seqAppEnd.Process(rp_AppEnd);
 
 	secondary_tasks.wait();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    OptickLoadGameCancel("Quit");
+    if (optickCaptureSavePending)
+    {
+        PROF_STOP_CAPTURE();
+        PROF_SAVE_CAPTURE(optickCapturePath);
+        optickCaptureSavePending = false;
+        Msg("* [OPTICK] Capture saved: %s", optickCapturePath);
+    }
+#endif
 	ParticleWorkerCallback.clear();
 }
 
