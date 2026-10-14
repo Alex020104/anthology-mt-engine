@@ -353,7 +353,7 @@ void dxRenderDeviceRender::ResourcesDeferredUnload()
 
 void dxRenderDeviceRender::ResourcesPrefetchCreateTexture(LPCSTR name)
 {
-	Resources->_CreateTexture(name);
+	Resources->PrefetchTexture(name);
 }
 
 xrCriticalSection resources_lock;
