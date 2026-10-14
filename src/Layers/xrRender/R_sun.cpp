@@ -432,7 +432,7 @@ void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared
         cascade.GMCascade.r_dsgraph_capture_static();
         cascade.GMCascade.r_dsgraph_capture_dynamic(nullptr, prepared, revision);
 #if RENDER == R_R4
-        if (view_preparation) view_preparation->QueueGraph(cascade.GMCascade, Fidentity, cascade.cull_xform, false, true);
+        if (view_preparation) view_preparation->QueueGraph(cascade.GMCascade, Fidentity, cascade.cull_xform);
 #endif
     }
 

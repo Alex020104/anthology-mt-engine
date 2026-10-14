@@ -178,8 +178,8 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 			continue;
 
 #if defined(USE_DX11) && RENDER == R_R4
-        const PreparedGraphMatrices* prepared = RImplementation.view_preparation ?
-            RImplementation.view_preparation->Consume(queue, !static_geometry) : nullptr;
+        const PreparedGraphMatrices* prepared = !static_geometry && RImplementation.view_preparation ?
+            RImplementation.view_preparation->Consume(queue) : nullptr;
         if (!prepared)
 #endif
         {
@@ -778,14 +778,6 @@ void CDSGraphManager::r_dsgraph_capture_static()
 			}
 		}
 	}
-#if defined(USE_DX11) && RENDER == R_R4
-    if (RImplementation.view_preparation)
-    {
-        const bool camera = i_mask[fl_normal];
-        RImplementation.view_preparation->QueueGraph(*this, camera ? Device.mView : Fidentity,
-            camera ? Device.mProject : i_mXFORM, true);
-    }
-#endif
 }
 
 void CDSGraphManager::r_dsgraph_capture_lights()
@@ -1059,7 +1051,7 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O, const xr_vector<ISpa
 	}
 #if defined(USE_DX11) && RENDER == R_R4
     if (i_mask[fl_normal] && RImplementation.view_preparation)
-        RImplementation.view_preparation->QueueGraph(*this, Device.mView, Device.mProject, false, true);
+        RImplementation.view_preparation->QueueGraph(*this, Device.mView, Device.mProject);
 #endif
 }
 

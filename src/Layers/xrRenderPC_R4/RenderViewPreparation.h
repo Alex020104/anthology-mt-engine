@@ -43,7 +43,7 @@ public:
     void Queue(CSector* start, const CFrustum& view, const Fmatrix& transform,
         const Fvector& origin, bool camera, const Fmatrix& render_view);
     bool RenderStatic(CDSGraphManager& graph, dxRender_Visual* root, const CFrustum& view, bool camera);
-    void QueueGraph(CDSGraphManager& graph, const Fmatrix& view, const Fmatrix& projection,
-        bool static_only = false, bool dynamic_only = false);
-    const PreparedGraphMatrices* Consume(R_dsgraph::RenderQueue& queue, bool dynamic);
+    // Only dynamic queues are prepared; static queues use the owner sort.
+    void QueueGraph(CDSGraphManager& graph, const Fmatrix& view, const Fmatrix& projection);
+    const PreparedGraphMatrices* Consume(R_dsgraph::RenderQueue& queue);
 };
