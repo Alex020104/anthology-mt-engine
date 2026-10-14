@@ -1562,7 +1562,7 @@ bool CRenderTarget::DrawNativeScreenQuad(const ref_selement& element, float widt
         native_quad_width = width;
         native_quad_height = height;
     }
-    RCache.set_Element(element);
+    RCache.set_Element(element._get());
     RCache.set_Geometry(native_quad_geometry);
     RCache.Render(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
     return true;

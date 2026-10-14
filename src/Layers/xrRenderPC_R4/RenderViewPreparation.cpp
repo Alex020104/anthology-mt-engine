@@ -160,7 +160,7 @@ struct ViewJob
             const auto& portal = scene.portals[id];
             const u32 next = dual[id] ? (portal.front == sector ? portal.back : portal.front) :
                 (portal.plane.classify(origin) > 0 ? portal.back : portal.front);
-            if (next == no_index || (!dual[id] && (next == sector || next == start))) continue;
+            if (next == no_index || next == sector || next == start) continue;
             Fvector center = portal.sphere.P;
             if (!frustum.testSphere_dirty(center, portal.sphere.R)) continue;
             sPoly source, destination;
@@ -171,7 +171,6 @@ struct ViewJob
             if (!polygon) continue;
             CFrustum clip = PreparationFrustum(polygon, origin, transform);
             visited[id] = 1;
-            dual[id] = 0;
             PortalWalk(scene, next, clip, depth + 1);
         }
     }
@@ -388,7 +387,11 @@ void RenderViewPreparation::Queue(CSector* start, const CFrustum& view, const Fm
     job->origin = origin;
     job->camera = camera;
     job->render_view = render_view;
-    for (const auto& portal : state->scene->portals) job->dual.push_back(!!portal.owner->bDualRender);
+    const Fvector camera_position = Device.vCameraPosition_saved;
+    const float near_radius = VIEWPORT_NEAR + EPS_L;
+    for (const auto& portal : state->scene->portals)
+        job->dual.push_back(portal.sphere.P.distance_to(camera_position) < portal.sphere.R &&
+            _abs(portal.plane.classify(camera_position)) <= near_radius);
     state->views.push_back(job);
     state->pending = true;
     auto scene = state->scene;

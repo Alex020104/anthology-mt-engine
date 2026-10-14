@@ -310,7 +310,7 @@ void CDetailManager::ReleaseRenderCache(Slot& slot)
 
 bool CDetailManager::BuildRenderCache(SlotRenderItems& items)
 {
-    R_ASSERT(GetCurrentThreadId() == Device.mmThreadID);
+    R_ASSERT(Device.IsMainThread());
     if (items.cache_state != SlotRenderItems::Settled || items.empty()) return false;
     // Memory bound, not a frame-work quota. Other lists keep the original draw path.
     constexpr u32 cache_limit = 64u * 1024u * 1024u;
