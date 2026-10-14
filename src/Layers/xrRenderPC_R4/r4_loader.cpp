@@ -127,6 +127,7 @@ void CRender::level_Unload()
 	if (!b_loaded) return;
 
 	GMBase.clear();
+    levelShadowIBData.clear_and_free();
     levelIBData.clear_and_free();
 	GMRainWet.clear();
 	for (sun::cascade& cascade : m_sun_cascades)
@@ -271,6 +272,7 @@ void CRender::LoadBuffers(CStreamReader* base_fs, BOOL _alternative)
 		u32 count = fs->r_u32();
 		_IB.resize(count);
         if (!_alternative) levelIBData.resize(count);
+        else levelShadowIBData.resize(count);
 		for (u32 i = 0; i < count; i++)
 		{
 			u32 iCount = fs->r_u32();
@@ -290,6 +292,7 @@ void CRender::LoadBuffers(CStreamReader* base_fs, BOOL _alternative)
 			fs->r(pData, iCount * 2);
 			dx10BufferUtils::CreateIndexBuffer(&_IB[i], pData, iCount * 2);
             if (!_alternative) levelIBData[i].assign(reinterpret_cast<u16*>(pData), reinterpret_cast<u16*>(pData) + iCount);
+            else levelShadowIBData[i].assign(reinterpret_cast<u16*>(pData), reinterpret_cast<u16*>(pData) + iCount);
 			xr_free(pData);
 
 			//			fs().advance		(iCount*2);
@@ -319,6 +322,8 @@ void CRender::LoadVisuals(IReader* fs)
     for (auto* visual : Visuals)
         if (visual->Type == MT_NORMAL) static_cast<Fvisual*>(visual)->immutable_level_geometry = true;
     Fvisual::BuildStaticBatches(Visuals);
+    Fvisual::BuildShadowBatches(Visuals);
+    levelShadowIBData.clear_and_free();
     levelIBData.clear_and_free();
 }
 
