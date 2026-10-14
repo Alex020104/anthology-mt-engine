@@ -84,7 +84,7 @@ private:
 #endif
 
     u32 m_uiMaxAnisotropy;
-    float m_uiMipLODBias;   
+    float m_uiMipLODBias;
 };
 
 extern dx10SamplerStateCache SSManager;

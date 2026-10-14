@@ -1,5 +1,8 @@
 #include "stdafx.h"
 #include "FVisual.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/RenderViewPreparation.h"
+#endif
 
 #include "fhierrarhyvisual.h"
 #include "SkeletonCustom.h"
@@ -890,3 +893,26 @@ void CDSGraphManager::add_leafs_Static(xr_vector<IRenderVisual*>& children)
 		add_leaf_Static(pV);
 	}
 }
+
+#if defined(USE_DX11) && RENDER == R_R4
+bool CDSGraphManager::ApplyPreparedStatic(const PreparedStaticCommand& command, const CFrustum& view)
+{
+    dxRender_Visual* visual = command.visual;
+    if (!visual) return false;
+    if (command.kind == PreparedStaticCommand::Fallback)
+    {
+        if (command.full) add_leaf_Static(visual);
+        else
+        {
+            CFrustum frustum = view;
+            add_Static(visual, frustum, command.planes);
+        }
+        return true;
+    }
+    if (!i_mask[fl_normal] && visual->flags.test(IRenderVisualFlags::eNoShadow)) return false;
+    if (!shadow_receiver_visible(visual->vis.box) || R4FullDetailRejectStatic(visual, i_mask[fl_normal])) return false;
+    if (i_mask[fl_normal] && !RImplementation.HOM.visible(visual->vis)) return false;
+    if (command.kind == PreparedStaticCommand::Leaf) r_dsgraph_insert_static(visual);
+    return true;
+}
+#endif

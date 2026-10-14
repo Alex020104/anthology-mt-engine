@@ -177,6 +177,12 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 		if (queue.empty())
 			continue;
 
+#if defined(USE_DX11) && RENDER == R_R4
+        const PreparedGraphMatrices* prepared = RImplementation.view_preparation ?
+            RImplementation.view_preparation->Consume(queue, !static_geometry) : nullptr;
+        if (!prepared)
+#endif
+        {
 		// Exact pipelines retain their key ordering; immutable members order by shared IB range.
 #if defined(USE_DX11) && RENDER == R_R4
         const auto compare = [](const RenderPacket& a, const RenderPacket& b)
@@ -192,6 +198,7 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
             std::sort(queue.begin(), queue.end(), compare);
 		else
             xr_parallel_sort(queue.begin(), queue.end(), compare);
+        }
 
 #if defined(USE_DX11) && RENDER == R_R4
         if (static_geometry && _priority == 0 && RImplementation.phase == CRender::PHASE_SMAP && !RImplementation.o.Tshadows)
@@ -269,6 +276,7 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
             ++combined_draws;
         };
 #endif
+        u32 prepared_index = 0;
         for (auto& packet : queue)
         {
             #if defined(USE_DX11) && RENDER == R_R4
@@ -346,7 +354,15 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 			if (!static_geometry)
 			{
 				#if defined(USE_DX11) && RENDER == R_R4
-                SetPreparedWorld(item.pMatrix);
+                if (prepared && prepared_index < prepared->matrices.size() && prepared->matrices[prepared_index].valid &&
+                    !memcmp(&prepared->view, &RCache.xforms.m_v, sizeof(Fmatrix)) &&
+                    !memcmp(&prepared->projection, &RCache.xforms.m_p, sizeof(Fmatrix)) &&
+                    !memcmp(item.pMatrix, &prepared->matrices[prepared_index].world, sizeof(Fmatrix)))
+                {
+                    const auto& matrix = prepared->matrices[prepared_index];
+                    RCache.xforms.set_W_prepared(matrix.world, matrix.view, matrix.projection);
+                }
+                else SetPreparedWorld(item.pMatrix);
 #else
                 RCache.set_xform_world(*item.pMatrix);
 #endif
@@ -381,6 +397,7 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
                 !memcmp(&RCache.xforms.m_w, &Fidentity, sizeof(Fmatrix)) && mesh->DrawShadowBatch(packet.shadow_ticket)) continue;
 #endif
             item.pVisual->Render(LOD);
+            ++prepared_index;
 		}
 
 #if defined(USE_DX11) && RENDER == R_R4
@@ -722,6 +739,10 @@ void CDSGraphManager::r_dsgraph_capture_static()
 							++dbg->static_add_root_calls_noopt;
 						}
 					}
+#if defined(USE_DX11) && RENDER == R_R4
+                    if (RImplementation.view_preparation && RImplementation.view_preparation->RenderStatic(
+                        *this, pair.key->root(), frustums.front(), i_mask[fl_normal])) continue;
+#endif
 					add_Static((IRenderVisual*)pair.key->root(), frustums.front(), frustums.front().getMask());
 					continue;
 				}
@@ -751,6 +772,14 @@ void CDSGraphManager::r_dsgraph_capture_static()
 			}
 		}
 	}
+#if defined(USE_DX11) && RENDER == R_R4
+    if (RImplementation.view_preparation)
+    {
+        const bool camera = i_mask[fl_normal];
+        RImplementation.view_preparation->QueueGraph(*this, camera ? Device.mView : Fidentity,
+            camera ? Device.mProject : i_mXFORM, true);
+    }
+#endif
 }
 
 void CDSGraphManager::r_dsgraph_capture_lights()
@@ -1022,6 +1051,10 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O, const xr_vector<ISpa
 			}
 		}
 	}
+#if defined(USE_DX11) && RENDER == R_R4
+    if (i_mask[fl_normal] && RImplementation.view_preparation)
+        RImplementation.view_preparation->QueueGraph(*this, Device.mView, Device.mProject, false, true);
+#endif
 }
 
 void CDSGraphManager::r_dsgraph_capture(bool lights, bool dynamic, CObject* O)

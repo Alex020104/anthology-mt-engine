@@ -889,6 +889,7 @@ CRender::CRender()
 
 CRender::~CRender()
 {
+    view_preparation.reset();
 	for (auto& it : SWIs) {
 		xr_free(it.sw);
 		it.sw = nullptr;

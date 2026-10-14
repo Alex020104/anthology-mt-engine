@@ -113,6 +113,11 @@ void CRender::level_Load(IReader* fs)
 	// Lights
 	// pApp->LoadTitle			("Loading lights...");
 	LoadLights(fs);
+    if (!g_dedicated_server)
+    {
+        if (!view_preparation) view_preparation.reset(new RenderViewPreparation());
+        view_preparation->Load(*this);
+    }
 
 	// End
 	pApp->LoadEnd();
@@ -124,6 +129,7 @@ void CRender::level_Load(IReader* fs)
 void CRender::level_Unload()
 {
     PROF_EVENT("LoadGame.RenderUnload");
+    if (view_preparation) view_preparation->Clear();
     for (auto& list : sun_query_results) list.clear_and_free();
 	if (0 == g_pGameLevel) return;
 	if (!b_loaded) return;

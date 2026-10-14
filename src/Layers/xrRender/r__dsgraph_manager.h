@@ -4,6 +4,7 @@
 #include "r__dsgraph_types.h"
 #include "r__sector.h"
 #include "../../xrCore/FixedMap.h"
+struct PreparedStaticCommand;
 class CDSGraphManager : public IDSGraphManager
 {
 public:
@@ -117,6 +118,7 @@ public:
     Fmatrix prepared_view, prepared_projection;
     u32 prepared_frame = u32(-1);
     void SetPreparedWorld(const Fmatrix* world);
+    bool ApplyPreparedStatic(const PreparedStaticCommand& command, const CFrustum& view);
 #endif
 	void AddToRenderQueue(R_dsgraph::RenderQueue& queue, const R_dsgraph::DSGraphItem<u32, false>& item, const SPass& pass);
 	void r_dsgraph_render_graph(R_dsgraph::RenderQueueArray& queue, u32 _priority, bool _clear = true, bool static_geometry = true);

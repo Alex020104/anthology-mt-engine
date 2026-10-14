@@ -7,6 +7,7 @@
 #include "../xrRender/PSLibrary.h"
 
 #include "r2_types.h"
+#include "RenderViewPreparation.h"
 #include "r4_rendertarget.h"
 
 #include "../xrRender/hom.h"
@@ -176,6 +177,7 @@ public:
 	CModelPool* Models;
 	CWallmarksEngine* Wallmarks;
 
+	std::unique_ptr<RenderViewPreparation> view_preparation;
 	CRenderTarget* Target; // Render-target
 
 	CLight_DB Lights;

@@ -94,7 +94,13 @@ void CRender::render_sun_cascades()
     u64 revision = 0;
     if (compatible)
     {
-        for (u32 i = 0; i < 3; ++i) frustums[i] = &m_sun_cascades[i].cull_frustum;
+        for (u32 i = 0; i < 3; ++i)
+        {
+            auto& cascade = m_sun_cascades[i];
+            frustums[i] = &cascade.cull_frustum;
+            if (view_preparation) view_preparation->Queue(pOutdoorSector, cascade.cull_frustum,
+                cascade.cull_xform, cascade.cull_COP, false, Fidentity);
+        }
         revision = g_SpatialSpace->q_frustums(candidates, m_sun_cascades[0].GMCascade.i_doptions, frustums);
     }
     for (u32 i = 0; i < m_sun_cascades.size(); ++i)
@@ -421,6 +427,9 @@ void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared
 #endif
         cascade.GMCascade.r_dsgraph_capture_static();
         cascade.GMCascade.r_dsgraph_capture_dynamic(nullptr, prepared, revision);
+#if RENDER == R_R4
+        if (view_preparation) view_preparation->QueueGraph(cascade.GMCascade, Fidentity, cascade.cull_xform, false, true);
+#endif
     }
 
     // Finalize & Cleanup

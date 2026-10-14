@@ -65,6 +65,12 @@ extern u32 g_r;
 
 void CRender::Render()
 {
+    if (view_preparation) view_preparation->BeginFrame();
+    struct PreparationFrameScope
+    {
+        RenderViewPreparation* preparation;
+        ~PreparationFrameScope() { if (preparation) preparation->FinishFrame(); }
+    } preparation_frame{view_preparation.get()};
     PROF_EVENT("Render.Frame");
 	PIX_EVENT_C(CRender_Render, dx10_marker_frame);
 	dx10_annotate_frame();
@@ -111,6 +117,8 @@ void CRender::Render()
 
 	// HOM
 	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
+    if (view_preparation)
+        view_preparation->Queue(pLastSector, ViewBase, Device.mFullTransform, Device.vCameraPosition, true, Device.mView);
     HOM.MT_RENDER();
 
 	Target->phase_scene_prepare();
