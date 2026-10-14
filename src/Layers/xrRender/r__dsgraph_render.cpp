@@ -801,7 +801,7 @@ void CDSGraphManager::r_dsgraph_capture_lights()
 	}
 }
 
-void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
+void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O, const xr_vector<ISpatialShared>* prepared, u64 revision)
 {
 	PROF_EVENT("r_dsgraph_capture_dynamic")
 	const bool dbg_enabled = PortalTraverseDbg_Enabled();
@@ -825,6 +825,18 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
                 queryOptions |= STYPE_COLLIDEABLE;
 #endif
 
+            bool used_prepared = false;
+            if (prepared)
+            {
+                xrSRWLockGuard guard(&g_SpatialSpace->db_lock, true);
+                if (revision == g_SpatialSpace->query_revision.load(std::memory_order_acquire))
+                {
+                    lstRenderables = *prepared;
+                    used_prepared = true;
+                }
+            }
+            if (!used_prepared)
+            {
 			g_SpatialSpace->q_frustum
 			(
 				lstRenderables,
@@ -832,6 +844,9 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 				queryOptions,
 				i_frustum
 			);
+            }
+            PROF_TAG("Prepared spatial candidates", used_prepared);
+
 			if (dbg)
 			{
 				const u32 spatial_count = u32(lstRenderables.size());

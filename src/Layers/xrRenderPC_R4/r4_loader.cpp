@@ -124,6 +124,7 @@ void CRender::level_Load(IReader* fs)
 void CRender::level_Unload()
 {
     PROF_EVENT("LoadGame.RenderUnload");
+    for (auto& list : sun_query_results) list.clear_and_free();
 	if (0 == g_pGameLevel) return;
 	if (!b_loaded) return;
 
