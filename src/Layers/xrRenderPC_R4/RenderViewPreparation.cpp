@@ -170,6 +170,7 @@ struct ViewJob
             sPoly* polygon = frustum.ClipPoly(source, destination);
             if (!polygon) continue;
             CFrustum clip = PreparationFrustum(polygon, origin, transform);
+            clip.AddCameraPlane(frustum);
             visited[id] = 1;
             PortalWalk(scene, next, clip, depth + 1);
         }

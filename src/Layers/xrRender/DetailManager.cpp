@@ -364,7 +364,7 @@ void CDetailManager::UpdateVisibleM()
 	Fvector EYE = RDEVICE.vCameraPosition_saved;
 
 	CFrustum View;
-	View.CreateFromMatrix(RDEVICE.mFullTransform_saved, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
+    View.CreateFromCamera(RDEVICE.mFullTransform_saved);
 
 	CFrustum View_old;
 	Fmatrix Viewm_old = RDEVICE.mFullTransform;
@@ -390,8 +390,8 @@ void CDetailManager::UpdateVisibleM()
 			{
 				continue;
 			}
-			u32 mask = 0xff;
-			u32 res = View.testSphere(MS.vis.sphere.P, MS.vis.sphere.R, mask);
+            u32 mask = View.getMask();
+            u32 res = View.testSAABB(MS.vis.sphere.P, MS.vis.sphere.R, MS.vis.box.data(), mask);
 			if (fcvNone == res)
 			{
 				continue; // invisible-view frustum
@@ -418,7 +418,7 @@ void CDetailManager::UpdateVisibleM()
 				if (fcvPartial == res)
 				{
 					u32 _mask = mask;
-					u32 _res = View.testSphere(S.vis.sphere.P, S.vis.sphere.R, _mask);
+                    u32 _res = View.testSAABB(S.vis.sphere.P, S.vis.sphere.R, S.vis.box.data(), _mask);
 					if (fcvNone == _res)
 					{
 						continue; // invisible-view frustum

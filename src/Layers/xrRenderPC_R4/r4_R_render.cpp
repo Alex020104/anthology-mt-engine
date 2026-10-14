@@ -116,7 +116,8 @@ void CRender::Render()
 	// Msg						("sstatic: %s, sun: %s",o.sunstatic?;"true":"false", bSUN?"true":"false");
 
 	// HOM
-	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
+    ViewBase.CreateFromCamera(Device.mFullTransform);
+    PROF_TAG("Camera frustum planes", ViewBase.p_count);
     if (view_preparation)
         view_preparation->Queue(pLastSector, ViewBase, Device.mFullTransform, Device.vCameraPosition, true, Device.mView);
     HOM.MT_RENDER();
