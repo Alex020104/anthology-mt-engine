@@ -477,6 +477,7 @@ public:
     void ShutdownLuaGCWorker();
     void LuaGCAllocationSafePoint(u64 callback_ticks);
     bool LuaGCAlwaysActive() const { return lua_gc_always_frame; }
+    bool LuaGCAutomaticAllowed() const;
     u32 LuaGCGeneration() const { return lua_gc_generation; }
 
 private:

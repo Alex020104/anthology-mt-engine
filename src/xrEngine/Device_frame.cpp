@@ -116,6 +116,13 @@ bool CRenderDevice::IsGameLogicThread() const
     return game_logic_depth != 0;
 }
 
+bool CRenderDevice::LuaGCAutomaticAllowed() const
+{
+    if (!IsGameLogicThread() && (!IsMainThread() || game_logic_pending.load(std::memory_order_acquire)))
+        return false;
+    return lua_gc_always_frame && !lua_gc_working.load(std::memory_order_acquire);
+}
+
 void CRenderDevice::WaitForGameLogic()
 {
     if (IsGameLogicThread() || GetCurrentThreadId() != frame_main_thread ||

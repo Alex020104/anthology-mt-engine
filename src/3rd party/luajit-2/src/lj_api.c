@@ -1154,6 +1154,15 @@ LUA_API void lua_gcincremental(lua_State *L, int enabled)
   G(L)->gc.incremental = (uint8_t)(enabled != 0);
 }
 
+LUA_API int lua_gc_resume_automatic(lua_State *L)
+{
+  global_State *g = G(L);
+  /* Preserve an active threshold and never restart from inside a finalizer. */
+  if (g->gc.threshold != LJ_MAX_MEM || (g->hookmask & HOOK_GC)) return 0;
+  lua_gc(L, LUA_GCRESTART, -1);
+  return 1;
+}
+
 LUA_API int lua_gcstep_one(lua_State *L, int data)
 {
   global_State *g = G(L);

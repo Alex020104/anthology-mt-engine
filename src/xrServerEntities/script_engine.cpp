@@ -320,7 +320,15 @@ static const void* game_lua_identity = nullptr;
 static void before_game_lua_entry(lua_State* state)
 {
     if (lua_vmidentity(state) == game_lua_identity)
+    {
         Device.WaitForGameLogic();
+        // Long Lua owners may allocate before the background window can resume.
+        // Permit allocation-triggered GC without restarting the current cycle.
+        if (Device.LuaGCAutomaticAllowed() && lua_gc_resume_automatic(state))
+        {
+            PROF_EVENT("GC.AllocationFallback.Enable");
+        }
+    }
 }
 
 void CScriptEngine::setup_callbacks()
