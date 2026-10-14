@@ -183,6 +183,9 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
         if (!prepared)
 #endif
         {
+#if defined(USE_DX11) && RENDER == R_R4
+        PROF_EVENT_DYNAMIC(static_geometry ? "Render.Graph.OwnerSort.Static" : "Render.Graph.OwnerSort.Dynamic");
+#endif
 		// Exact pipelines retain their key ordering; immutable members order by shared IB range.
 #if defined(USE_DX11) && RENDER == R_R4
         const auto compare = [](const RenderPacket& a, const RenderPacket& b)

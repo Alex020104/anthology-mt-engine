@@ -203,40 +203,64 @@ struct GraphJob : PreparedGraphMatrices
     R_dsgraph::RenderQueue* target = nullptr; // Owner-only lookup identity.
     R_dsgraph::RenderQueue input, output;
     std::vector<Fmatrix> worlds;
+    std::vector<u32> order;
     bool dynamic = false;
     u32 phase = 0;
     std::atomic<bool> ready{false}, cancelled{false};
     size_t Bytes() const
     {
         return (input.capacity() + output.capacity()) * sizeof(R_dsgraph::RenderPacket) +
-            worlds.capacity() * sizeof(Fmatrix) + matrices.capacity() * sizeof(PreparedGraphMatrices::Item);
+            worlds.capacity() * sizeof(Fmatrix) + matrices.capacity() * sizeof(PreparedGraphMatrices::Item) +
+            order.capacity() * sizeof(u32);
+    }
+    size_t RequiredBytes(size_t count, bool include_worlds) const
+    {
+        const size_t dynamic_count = include_worlds ? count : 0;
+        return (_max(input.capacity(), count) + _max(output.capacity(), count)) * sizeof(R_dsgraph::RenderPacket) +
+            _max(worlds.capacity(), dynamic_count) * sizeof(Fmatrix) +
+            _max(matrices.capacity(), dynamic_count) * sizeof(PreparedGraphMatrices::Item) +
+            _max(order.capacity(), count) * sizeof(u32);
+    }
+    void ResetFrame()
+    {
+        // Called only after the task-group join; retain capacity, not live frame inputs.
+        target = nullptr;
+        input.clear(); output.clear(); worlds.clear(); matrices.clear(); order.clear();
+        ready.store(false, std::memory_order_relaxed);
+        cancelled.store(false, std::memory_order_relaxed);
     }
     void Compute()
     {
         PROF_EVENT("Render.Graph.Compute");
         if (cancelled.load(std::memory_order_relaxed)) return;
         // Index sort preserves the association with each copied world transform.
-        std::vector<u32> order(input.size());
-        for (u32 i = 0; i < order.size(); ++i) order[i] = i;
-        std::sort(order.begin(), order.end(), [&](u32 ai, u32 bi)
         {
-            const auto& a = input[ai];
-            const auto& b = input[bi];
-            if (!(a.sortKey == b.sortKey)) return a.sortKey < b.sortKey;
-            if (a.static_batch != b.static_batch) return std::less<const void*>()(a.static_batch, b.static_batch);
-            return a.static_first_index < b.static_first_index;
-        });
-        output.clear();
-        for (u32 index : order)
+            PROF_EVENT_DYNAMIC(dynamic ? "Render.Graph.WorkerSort.Dynamic" : "Render.Graph.WorkerSort.Static");
+            order.resize(input.size());
+            for (u32 i = 0; i < order.size(); ++i) order[i] = i;
+            std::sort(order.begin(), order.end(), [&](u32 ai, u32 bi)
+            {
+                const auto& a = input[ai];
+                const auto& b = input[bi];
+                if (!(a.sortKey == b.sortKey)) return a.sortKey < b.sortKey;
+                if (a.static_batch != b.static_batch) return std::less<const void*>()(a.static_batch, b.static_batch);
+                return a.static_first_index < b.static_first_index;
+            });
+        }
         {
-            if (cancelled.load(std::memory_order_relaxed)) return;
-            output.push_back(input[index]);
-            if (!dynamic) continue;
-            auto& matrix = matrices[output.size() - 1];
-            matrix.world = worlds[index];
-            matrix.view.mul_43(view, matrix.world);
-            matrix.projection.mul(projection, matrix.view);
-            matrix.valid = _valid(matrix.world) && _valid(matrix.view) && _valid(matrix.projection);
+            PROF_EVENT_DYNAMIC(dynamic ? "Render.Graph.BuildResult.Dynamic" : "Render.Graph.BuildResult.Static");
+            output.clear();
+            for (u32 index : order)
+            {
+                if (cancelled.load(std::memory_order_relaxed)) return;
+                output.push_back(input[index]);
+                if (!dynamic) continue;
+                auto& matrix = matrices[output.size() - 1];
+                matrix.world = worlds[index];
+                matrix.view.mul_43(view, matrix.world);
+                matrix.projection.mul(projection, matrix.view);
+                matrix.valid = _valid(matrix.world) && _valid(matrix.view) && _valid(matrix.projection);
+            }
         }
         ready.store(true, std::memory_order_release);
     }
@@ -250,6 +274,7 @@ struct RenderViewPreparation::State
     std::vector<std::shared_ptr<GraphJob>> graphs;
     concurrency::task_group tasks;
     size_t graph_bytes = 0;
+    u32 graph_used = 0;
     u32 consumed_views = 0, consumed_graphs = 0, missed = 0;
     bool valid_scene = false, pending = false;
 };
@@ -262,12 +287,13 @@ void RenderViewPreparation::FinishFrame()
     if (!state->pending) return;
     PROF_EVENT("Render.Preparation.FinishFrame");
     // Fallback results are no longer useful; jobs only read their own storage.
-    for (auto& graph : state->graphs) graph->cancelled.store(true, std::memory_order_relaxed);
+    for (u32 i = 0; i < state->graph_used; ++i) state->graphs[i]->cancelled.store(true, std::memory_order_relaxed);
     state->tasks.wait();
     state->pending = false;
     PROF_TAG("Queued views", u32(state->views.size()));
     PROF_TAG("Used views", state->consumed_views);
-    PROF_TAG("Queued graphs", u32(state->graphs.size()));
+    PROF_TAG("Queued graphs", state->graph_used);
+    PROF_TAG("Retained graph KB", u32(state->graph_bytes / 1024));
     PROF_TAG("Used graphs", state->consumed_graphs);
     PROF_TAG("Missed results", state->missed);
 }
@@ -276,8 +302,13 @@ void RenderViewPreparation::BeginFrame()
 {
     FinishFrame();
     state->views.clear();
-    state->graphs.clear();
     state->graph_bytes = 0;
+    for (auto& graph : state->graphs)
+    {
+        graph->ResetFrame();
+        state->graph_bytes += graph->Bytes();
+    }
+    state->graph_used = 0;
     state->consumed_views = state->consumed_graphs = state->missed = 0;
     state->valid_scene = state->scene && ps_r2_ls_flags.test(R2FLAG_EXP_MT_CALC) &&
         state->scene->nodes.size() >= 256 && !Device.m_SecondViewport.IsSVPFrame();
@@ -306,6 +337,8 @@ void RenderViewPreparation::Clear()
     FinishFrame();
     state->views.clear();
     state->graphs.clear();
+    state->graph_used = 0;
+    state->graph_bytes = 0;
     state->scene.reset();
     state->valid_scene = false;
 }
@@ -442,33 +475,55 @@ void RenderViewPreparation::QueueGraph(CDSGraphManager& graph, const Fmatrix& vi
     PROF_EVENT("Render.Graph.Snapshot");
     auto capture = [&](R_dsgraph::RenderQueue& queue, bool dynamic)
     {
-        if (queue.size() < 32 || queue.size() > 65536 || state->graphs.size() >= 128) return;
-        for (const auto& old : state->graphs)
+        if (queue.size() < 32 || queue.size() > 65536 || state->graph_used >= 128) return;
+        for (u32 i = 0; i < state->graph_used; ++i)
+        {
+            const auto& old = state->graphs[i];
             if (old->target == &queue && old->phase == RImplementation.phase && old->input.size() == queue.size()) return;
-        const size_t bytes = queue.size() * (2 * sizeof(R_dsgraph::RenderPacket) +
-            (dynamic ? sizeof(Fmatrix) + sizeof(PreparedGraphMatrices::Item) : 0));
-        if (bytes > graph_memory_limit - state->graph_bytes) return;
-        auto job = std::make_shared<GraphJob>();
+        }
+        if (dynamic)
+            for (const auto& packet : queue)
+                if (!packet.item.pMatrix || !_valid(*packet.item.pMatrix)) return;
+        if (state->graph_used == state->graphs.size()) state->graphs.push_back(std::make_shared<GraphJob>());
+        auto job = state->graphs[state->graph_used];
+        const size_t previous = job->Bytes();
+        const size_t required = job->RequiredBytes(queue.size(), dynamic);
+        // Only inactive tail slots may be retired to make room. Active jobs keep their storage.
+        while (required > graph_memory_limit - (state->graph_bytes - previous) &&
+            state->graphs.size() > state->graph_used + 1)
+        {
+            state->graph_bytes -= state->graphs.back()->Bytes();
+            state->graphs.pop_back();
+        }
+        if (required > graph_memory_limit - (state->graph_bytes - previous)) return;
+        job->ResetFrame();
         job->target = &queue;
         job->dynamic = dynamic;
         job->phase = RImplementation.phase;
         job->view = view;
         job->projection = projection;
-        job->input = queue;
+        job->input.reserve(queue.size());
+        job->input.assign(queue.begin(), queue.end());
         job->output.reserve(queue.size());
+        job->order.reserve(queue.size());
         if (dynamic)
         {
             job->worlds.reserve(queue.size());
+            job->matrices.reserve(queue.size());
             job->matrices.resize(queue.size());
             for (const auto& packet : queue)
             {
-                if (!packet.item.pMatrix || !_valid(*packet.item.pMatrix)) return;
                 job->worlds.push_back(*packet.item.pMatrix);
             }
         }
-        state->graph_bytes += job->Bytes();
-        if (state->graph_bytes > graph_memory_limit) { state->graph_bytes -= job->Bytes(); return; }
-        state->graphs.push_back(job);
+        state->graph_bytes = state->graph_bytes - previous + job->Bytes();
+        if (state->graph_bytes > graph_memory_limit)
+        {
+            state->graph_bytes -= job->Bytes();
+            state->graphs[state->graph_used] = std::make_shared<GraphJob>();
+            return;
+        }
+        ++state->graph_used;
         state->pending = true;
         const DWORD owner = GetCurrentThreadId();
         state->tasks.run([job, owner]()
@@ -487,9 +542,9 @@ void RenderViewPreparation::QueueGraph(CDSGraphManager& graph, const Fmatrix& vi
 
 const PreparedGraphMatrices* RenderViewPreparation::Consume(R_dsgraph::RenderQueue& queue, bool dynamic)
 {
-    for (const auto& item : state->graphs)
+    for (u32 index = 0; index < state->graph_used; ++index)
     {
-        auto& job = *item;
+        auto& job = *state->graphs[index];
         if (job.target != &queue || job.dynamic != dynamic || job.phase != RImplementation.phase) continue;
         if (!ps_r2_ls_flags.test(R2FLAG_EXP_MT_CALC) || !job.ready.load(std::memory_order_acquire))
         { job.cancelled.store(true, std::memory_order_relaxed); ++state->missed; return nullptr; }
@@ -499,7 +554,16 @@ const PreparedGraphMatrices* RenderViewPreparation::Consume(R_dsgraph::RenderQue
         for (u32 i = 0; i < queue.size(); ++i)
             if (!SamePacket(queue[i], job.input[i]) || (dynamic && memcmp(queue[i].item.pMatrix, &job.worlds[i], sizeof(Fmatrix)))) return nullptr;
         PROF_EVENT("Render.Graph.Consume");
+        const size_t previous = job.Bytes();
         queue.swap(job.output);
+        state->graph_bytes = state->graph_bytes - previous + job.Bytes();
+        if (state->graph_bytes > graph_memory_limit)
+        {
+            // The old owner queue is no longer needed; do not retain an oversized buffer.
+            state->graph_bytes -= job.output.capacity() * sizeof(R_dsgraph::RenderPacket);
+            R_dsgraph::RenderQueue empty;
+            job.output.swap(empty);
+        }
         job.target = nullptr; // A later invocation cannot reuse a sorted or changed source.
         ++state->consumed_graphs;
         return &job;
