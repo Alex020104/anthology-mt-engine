@@ -267,6 +267,9 @@ void CDetailManager::Load()
 #endif
 void CDetailManager::Unload()
 {
+#if RENDER == R_R4
+    for (u32 i = 0; i < dm_cache_size; ++i) ReleaseRenderCache(cache_pool[i]);
+#endif
 	auto I = std::find(Device.seqParallelRender.begin(), Device.seqParallelRender.end(), xr_make_delegate(this, &CDetailManager::MT_CALC));
 
 	if (I != Device.seqParallelRender.end())
@@ -292,6 +295,68 @@ void CDetailManager::Unload()
 extern ECORE_API float r_ssaDISCARD;
 extern float ps_r__ssaDISCARD_exp;
 extern float ps_r__ssaDISCARD_fade_k;
+#if RENDER == R_R4
+void CDetailManager::ReleaseRenderCache(Slot& slot)
+{
+    for (auto& part : slot.G)
+        for (auto& items : part.r_items)
+        {
+            m_render_cache_bytes -= u32(items.cached_constants.capacity() * sizeof(Fvector4));
+            items.cached_constants.clear_and_free();
+            items.cache_state = SlotRenderItems::Invalid;
+        }
+}
+
+bool CDetailManager::BuildRenderCache(SlotRenderItems& items)
+{
+    R_ASSERT(GetCurrentThreadId() == Device.mmThreadID);
+    if (items.cache_state != SlotRenderItems::Settled || items.empty()) return false;
+    // Memory bound, not a frame-work quota. Other lists keep the original draw path.
+    constexpr u32 cache_limit = 64u * 1024u * 1024u;
+    if (items.size() > cache_limit / (5 * sizeof(Fvector4))) return false;
+    const u32 count = u32(items.size());
+    const u32 bytes = count * 5 * sizeof(Fvector4);
+    const u32 previous_bytes = u32(items.cached_constants.capacity() * sizeof(Fvector4));
+    if (bytes > previous_bytes && bytes - previous_bytes > cache_limit - m_render_cache_bytes) return false;
+    PROF_EVENT("Details.Cache.Build");
+    items.cached_constants.reserve(count * 5);
+    m_render_cache_bytes += u32(items.cached_constants.capacity() * sizeof(Fvector4)) - previous_bytes;
+    if (m_render_cache_bytes > cache_limit)
+    {
+        m_render_cache_bytes -= u32(items.cached_constants.capacity() * sizeof(Fvector4));
+        items.cached_constants.clear_and_free();
+        return false;
+    }
+    items.cached_constants.resize(count * 5);
+    items.cached_max_distance = 0.f;
+    for (u32 i = 0; i < count; ++i)
+    {
+        const SlotItem& instance = *items[i];
+        if (!(instance.alpha > 0.f) || instance.alpha != instance.alpha_target || !_valid(instance.alpha) ||
+            !_valid(instance.distance) || instance.distance < 0.f)
+        {
+            items.cache_state = SlotRenderItems::Invalid;
+            return false;
+        }
+        const Fmatrix& M = instance.mRotY_calculated;
+        if (!_valid(M))
+        {
+            items.cache_state = SlotRenderItems::Invalid;
+            return false;
+        }
+        Fvector4* data = items.cached_constants.data() + i * 4;
+        data[0].set(M._11, M._21, M._31, M._41);
+        data[1].set(M._12, M._22, M._32, M._42);
+        data[2].set(M._13, M._23, M._33, M._43);
+        data[3].set(instance.c_sun, instance.c_sun, instance.c_sun, instance.c_hemi);
+        items.cached_constants[count * 4 + i].set(instance.normal.x, instance.normal.y, instance.normal.z, instance.alpha);
+        items.cached_max_distance = _max(items.cached_max_distance, instance.distance);
+    }
+    items.cache_state = SlotRenderItems::Ready; // Publish only the complete owner-built block.
+    return true;
+}
+#endif
+
 void CDetailManager::UpdateVisibleM()
 {
 	Fvector EYE = RDEVICE.vCameraPosition_saved;
@@ -389,9 +454,15 @@ void CDetailManager::UpdateVisibleM()
 						SlotPart& sp = S.G[sp_id];
 						if (sp.id == DetailSlot::ID_Empty) continue;
 
-						sp.r_items[0].clear_not_free();
-						sp.r_items[1].clear_not_free();
-						sp.r_items[2].clear_not_free();
+						#if RENDER == R_R4
+                        u32 written[3]{};
+                        bool identical[3];
+                        for (u32 wave = 0; wave < 3; ++wave)
+                            identical[wave] = !S.hidden && sp.r_items[wave].cache_state == SlotRenderItems::Ready &&
+                                sp.r_items[wave].cached_constants.size() == sp.r_items[wave].size() * 5;
+#else
+                        for (auto& items : sp.r_items) items.clear_not_free();
+#endif
 
 						float R = objects[sp.id]->bv_sphere.R;
 						float Rq_drcp = R * R * dist_sq_rcp; // reordered expression for 'ssa' calc
@@ -438,13 +509,24 @@ void CDetailManager::UpdateVisibleM()
 							u32 vis_id = 0;
 							if (ssa > r_ssaCHEAP) vis_id = Item.vis_ID;
 
-							Fmatrix& M = Item.mRotY_calculated;
+							Fmatrix M;
 							M = Item.mRotY;
 							M._11*=scale; M._21*=scale; M._31*=scale;
 							M._12*=scale; M._22*=scale; M._32*=scale;
 							M._13*=scale; M._23*=scale; M._33*=scale;
 
-							sp.r_items[vis_id].push_back(*siIT);
+							#if RENDER == R_R4
+                            auto& items = sp.r_items[vis_id];
+                            const u32 index = written[vis_id]++;
+                            identical[vis_id] = identical[vis_id] && index < items.size() && items[index] == &Item &&
+                                !memcmp(&Item.mRotY_calculated, &M, sizeof(Fmatrix)) &&
+                                Item.alpha == Item.alpha_target && Item.alpha == 1.f && Item.distance == dist_sq;
+                            if (index < items.size()) items[index] = &Item;
+                            else items.push_back(&Item);
+#else
+                            sp.r_items[vis_id].push_back(*siIT);
+#endif
+                            Item.mRotY_calculated = M;
 							
 							if (S.hidden)
 							{
@@ -456,6 +538,15 @@ void CDetailManager::UpdateVisibleM()
 							Item.position = S.vis.sphere.P;
 							//2							visible[vis_id][sp.id].push_back(&Item);
 						}
+#if RENDER == R_R4
+                        for (u32 wave = 0; wave < 3; ++wave)
+                        {
+                            auto& items = sp.r_items[wave];
+                            identical[wave] = identical[wave] && written[wave] == items.size();
+                            items.resize(written[wave]);
+                            if (!identical[wave]) items.cache_state = SlotRenderItems::Invalid;
+                        }
+#endif
 					}
 				}
 				for (int sp_id = 0; sp_id < dm_obj_in_slot; sp_id++)

@@ -41,6 +41,11 @@ CDetailManager::Slot* CDetailManager::cache_Query(int r_x, int r_z)
 
 void CDetailManager::cache_Task(int gx, int gz, Slot* D)
 {
+#if RENDER == R_R4
+    ReleaseRenderCache(*D);
+    for (auto& part : D->G) for (auto& items : part.r_items) items.clear_not_free();
+    D->frame = 0;
+#endif
 	int sx = cg2w_X(gx);
 	int sz = cg2w_Z(gz);
 	DetailSlot& DS = QueryDB(sx, sz);

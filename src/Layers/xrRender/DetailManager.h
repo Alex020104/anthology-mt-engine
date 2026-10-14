@@ -92,12 +92,22 @@ public:
 
 	DEFINE_VECTOR(SlotItem*, SlotItemVec, SlotItemVecIt);
 
+#if RENDER == R_R4
+    struct SlotRenderItems : SlotItemVec
+    {
+        enum CacheState { Invalid, Settled, Ready } cache_state = Invalid;
+        xr_vector<Fvector4> cached_constants;
+        float cached_max_distance = 0.f;
+    };
+#else
+    using SlotRenderItems = SlotItemVec;
+#endif
 	struct SlotPart
 	{
 		// 
 		u32 id; // ID модельки
 		SlotItemVec items; // список кустиков
-		SlotItemVec r_items[3]; // список кустиков for render
+		SlotRenderItems r_items[3]; // список кустиков for render
 	};
 
 	enum SlotType
@@ -128,6 +138,7 @@ public:
 		Slot()
 		{
 			frame = 0;
+            hidden = false;
 			empty = 1;
 			type = stReady;
 			sx = sz = 0;
@@ -180,7 +191,12 @@ public:
 
 public:
 	DetailVec objects;
-	vis_list m_visibles [3]; // 0=still, 1=Wave1, 2=Wave2
+	#if RENDER == R_R4
+    u32 m_render_cache_bytes = 0;
+    bool BuildRenderCache(SlotRenderItems& items);
+    void ReleaseRenderCache(Slot& slot);
+#endif
+    vis_list m_visibles [3]; // 0=still, 1=Wave1, 2=Wave2
 
 #ifndef _EDITOR
 	xrXRC xrc;

@@ -143,6 +143,14 @@ void CDetailManager::hw_Render(light* L)
 void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave, const Fvector4& wind, 
 									const Fvector4& prev_wave, const Fvector4& prev_wind, u32 var_id, u32 lod_id, light* L)
 {
+    PROF_EVENT("Render.Grass.ConstantBlocks");
+#if RENDER == R_R4
+    const bool valid_delta = _valid(Device.fTimeDelta) && Device.fTimeDelta >= 0.f;
+    const bool use_cache = hw_BatchSize && valid_delta && RImplementation.phase == CRender::PHASE_NORMAL &&
+        !Device.m_SecondViewport.IsSVPFrame() && _valid(fade_distance) && fade_distance >= 0.f &&
+        RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector);
+    u32 cached_instances = 0, legacy_instances = 0;
+#endif
 	if (RImplementation.phase == CRender::PHASE_SMAP && var_id == 0)
 		return;
 
@@ -280,12 +288,49 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 				VERIFY(c_storage);
 
 				u32 dwBatch = 0;
+                auto flush_batch = [&]()
+                {
+                    Device.Statistic->RenderDUMP_DT_Count += dwBatch;
+                    const u32 vertices = dwBatch * Object.number_vertices;
+                    RCache.Render(D3DPT_TRIANGLELIST, vOffset, 0, vertices, iOffset, dwBatch * Object.number_indices / 3);
+                    RCache.stat.r.s_details.add(vertices);
+                    dwBatch = 0;
+                    void* data = nullptr;
+                    RCache.get_ConstantDirect(strArray, hw_BatchSize * sizeof(Fvector4) * 4, &data, 0, 0);
+                    c_storage = static_cast<Fvector4*>(data);
+                    VERIFY(c_storage);
+                    data = nullptr;
+                    RCache.get_ConstantDirect(strExData, hw_BatchSize * sizeof(Fvector4), &data, 0, 0);
+                    c_ExData = static_cast<Fvector4*>(data);
+                };
+
 
 				xr_vector<SlotItemVec*>::iterator _vI = vis.begin();
 				xr_vector<SlotItemVec*>::iterator _vE = vis.end();
 				for (; _vI != _vE; _vI++)
 				{
 					SlotItemVec* items = *_vI;
+#if RENDER == R_R4
+                    auto& cached = *static_cast<SlotRenderItems*>(items);
+                    if (!valid_delta) cached.cache_state = SlotRenderItems::Invalid;
+                    if (use_cache && cached.cache_state == SlotRenderItems::Settled) BuildRenderCache(cached);
+                    if (use_cache && cached.cache_state == SlotRenderItems::Ready && cached.cached_max_distance <= fade_distance)
+                    {
+                        const u32 count = u32(items->size());
+                        cached_instances += count;
+                        for (u32 first = 0; first < count;)
+                        {
+                            const u32 amount = _min(count - first, hw_BatchSize - dwBatch);
+                            CopyMemory(c_storage + dwBatch * 4, cached.cached_constants.data() + first * 4, amount * 4 * sizeof(Fvector4));
+                            if (c_ExData) CopyMemory(c_ExData + dwBatch, cached.cached_constants.data() + count * 4 + first, amount * sizeof(Fvector4));
+                            first += amount;
+                            dwBatch += amount;
+                            if (dwBatch == hw_BatchSize) flush_batch();
+                        }
+                        continue;
+                    }
+                    bool settled = use_cache;
+#endif
 					SlotItemVecIt _iI = items->begin();
 					SlotItemVecIt _iE = items->end();
 					for (; _iI != _iE; _iI++)
@@ -318,7 +363,11 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 							scale *= 1.0f - abs(Instance.distance - fade_distance) * 0.005f;
 
 						if (scale <= 0 || Instance.alpha <= 0)
-							break;
+                            break;
+#if RENDER == R_R4
+                        settled = settled && scale == 1.f && Instance.alpha == Instance.alpha_target && _valid(Instance.alpha);
+                        ++legacy_instances;
+#endif
 
 						// Build matrix ( 3x4 matrix, last row - color )
 						Fmatrix& M = Instance.mRotY_calculated;
@@ -342,29 +391,12 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 						dwBatch ++;
 						if (dwBatch == hw_BatchSize)
 						{
-							// flush
-							Device.Statistic->RenderDUMP_DT_Count += dwBatch;
-							u32 dwCNT_verts = dwBatch * Object.number_vertices;
-							u32 dwCNT_prims = (dwBatch * Object.number_indices) / 3;
-							//RCache.get_ConstantCache_Vertex().b_dirty				=	TRUE;
-							//RCache.get_ConstantCache_Vertex().get_array_f().dirty	(c_base,c_base+dwBatch*4);
-							RCache.Render(D3DPT_TRIANGLELIST, vOffset, 0, dwCNT_verts, iOffset, dwCNT_prims);
-							RCache.stat.r.s_details.add(dwCNT_verts);
-
-							// restart
-							dwBatch = 0;
-
-							//	Remap constants to memory directly (just in case anything goes wrong)
-							{
-								void* pVData;
-								RCache.get_ConstantDirect(strArray,
-								                          hw_BatchSize * sizeof(Fvector4) * 4,
-								                          &pVData, 0, 0);
-								c_storage = (Fvector4*)pVData;
-							}
-							VERIFY(c_storage);
+                            flush_batch();
 						}
 					}
+#if RENDER == R_R4
+                    if (use_cache) cached.cache_state = settled && _iI == _iE ? SlotRenderItems::Settled : SlotRenderItems::Invalid;
+#endif
 				}
 				// flush if nessecary
 				if (dwBatch)
@@ -389,4 +421,10 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 		vOffset += hw_BatchSize * Object.number_vertices;
 		iOffset += hw_BatchSize * Object.number_indices;
 	}
+#if RENDER == R_R4
+    PROF_TAG("Cached instances", cached_instances);
+    PROF_TAG("Legacy instances", legacy_instances);
+    PROF_TAG("Cache bytes", m_render_cache_bytes);
+#endif
+
 }
