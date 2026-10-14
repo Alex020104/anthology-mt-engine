@@ -93,6 +93,7 @@ CDetailManager::CDetailManager()
 	m_global_time_old = 0;
 
     m_frame_calc = 0;
+    m_visible_bounds.invalidate();
     m_frame_rendered.store(0, std::memory_order_relaxed);
 
 #ifdef DETAIL_RADIUS
@@ -359,6 +360,7 @@ bool CDetailManager::BuildRenderCache(SlotRenderItems& items)
 
 void CDetailManager::UpdateVisibleM()
 {
+    m_visible_bounds.invalidate();
 	Fvector EYE = RDEVICE.vCameraPosition_saved;
 
 	CFrustum View;
@@ -549,6 +551,7 @@ void CDetailManager::UpdateVisibleM()
 #endif
 					}
 				}
+                bool slot_visible = false;
 				for (int sp_id = 0; sp_id < dm_obj_in_slot; sp_id++)
 				{
 					SlotPart& sp = S.G[sp_id];
@@ -556,16 +559,20 @@ void CDetailManager::UpdateVisibleM()
 					if (!sp.r_items[0].empty())
 					{
 						m_visibles[0][sp.id].push_back(&sp.r_items[0]);
+                        slot_visible = true;
 					}
 					if (!sp.r_items[1].empty())
 					{
 						m_visibles[1][sp.id].push_back(&sp.r_items[1]);
+                        slot_visible = true;
 					}
 					if (!sp.r_items[2].empty())
 					{
 						m_visibles[2][sp.id].push_back(&sp.r_items[2]);
+                        slot_visible = true;
 					}
 				}
+                if (slot_visible) m_visible_bounds.merge(S.vis.box);
 			}
 		}
 	}
@@ -605,6 +612,14 @@ void CDetailManager::Render()
 	
 	RDEVICE.Statistic->RenderDUMP_DT_Render.End();
 	m_frame_rendered.store(RDEVICE.dwFrame, std::memory_order_release);
+}
+
+bool CDetailManager::GetVisibleBounds(Fbox& bounds)
+{
+    xrCriticalSectionGuard guard(m_mt_calc_guard);
+    if (m_frame_calc != RDEVICE.dwFrame || !m_visible_bounds.is_valid()) return false;
+    bounds = m_visible_bounds;
+    return true;
 }
 
 void __stdcall CDetailManager::MT_CALC()
