@@ -34,14 +34,18 @@ dx10SamplerStateCache::SHandle dx10SamplerStateCache::GetState(D3D_SAMPLER_DESC&
 
     hResult = FindState(desc, crc);
 
-    if (hResult == hInvalidHandle)
-    {
-        StateRecord rec;
-        rec.m_crc = crc;
-        CreateState(desc, &rec.m_pState);
-        hResult = m_StateArray.size();
-        m_StateArray.push_back(rec);
-    }
+	if (hResult == hInvalidHandle)
+	{
+		StateRecord rec;
+		rec.m_crc = crc;
+		rec.m_usesAnisotropy = desc.Filter == D3D_FILTER_ANISOTROPIC ||
+			desc.Filter == D3D_FILTER_COMPARISON_ANISOTROPIC;
+		rec.m_variants[0].m_mipLODBias = desc.MipLODBias;
+		rec.m_variants[0].m_maxAnisotropy = desc.MaxAnisotropy;
+		CreateState(desc, &rec.m_variants[0].m_pState);
+		hResult = m_StateArray.size();
+		m_StateArray.push_back(rec);
+	}
 
     return hResult;
 }
@@ -60,7 +64,7 @@ dx10SamplerStateCache::SHandle dx10SamplerStateCache::FindState(const StateDecs&
         if (m_StateArray[i].m_crc == StateCRC)
         {
             StateDecs descCandidate;
-            m_StateArray[i].m_pState->GetDesc(&descCandidate);
+            m_StateArray[i].m_variants[0].m_pState->GetDesc(&descCandidate);
             if (descCandidate == desc)
                 //return i;
                 //  TEST
@@ -81,11 +85,9 @@ dx10SamplerStateCache::SHandle dx10SamplerStateCache::FindState(const StateDecs&
 
 void dx10SamplerStateCache::ClearStateArray()
 {
-    ResetDeviceState(); // Invalidate before handles can refer to released/reused objects.
-    for (u32 i = 0; i < m_StateArray.size(); ++i)
-    {
-        _RELEASE(m_StateArray[i].m_pState);
-    }
+    ResetDeviceState(); // Handles are invalid before cached variants retire.
+    for (auto& rec : m_StateArray)
+        for (auto& variant : rec.m_variants) _RELEASE(variant.m_pState);
 
     m_StateArray.clear_not_free();
 }
@@ -129,7 +131,7 @@ bool dx10SamplerStateCache::PrepareSamplerStates(
         if (desired != hInvalidHandle)
         {
             R_ASSERT(desired < m_StateArray.size());
-            pSS[i] = m_StateArray[desired].m_pState;
+            pSS[i] = m_StateArray[desired].m_variants[0].m_pState;
         }
     }
     return true;
@@ -222,26 +224,8 @@ void dx10SamplerStateCache::SetMaxAnisotropy(u32 uiMaxAniso)
         return;
 
     m_uiMaxAnisotropy = uiMaxAniso;
-    ResetDeviceState(); // Sampler objects change even though their handles do not.
-
-    for (u32 i = 0; i < m_StateArray.size(); ++i)
-    {
-        StateRecord& rec = m_StateArray[i];
-        StateDecs desc;
-
-        rec.m_pState->GetDesc(&desc);
-
-        //  MaxAnisitropy is reset by ValidateState if not aplicable
-        //  to the filter mode used.
-        //  Reason: all checks for aniso applicability are done
-        //  in ValidateState.
-        desc.MaxAnisotropy = m_uiMaxAnisotropy;
-        dx10StateUtils::ValidateState(desc);
-
-        //  This can cause fragmentation if called too often
-        rec.m_pState->Release();
-        CreateState(desc, &rec.m_pState);
-    }
+    ResetDeviceState();
+    for (auto& rec : m_StateArray) SelectVariant(rec);
 }
 
 void dx10SamplerStateCache::SetMipLODBias(float uiMipLODBias)
@@ -252,20 +236,44 @@ void dx10SamplerStateCache::SetMipLODBias(float uiMipLODBias)
     m_uiMipLODBias = uiMipLODBias;
     ResetDeviceState();
 
-    for (u32 i = 0; i < m_StateArray.size(); ++i)
+    for (auto& rec : m_StateArray)
+        SelectVariant(rec);
+}
+
+void dx10SamplerStateCache::SelectVariant(StateRecord& rec)
+{
+    // Match ValidateState's effective AF. Point/linear samplers must not gain
+    // redundant variants when the renderer enables/disables anisotropy.
+    const u32 anisotropy = rec.m_usesAnisotropy ? m_uiMaxAnisotropy : 1;
+    const u32 count = sizeof(rec.m_variants) / sizeof(rec.m_variants[0]);
+    for (u32 i = 0; i < count; ++i)
     {
-        StateRecord& rec = m_StateArray[i];
-        StateDecs desc;
-
-        rec.m_pState->GetDesc(&desc);
-
-        desc.MipLODBias = m_uiMipLODBias;
-        dx10StateUtils::ValidateState(desc);
-
-        // This can cause fragmentation if called too often
-        rec.m_pState->Release();
-        CreateState(desc, &rec.m_pState);
+        const StateVariant selected = rec.m_variants[i];
+        if (selected.m_pState && selected.m_mipLODBias == m_uiMipLODBias &&
+            selected.m_maxAnisotropy == anisotropy)
+        {
+            // Transfer our owned references without AddRef/Release on hits.
+            for (u32 j = i; j > 0; --j) rec.m_variants[j] = rec.m_variants[j - 1];
+            rec.m_variants[0] = selected;
+            return;
+        }
     }
+
+    StateDecs desc;
+    rec.m_variants[0].m_pState->GetDesc(&desc);
+    desc.MipLODBias = m_uiMipLODBias;
+    desc.MaxAnisotropy = anisotropy;
+    dx10StateUtils::ValidateState(desc);
+
+    // Create before eviction. Cache hits perform no descriptor queries or
+    // device calls; misses keep at most four owned states per stable handle.
+    StateVariant next;
+    next.m_mipLODBias = m_uiMipLODBias;
+    next.m_maxAnisotropy = anisotropy;
+    CreateState(desc, &next.m_pState);
+    _RELEASE(rec.m_variants[count - 1].m_pState);
+    for (u32 j = count - 1; j > 0; --j) rec.m_variants[j] = rec.m_variants[j - 1];
+    rec.m_variants[0] = next;
 }
 
 

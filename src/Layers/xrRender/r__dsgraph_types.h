@@ -269,6 +269,11 @@ namespace R_dsgraph
 		mapDSGraphItems<float, false> mapCamAttached;
 		mapSorted<float, true, false, false, false> mapCamAttachedSorted;
 		mapDSGraphItems<float, false> mapWater;
+#ifdef USE_DX11
+        // PDA and wearable screen glass are drawn after reconstruction.
+        mapDSGraphItems<float, true> mapHUDNativeUi;
+        bool hasNativeHudAttachments = false;
+#endif
 #if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 		mapDSGraphItems<float, true> mapScopeHUDSorted;
 		mapDSGraphItems<float, false> mapScopeHUD;
@@ -333,6 +338,9 @@ namespace R_dsgraph
 		template<bool free = true>
 		IC void clear_hud()
 		{
+#ifdef USE_DX11
+			hasNativeHudAttachments = false;
+#endif
 			if constexpr (free)
 			{
 				mapHUD.clear_and_free();
@@ -346,6 +354,9 @@ namespace R_dsgraph
 				mapCamAttachedSorted.Sorted.clear_and_free();
 				mapCamAttachedSorted.Distort.clear_and_free();
 
+#ifdef USE_DX11
+                mapHUDNativeUi.clear_and_free();
+#endif
 #if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 				mapScopeHUD.clear_and_free();
 				mapScopeHUDSorted.clear_and_free();
@@ -364,6 +375,9 @@ namespace R_dsgraph
 				mapCamAttachedSorted.Sorted.clear();
 				mapCamAttachedSorted.Distort.clear();
 
+#ifdef USE_DX11
+                mapHUDNativeUi.clear();
+#endif
 #if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 				mapScopeHUD.clear();
 				mapScopeHUDSorted.clear();
