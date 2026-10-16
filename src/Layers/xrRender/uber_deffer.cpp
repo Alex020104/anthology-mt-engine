@@ -31,6 +31,16 @@ void uber_deffer(CBlender_Compile& C, bool hq, LPCSTR _vspec, LPCSTR _pspec, BOO
 	strconcat(sizeof(ps), ps, "deffer_", _pspec, lmap ? "_lmh" : "");
 	xr_strcpy(dt, sizeof(dt), _detail_replace ? _detail_replace : (C.detail_texture ? C.detail_texture : ""));
 
+    bool useDetail = hq && (C.bDetail_Diffuse || C.bDetail_Bump);
+#ifdef USE_DX11
+    // Preserve ordinary static material colour in LQ without enabling detail bump or parallax.
+    if (!hq && C.bDetail_Diffuse && dt[0] && xr_strcmp(_vspec, "base") == 0 &&
+        (xr_strcmp(_pspec, "base") == 0 || xr_strcmp(_pspec, "base_atoc") == 0))
+    {
+        useDetail = true;
+    }
+#endif
+
 	// detect detail bump
 	string256 texDetailBump = {'\0'};
 	string256 texDetailBumpX = {'\0'};
@@ -58,7 +68,7 @@ void uber_deffer(CBlender_Compile& C, bool hq, LPCSTR _vspec, LPCSTR _pspec, BOO
 		fnameA[0] = fnameB[0] = 0;
 		xr_strcat(vs, "_flat");
 		xr_strcat(ps, "_flat");
-		if (hq && (C.bDetail_Diffuse || C.bDetail_Bump))
+		if (useDetail)
 		{
 			xr_strcat(vs, "_d");
 			xr_strcat(ps, "_d");
@@ -77,10 +87,10 @@ void uber_deffer(CBlender_Compile& C, bool hq, LPCSTR _vspec, LPCSTR _pspec, BOO
 		{
 			xr_strcat(ps, "_bump");
 		}
-		if (hq && (C.bDetail_Diffuse || C.bDetail_Bump))
+		if (useDetail)
 		{
 			xr_strcat(vs, "_d");
-			if (bHasDetailBump)
+			if (hq && bHasDetailBump)
 				xr_strcat(ps, "_db"); //	bump & detail & hq
 			else
 				xr_strcat(ps, "_d");

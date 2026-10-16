@@ -219,7 +219,14 @@ void CBlender_BmmD::Compile(CBlender_Compile& C)
 	string256 mask;
 	strconcat(sizeof(mask), mask, C.L_textures[0].c_str(), "_mask");
 	bool z_prepass = ps_r2_ls_flags.test(R2FLAG_TERRAIN_PREPASS);
-	switch (C.iElement)
+    int element = C.iElement;
+#if RENDER == R_R4
+    // Share the detailed material bindings while keeping SSS POM near the camera.
+    const bool farTerrain = RImplementation.o.ssfx_terrain && element == SE_R2_NORMAL_LQ;
+    if (farTerrain)
+        element = SE_R2_NORMAL_HQ;
+#endif
+	switch (element)
 	{
 	case SE_R2_NORMAL_HQ: // deffer
 		if (z_prepass)
@@ -234,7 +241,15 @@ void CBlender_BmmD::Compile(CBlender_Compile& C)
 		if (RImplementation.o.ssfx_terrain)
 		{
 			C.SH->flags.isLandscape = TRUE;
-			uber_deffer(C, true, "terrain", "terrain_high", false, oT2_Name[0] ? oT2_Name : 0, true, z_prepass);
+            if (farTerrain)
+            {
+                C.r_Pass("deffer_impl_flat_d", "deffer_impl_flat_d", FALSE, TRUE, !z_prepass);
+                C.r_dx10Texture("s_base", C.L_textures[0]);
+            }
+            else
+            {
+                uber_deffer(C, true, "terrain", "terrain_high", false, oT2_Name[0] ? oT2_Name : 0, true, z_prepass);
+            }
 		}
 		else
 #endif
@@ -270,7 +285,7 @@ void CBlender_BmmD::Compile(CBlender_Compile& C)
 		C.r_dx10Texture("s_dn_a", strconcat(sizeof(mask), mask, oA_Name, "_bump"));
 
 #if RENDER == R_R4
-		if (RImplementation.o.ssfx_terrain)
+		if (RImplementation.o.ssfx_terrain && !farTerrain)
 		{
 			C.r_dx10Texture("s_height_r", strconcat(sizeof(mask), mask, oR_Name, "_height"));
 			C.r_dx10Texture("s_height_g", strconcat(sizeof(mask), mask, oG_Name, "_height"));

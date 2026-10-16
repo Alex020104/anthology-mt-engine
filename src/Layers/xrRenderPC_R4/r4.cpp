@@ -89,10 +89,6 @@ ShaderElement* CRender::rimp_select_sh_static(dxRender_Visual* pVisual, float cd
 		{
 			float sec_dist = _sqrt(cdist_sq) - pVisual->vis.sphere.R;
 			id = (sec_dist < ps_ssfx_terrain_quality.x * 10) ? SE_R2_NORMAL_HQ : SE_R2_NORMAL_LQ;
-			
-			// Very low shader variation
-			if (sec_dist > 240)
-				id = 3;
 		}
 		else
 		{
