@@ -378,7 +378,7 @@ void CSheduler::ProcessStep()
 			// Stop if really underestimated the cost of batch, check every 8th item
 			if ((i % 8) == 0 && Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
 			{
-				psShedulerTarget += (psShedulerReaction * 3);
+				psShedulerTarget += psShedulerReaction * 1.5f;
 				break;
 			}
 
@@ -531,8 +531,8 @@ void CSheduler::UpdateFinalize()
 {
 	PROF_EVENT();
 
-	clamp(psShedulerTarget, 3.f, 66.f);
-	psShedulerCurrent = 0.9f * psShedulerCurrent + 0.1f * psShedulerTarget;
+	clamp(psShedulerTarget, 1.f, 5.f);
+	psShedulerCurrent = _inertion(psShedulerCurrent, psShedulerTarget, .9f);
 	Device.Statistic->fShedulerLoad = psShedulerCurrent;
 
 	// Finalize
