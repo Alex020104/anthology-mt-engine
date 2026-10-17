@@ -614,10 +614,57 @@ void CDetailManager::Render()
 	m_frame_rendered.store(RDEVICE.dwFrame, std::memory_order_release);
 }
 
+#if RENDER == R_R4
+void CDetailManager::RenderShadow(float fade, light* source)
+{
+    if (!dtFS || !psDeviceFlags.is(rsDetails)) return;
+    // Visibility/cache calculation already completed in the main grass pass.
+    // Only graphics work enters a recording context. Alpha advancement retains
+    // the original cascade order, enforced by SunShadows before this call.
+    xrCriticalSectionGuard guard(m_shadow_render_guard);
+    struct Restore
+    {
+        CDetailManager& details;
+        float fade;
+        Fvector position;
+        bool mode;
+        float shader_mode;
+        ~Restore()
+        {
+            details.fade_distance = fade;
+            details.light_position = position;
+            RCache.recording_grass = mode;
+            if (!RenderContextId()) g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = shader_mode;
+        }
+    } restore{*this, fade_distance, light_position, RCache.recording_grass,
+        RenderContextId() ? 0.f : g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w};
+    fade_distance = fade;
+    if (source) light_position.set(source->position);
+    RCache.recording_grass = !source;
+    if (!source)
+    {
+        swing_current.lerp(swing_desc[0], swing_desc[1], g_pGamePersistent->Environment().wind_strength_factor);
+        if (!RenderContextId())
+            g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = 1.f;
+    }
+    hw_Render(source);
+    if (!source && !RenderContextId())
+        g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = 0.f;
+}
+#endif
+
 bool CDetailManager::GetVisibleBounds(Fbox& bounds)
 {
     xrCriticalSectionGuard guard(m_mt_calc_guard);
     if (m_frame_calc != RDEVICE.dwFrame || !m_visible_bounds.is_valid()) return false;
+    bounds = m_visible_bounds;
+    return true;
+}
+
+bool CDetailManager::TryGetVisibleBounds(Fbox& bounds)
+{
+    xrCriticalSectionTryGuard guard(m_mt_calc_guard);
+    if (!guard.owns_lock() || m_frame_calc != RDEVICE.dwFrame || !m_visible_bounds.is_valid()) return false;
     bounds = m_visible_bounds;
     return true;
 }

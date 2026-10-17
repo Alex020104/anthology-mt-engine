@@ -128,7 +128,7 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 #if RENDER == R_R1 || RENDER == R_R2
     if (i_mask[CDSGraphManager::fl_hud] && sh->flags.iScopeLense)
     {
-        if (sh->flags.iScopeLense == 3 && RImplementation.phase == CRender::PHASE_NORMAL)
+        if (sh->flags.iScopeLense == 3 && RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_NORMAL)
         {
 #if RENDER == R_R2
             if (RImplementation.scope_capture_active)

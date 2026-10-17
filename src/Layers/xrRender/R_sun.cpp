@@ -76,6 +76,17 @@ void CRender::init_cacades()
 
 void CRender::render_sun_cascades()
 {
+#if RENDER == R_R4
+    if (sun_shadows && sun_shadows->Prepared())
+    {
+        sun_shadows->Record();
+        for (u32 i = 0; i < m_sun_cascades.size(); ++i) render_sun_cascade(i);
+        RCache.shadow_texture_source = nullptr;
+        RCache.shadow_texture_view = nullptr;
+        RCache.InvalidateAfterCommandList();
+        return;
+    }
+#endif
 	bool b_need_to_render_sunshafts = Target->need_to_render_sunshafts();
 	bool last_cascade_chain_mode = m_sun_cascades.back().reset_chain;
 	if (b_need_to_render_sunshafts)
@@ -319,7 +330,16 @@ void CRender::prepare_sun_cascade(u32 cascade_ind, const Fmatrix& inverse)
 
 }
 
-void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared, u64 revision)
+#if RENDER == R_R4
+bool CRender::sun_cascade_needs_receiver_bounds(u32 cascade_ind)
+{
+    return !(cascade_ind == m_sun_cascades.size() - 1 && o.advancedpp &&
+        (ps_sunshafts_mode == R2SS_VOLUMETRIC || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS) &&
+        Target->need_to_render_sunshafts());
+}
+#endif
+
+void CRender::capture_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared, u64 revision, bool static_only)
 {
     PROF_EVENT("Render Cascade");
     light* fuckingsun = (light*)Lights.sun_adapted._get();
@@ -329,15 +349,11 @@ void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared
 	// Begin SMAP-render
     {
         PROF_EVENT("Render Cascade: SMAP traverse");
-        phase = PHASE_SMAP;
+        if (!RenderContextId()) phase = PHASE_SMAP;
         cascade.GMCascade.set_shadow_receiver_bounds(nullptr);
         cascade.GMCascade.traverse(pOutdoorSector, cascade.cull_frustum, cascade.cull_COP, cascade.cull_xform);
 #if RENDER == R_R4
-        const bool volumetric_sunshafts_need_full_shadow =
-            cascade_ind == m_sun_cascades.size() - 1 &&
-            RImplementation.o.advancedpp &&
-            (ps_sunshafts_mode == R2SS_VOLUMETRIC || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS) &&
-            Target->need_to_render_sunshafts();
+        const bool volumetric_sunshafts_need_full_shadow = !sun_cascade_needs_receiver_bounds(cascade_ind);
         PROF_TAG("Receiver bounds skipped", volumetric_sunshafts_need_full_shadow);
         if (!volumetric_sunshafts_need_full_shadow)
         {
@@ -434,11 +450,25 @@ void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared
         }
 #endif
         cascade.GMCascade.r_dsgraph_capture_static();
-        cascade.GMCascade.r_dsgraph_capture_dynamic(nullptr, prepared, revision);
+        if (!static_only) cascade.GMCascade.r_dsgraph_capture_dynamic(nullptr, prepared, revision);
 #if RENDER == R_R4
-        if (view_preparation) view_preparation->QueueGraph(cascade.GMCascade, Fidentity, cascade.cull_xform);
+        if (!static_only && view_preparation) view_preparation->QueueGraph(cascade.GMCascade, Fidentity, cascade.cull_xform);
 #endif
     }
+
+}
+
+void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared, u64 revision)
+{
+    PROF_EVENT("Render Cascade");
+    light* fuckingsun = (light*)Lights.sun_adapted._get();
+    sun::cascade& cascade = m_sun_cascades[cascade_ind];
+    Fmatrix& cull_xform = cascade.cull_xform;
+#if RENDER == R_R4
+    if (!sun_shadows || !sun_shadows->Prepared())
+#endif
+        capture_sun_cascade(cascade_ind, prepared, revision);
+    phase = PHASE_SMAP;
 
     // Finalize & Cleanup
     {
@@ -451,18 +481,36 @@ void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared
         {
             bool bDeffered_Shadows = cascade.GMCascade.RGraph.mapStaticPasses[0][0].size() || cascade.GMCascade.RGraph.mapDynamicPasses[0][0].size();
             bool bForward_Shadows = cascade.GMCascade.RGraph.mapStaticPasses[1][0].size() || cascade.GMCascade.RGraph.mapDynamicPasses[1][0].size() || cascade.GMCascade.RGraph.mapStaticSorted.Sorted.size() || cascade.GMCascade.RGraph.mapDynamicSorted.Sorted.size();
+#if RENDER == R_R4
+            const bool context_shadow = sun_shadows && sun_shadows->Bind(cascade_ind);
+#endif
             if (bDeffered_Shadows || bForward_Shadows)
             {
+
+#if RENDER == R_R4
+                if (!context_shadow)
+#endif
                 Target->phase_smap_direct(fuckingsun, SE_SUN_FAR);
                 RCache.set_xform_world(Fidentity);
                 RCache.set_xform_view(Fidentity);
                 RCache.set_xform_project(fuckingsun->X.D.combine);
                 cascade.GMCascade.r_dsgraph_render_graph(0);
+#if RENDER == R_R4
+                cascade.GMCascade.shadow_execution = 0;
+#endif
 
-                if (psDeviceFlags2.test(rsGrassShadow) && cascade_ind <= ps_ssfx_grass_shadows.x)
+                if (psDeviceFlags2.test(rsGrassShadow) && cascade_ind <= ps_ssfx_grass_shadows.x
+#if RENDER == R_R4
+                    && !(sun_shadows && sun_shadows->GrassRecorded(cascade_ind))
+#endif
+                    )
                 {
+#if RENDER == R_R4
+                    Details->RenderShadow(dm_fade * dm_fade * ps_ssfx_grass_shadows.y);
+#else
                     Details->fade_distance = dm_fade * dm_fade * ps_ssfx_grass_shadows.y;
                     Details->Render();
+#endif
                 }
 
                 fuckingsun->X.D.transluent = FALSE;

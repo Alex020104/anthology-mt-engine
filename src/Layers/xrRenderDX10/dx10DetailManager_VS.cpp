@@ -5,6 +5,9 @@
 #include "../../xrEngine/environment.h"
 
 #include "../xrRenderDX10/dx10BufferUtils.h"
+#if RENDER == R_R4
+#include "../xrRenderPC_R4/RenderContext.h"
+#endif
 
 // Vars to store wind prev frame data ( Motion vectors )
 static u32 prev_frame = -1;
@@ -66,6 +69,36 @@ void CDetailManager::hw_Load_Shaders()
 	hwc_s_xform = T1.get("xform");
 	hwc_s_array = T1.get("array");
 }
+
+#if RENDER == R_R4
+bool CDetailManager::CanRecordShadow() const
+{
+    if (!dtFS || !psDeviceFlags.is(rsDetails)) return true;
+    for (const auto* object : objects)
+    {
+        if (!object->shader || !object->shader->E[0]) return false;
+        for (const auto& pass : object->shader->E[0]->passes)
+        {
+            if (!pass->vs || !pass->ps || !pass->vs->recording_safe || !pass->ps->recording_safe ||
+                (pass->gs && pass->gs->gs && !pass->gs->recording_safe) ||
+                (pass->hs && pass->hs->sh && !pass->hs->recording_safe) ||
+                (pass->ds && pass->ds->sh && !pass->ds->recording_safe)) return false;
+            if (pass->constants) for (const auto& constant : pass->constants->table)
+                if (constant->handler && !constant->handler->parallel_safe()) return false;
+        }
+    }
+    return true;
+}
+
+bool CDetailManager::PrimeShadow(RenderContext& context)
+{
+    if (!CanRecordShadow()) return false;
+    if (!dtFS || !psDeviceFlags.is(rsDetails)) return true;
+    for (const auto* object : objects)
+        for (const auto& pass : object->shader->E[0]->passes) context.Prime(*pass);
+    return true;
+}
+#endif
 
 void CDetailManager::hw_Render(light* L)
 {
@@ -146,12 +179,12 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
     PROF_EVENT("Render.Grass.ConstantBlocks");
 #if RENDER == R_R4
     const bool valid_delta = _valid(Device.fTimeDelta) && Device.fTimeDelta >= 0.f;
-    const bool use_cache = hw_BatchSize && valid_delta && RImplementation.phase == CRender::PHASE_NORMAL &&
+    const bool use_cache = hw_BatchSize && valid_delta && RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_NORMAL &&
         !Device.m_SecondViewport.IsSVPFrame() && _valid(fade_distance) && fade_distance >= 0.f &&
         RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector);
     u32 cached_instances = 0, legacy_instances = 0;
 #endif
-	if (RImplementation.phase == CRender::PHASE_SMAP && var_id == 0)
+	if (RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_SMAP && var_id == 0)
 		return;
 
 	static shared_str strConsts("consts");
@@ -181,7 +214,7 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 	if (ps_ssfx_grass_interactive.x > 0)
 		player_pos.set(Device.vCameraPosition.x, Device.vCameraPosition.y, Device.vCameraPosition.z, -1);
 
-	Device.Statistic->RenderDUMP_DT_Count = 0;
+	if (!RenderContextId()) Device.Statistic->RenderDUMP_DT_Count = 0;
 
 	// Matrices and offsets
 	u32 vOffset = 0;
@@ -290,7 +323,7 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 				u32 dwBatch = 0;
                 auto flush_batch = [&]()
                 {
-                    Device.Statistic->RenderDUMP_DT_Count += dwBatch;
+                    if (!RenderContextId()) Device.Statistic->RenderDUMP_DT_Count += dwBatch;
                     const u32 vertices = dwBatch * Object.number_vertices;
                     RCache.Render(D3DPT_TRIANGLELIST, vOffset, 0, vertices, iOffset, dwBatch * Object.number_indices / 3);
                     RCache.stat.r.s_details.add(vertices);
@@ -340,7 +373,7 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 						if (!RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector))
 							continue;
 
-						if (RImplementation.phase == CRender::PHASE_SMAP && L)
+						if (RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_SMAP && L)
 						{
 							if (!L->GMLight.is_sector_visible(RImplementation.pOutdoorSector))
 								continue;
@@ -401,7 +434,7 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 				// flush if nessecary
 				if (dwBatch)
 				{
-					Device.Statistic->RenderDUMP_DT_Count += dwBatch;
+					if (!RenderContextId()) Device.Statistic->RenderDUMP_DT_Count += dwBatch;
 					u32 dwCNT_verts = dwBatch * Object.number_vertices;
 					u32 dwCNT_prims = (dwBatch * Object.number_indices) / 3;
 					//RCache.get_ConstantCache_Vertex().b_dirty				=	TRUE;
@@ -414,7 +447,7 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 			// KD: we must not clear vis on r2 since we want details shadows
 			if (ps_ssfx_grass_shadows.x <= 0)
 			{
-				if (!psDeviceFlags2.test(rsGrassShadow) || RImplementation.PHASE_NORMAL == RImplementation.phase) // phase normal without shadows
+				if (!psDeviceFlags2.test(rsGrassShadow) || RImplementation.PHASE_NORMAL == RCache.RenderPhase(RImplementation.phase)) // phase normal without shadows
 					vis.clear_not_free();
 			}
 		}

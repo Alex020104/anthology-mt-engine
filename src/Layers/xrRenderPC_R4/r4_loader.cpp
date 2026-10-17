@@ -129,6 +129,9 @@ void CRender::level_Load(IReader* fs)
 void CRender::level_Unload()
 {
     PROF_EVENT("LoadGame.RenderUnload");
+    if (local_light_shadows) local_light_shadows->Clear();
+    if (sun_shadows) sun_shadows->Clear();
+    if (rain_shadows) rain_shadows->Clear();
     if (view_preparation) view_preparation->Clear();
     for (auto& list : sun_query_results) list.clear_and_free();
 	if (0 == g_pGameLevel) return;

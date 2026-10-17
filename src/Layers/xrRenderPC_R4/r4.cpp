@@ -72,7 +72,7 @@ float r_dtex_range = 50.f;
 ShaderElement* CRender::rimp_select_sh_dynamic(dxRender_Visual* pVisual, float cdist_sq)
 {
 	int id = SE_R2_SHADOW;
-	if (CRender::PHASE_NORMAL == RImplementation.phase)
+	if (CRender::PHASE_NORMAL == RCache.RenderPhase(RImplementation.phase))
 	{
 		id = ((_sqrt(cdist_sq) - pVisual->vis.sphere.R) < r_dtex_range) ? SE_R2_NORMAL_HQ : SE_R2_NORMAL_LQ;
 	}
@@ -83,7 +83,7 @@ ShaderElement* CRender::rimp_select_sh_dynamic(dxRender_Visual* pVisual, float c
 ShaderElement* CRender::rimp_select_sh_static(dxRender_Visual* pVisual, float cdist_sq)
 {
 	int id = SE_R2_SHADOW;
-	if (CRender::PHASE_NORMAL == RImplementation.phase)
+	if (CRender::PHASE_NORMAL == RCache.RenderPhase(RImplementation.phase))
 	{
 		if (pVisual->shader->E[0]->flags.isLandscape)
 		{
@@ -546,6 +546,9 @@ void CRender::create()
 
 void CRender::destroy()
 {
+    local_light_shadows.reset();
+    sun_shadows.reset();
+    rain_shadows.reset();
 	m_bMakeAsyncSS = false;
 	FluidManager.Destroy();
 	GMBase.destroy();
@@ -560,6 +563,9 @@ void CRender::destroy()
 
 void CRender::reset_begin()
 {
+    if (local_light_shadows) local_light_shadows->Clear();
+    if (sun_shadows) sun_shadows->Clear();
+    if (rain_shadows) rain_shadows->Clear();
 	//AVO: let's reload details while changed details options on vid_restart
 	if (b_loaded && ((dm_current_size != dm_size) || (ps_r__Detail_density != ps_current_detail_density) || (
 		ps_r__Detail_height != ps_current_detail_height)))
@@ -887,6 +893,9 @@ CRender::CRender()
 
 CRender::~CRender()
 {
+    local_light_shadows.reset();
+    sun_shadows.reset();
+    rain_shadows.reset();
     view_preparation.reset();
 	for (auto& it : SWIs) {
 		xr_free(it.sw);
@@ -1012,6 +1021,24 @@ static bool shadow_depth_shader_safe(ID3DShaderReflection* reflection)
     return true;
 }
 
+static bool recording_shader_safe(ID3DShaderReflection* reflection)
+{
+    D3D11_SHADER_DESC description{};
+    if (FAILED(reflection->GetDesc(&description)) || reflection->GetNumInterfaceSlots()) return false;
+    for (UINT i = 0; i < description.BoundResources; ++i)
+    {
+        D3D11_SHADER_INPUT_BIND_DESC resource{};
+        if (FAILED(reflection->GetResourceBindingDesc(i, &resource))) return false;
+        switch (resource.Type)
+        {
+        case D3D_SIT_CBUFFER: case D3D_SIT_TBUFFER: case D3D_SIT_TEXTURE:
+        case D3D_SIT_SAMPLER: case D3D_SIT_STRUCTURED: case D3D_SIT_BYTEADDRESS: break;
+        default: return false;
+        }
+    }
+    return true;
+}
+
 static u32 tree_shadow_inputs(ID3DShaderReflection* reflection)
 {
     if (!static_draw_shader_safe(reflection)) return 0;
@@ -1072,6 +1099,7 @@ static HRESULT create_shader(
 )
 {
 	result->sh = ShaderTypeTraits<T>::CreateHWShader(buffer, buffer_size);
+    result->recording_safe = false;
 
 	ID3DShaderReflection* pReflection = 0;
 
@@ -1080,6 +1108,7 @@ static HRESULT create_shader(
 	{
 		// Parse constant table data
 		result->constants.parse(pReflection, ShaderTypeTraits<T>::GetShaderDest());
+        result->recording_safe = recording_shader_safe(pReflection);
 
 		_RELEASE(pReflection);
 	}
@@ -1107,6 +1136,7 @@ static HRESULT create_shader(
 		SPS* sps_result = (SPS*)result;
 #ifdef USE_DX11
         sps_result->static_draw_safe = false;
+        sps_result->recording_safe = false;
         sps_result->shadow_batch_safe = false;
         sps_result->shadow_depth_cache_safe = false;
         ++sps_result->shadow_shader_revision;
@@ -1139,6 +1169,7 @@ static HRESULT create_shader(
 			sps_result->constants.parse(pReflection, RC_dest_pixel);
 #ifdef USE_DX11
             sps_result->static_draw_safe = static_draw_shader_safe(pReflection);
+            sps_result->recording_safe = recording_shader_safe(pReflection);
             sps_result->shadow_depth_cache_safe = shadow_depth_shader_safe(pReflection);
             D3D11_SHADER_DESC desc{};
             sps_result->shadow_batch_safe = sps_result->shadow_depth_cache_safe &&
@@ -1158,6 +1189,7 @@ static HRESULT create_shader(
 		SVS* svs_result = (SVS*)result;
 #ifdef USE_DX11
         svs_result->static_draw_safe = false;
+        svs_result->recording_safe = false;
         svs_result->particle_position_safe = false;
         svs_result->tree_shadow_inputs = 0;
         svs_result->tree_shadow_batch_safe = false;
@@ -1204,6 +1236,7 @@ static HRESULT create_shader(
 			svs_result->constants.parse(pReflection, RC_dest_vertex);
 #ifdef USE_DX11
             svs_result->static_draw_safe = static_draw_shader_safe(pReflection);
+            svs_result->recording_safe = recording_shader_safe(pReflection);
             svs_result->shadow_depth_cache_safe = shadow_depth_shader_safe(pReflection);
             svs_result->tree_shadow_inputs = tree_shadow_inputs(pReflection);
             svs_result->tree_shadow_batch_safe = tree_shadow_batch_safe(pReflection);
@@ -1261,6 +1294,7 @@ static HRESULT create_shader(
 	{
 		SGS* sgs_result = (SGS*)result;
 #ifdef USE_DX11
+        sgs_result->recording_safe = false;
 		_result = HW.pDevice->CreateGeometryShader(buffer, buffer_size, 0, &sgs_result->gs);
 #else // #ifdef USE_DX11
 		_result			= HW.pDevice->CreateGeometryShader(buffer, buffer_size, &sgs_result->gs);
@@ -1286,6 +1320,9 @@ static HRESULT create_shader(
 		{
 			//	Let constant table parse it's data
 			sgs_result->constants.parse(pReflection, RC_dest_geometry);
+#ifdef USE_DX11
+            sgs_result->recording_safe = recording_shader_safe(pReflection);
+#endif
 
 			_RELEASE(pReflection);
 		}
