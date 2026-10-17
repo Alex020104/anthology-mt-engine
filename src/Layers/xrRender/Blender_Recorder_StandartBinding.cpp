@@ -198,7 +198,11 @@ class cl_fog_plane : public NativeConstantSetup
 		{
 			// Plane
 			Fvector4 plane;
-			Fmatrix& M = Device.mFullTransform;
+#if defined(USE_DX11) && RENDER == R_R4
+            const Fmatrix& M = RenderCameraFullTransform();
+#else
+            const Fmatrix& M = Device.mFullTransform;
+#endif
 			plane.x = -(M._14 + M._13);
 			plane.y = -(M._24 + M._23);
 			plane.z = -(M._34 + M._33);
@@ -812,7 +816,11 @@ class cl_sun0_dir_e : public NativeConstantSetup
 		{
 			Fvector D;
 			CEnvDescriptor& desc = *g_pGamePersistent->Environment().CurrentEnv;
-			Device.mView.transform_dir(D, desc.sun_dir);
+#if defined(USE_DX11) && RENDER == R_R4
+            RenderCameraView().transform_dir(D, desc.sun_dir);
+#else
+            Device.mView.transform_dir(D, desc.sun_dir);
+#endif
 			D.normalize();
 			result.set(D.x, D.y, D.z, 0);
 		}
@@ -966,7 +974,11 @@ static class cl_inv_v : public NativeConstantSetup
 
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, Device.mInvView);
+#if defined(USE_DX11) && RENDER == R_R4
+        RCache.set_c(C, RenderCameraInverseView());
+#else
+        RCache.set_c(C, Device.mInvView);
+#endif
 	}
 } binder_inv_v;
 

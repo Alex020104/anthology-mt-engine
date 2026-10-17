@@ -115,26 +115,38 @@ static class cl_LOD : public R_constant_setup
 	}
 } binder_LOD;
 
+Fvector4 CalculatePositionDecompression()
+{
+    const float vert_tan = -1.0f * tanf(deg2rad(Device.fFOV / 2.0f));
+    const float horz_tan = -vert_tan / Device.fASPECT;
+    const float sx = 2.0f * horz_tan / RenderScreenWidth();
+    const float sy = 2.0f * vert_tan / RenderScreenHeight();
+    const auto jitter = dlss::RasterJitter();
+    Fvector4 parameters;
+    return parameters.set(horz_tan + jitter.x * sx, vert_tan + jitter.y * sy, sx, sy);
+}
+
 static class cl_pos_decompress_params : public R_constant_setup
 {
+    bool parallel_safe() const override { return true; }
 	virtual void setup(R_constant* C)
 	{
-		float VertTan = -1.0f * tanf(deg2rad(Device.fFOV / 2.0f));
-		float HorzTan = - VertTan / Device.fASPECT;
-
-		const float sx = 2.0f * HorzTan / RenderScreenWidth();
-		const float sy = 2.0f * VertTan / RenderScreenHeight();
-		const auto jitter = dlss::RasterJitter();
-		RCache.set_c(C, HorzTan + jitter.x * sx, VertTan + jitter.y * sy, sx, sy);
+        Fvector4 value;
+        if (!ContextPositionDecompression(value, false)) value = CalculatePositionDecompression();
+        RCache.set_c(C, value);
 	}
 } binder_pos_decompress_params;
 
 static class cl_pos_decompress_params2 : public R_constant_setup
 {
+    bool parallel_safe() const override { return true; }
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, float(RenderScreenWidth()), float(RenderScreenHeight()), 1.0f / RenderScreenWidth(),
-		             1.0f / RenderScreenHeight());
+        Fvector4 value;
+        if (!ContextPositionDecompression(value, true))
+            value.set(float(RenderScreenWidth()), float(RenderScreenHeight()),
+                1.0f / RenderScreenWidth(), 1.0f / RenderScreenHeight());
+        RCache.set_c(C, value);
 	}
 } binder_pos_decompress_params2;
 
