@@ -116,9 +116,46 @@ ID3D11InputLayout* ContextInputLayout(SDeclaration* declaration, ID3DBlob* signa
     {
         result.declaration = ref_declaration(declaration);
         result.signature = signature;
-        R_CHK(HW.pDevice->CreateInputLayout(declaration->dx10_dcl_code.data(),
+        const HRESULT created = HW.pDevice->CreateInputLayout(declaration->dx10_dcl_code.data(),
             u32(declaration->dx10_dcl_code.size() - 1), signature->GetBufferPointer(),
-            signature->GetBufferSize(), result.layout.GetAddressOf()));
+            signature->GetBufferSize(), result.layout.GetAddressOf());
+        if (FAILED(created))
+        {
+            string_path filename;
+            xr_sprintf(filename, "input_layout_p%u_c%u_f%u.layout", GetCurrentProcessId(), current->id, Device.dwFrame);
+            auto* writer = FS.w_open("$logs$", filename);
+            if (writer)
+            {
+                // The DXBC header contains the signature length; preserve the
+                // declaration after it so restarting cannot erase the evidence.
+                writer->w(signature->GetBufferPointer(), u32(signature->GetBufferSize()));
+                writer->w_printf("\r\nInput layout: hr=0x%08x context=%u phase=%u frame=%u declaration=%u signature=%u\r\n",
+                    u32(created), current->id, current->backend.recording_phase, Device.dwFrame,
+                    u32(declaration->dx10_dcl_code.size()), u32(signature->GetBufferSize()));
+            }
+            Msg("! Input layout failed: hr=0x%08x context=%u phase=%u frame=%u declaration=%u signature=%u bytes",
+                u32(created), current->id, current->backend.recording_phase, Device.dwFrame,
+                u32(declaration->dx10_dcl_code.size()), u32(signature->GetBufferSize()));
+            for (size_t i = 0; i + 1 < declaration->dx10_dcl_code.size(); ++i)
+            {
+                const auto& element = declaration->dx10_dcl_code[i];
+                Msg("! Input layout element %u: %s%u format=%u slot=%u offset=%u class=%u step=%u",
+                    u32(i), element.SemanticName ? element.SemanticName : "<null>", element.SemanticIndex,
+                    u32(element.Format), element.InputSlot, element.AlignedByteOffset,
+                    u32(element.InputSlotClass), element.InstanceDataStepRate);
+                if (writer)
+                    writer->w_printf("element=%u semantic=%s index=%u format=%u slot=%u offset=%u class=%u step=%u\r\n",
+                        u32(i), element.SemanticName ? element.SemanticName : "<null>", element.SemanticIndex,
+                        u32(element.Format), element.InputSlot, element.AlignedByteOffset,
+                        u32(element.InputSlotClass), element.InstanceDataStepRate);
+            }
+            if (writer)
+            {
+                FS.w_close(writer);
+                Msg("! Input layout report saved to $logs$/%s", filename);
+            }
+        }
+        R_CHK2(created, "CreateInputLayout failed; see input layout diagnostics in the log");
     }
     return result.layout.Get();
 }
