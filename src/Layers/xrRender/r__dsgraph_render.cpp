@@ -22,6 +22,7 @@
 #include "../../xrEngine/xr_object.h"
 #if RENDER == R_R4
 #include "../xrRenderPC_R4/Dlss/DlssNativeUi.h"
+#include "../xrRenderPC_R4/LocalLightDebug.h"
 #endif
 
 using namespace R_dsgraph;
@@ -889,6 +890,9 @@ void CDSGraphManager::r_dsgraph_capture_lights()
 #else
 				if (L->get_LOD() > ps_r2_shadow_lod_min && L->has_light_visible_from_sectors(*this))
 				{
+#if defined(USE_DX11) && RENDER == R_R4
+                    if (LocalLightDebug::active) LocalLightDebug::ParentPassed(*L);
+#endif
 					RImplementation.Lights.add_light(L);
 				}
 #endif

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "LocalLightShadows.h"
+#include "LocalLightDebug.h"
 #include "LocalShadowVisibility.h"
 #include "RenderContext.h"
 #include "../xrRender/FVisual.h"
@@ -517,6 +518,7 @@ void LocalLightShadows::BeginFrame(light_Package& package)
             }
         }
         if (!item->vis.visible) { ++state->rejected; return true; }
+        if (LocalLightDebug::active) LocalLightDebug::Accepted(*item);
         item->optimize_smap_size();
         return false;
     }), source.end());
@@ -782,6 +784,7 @@ bool LocalLightShadows::RenderShadows(light_Package& package)
                     job->cache->visibility.pending = job->cache->selected;
                 if (recorded && block.accumulate)
                 {
+                    if (job->accumulate && LocalLightDebug::active) LocalLightDebug::Submitted(item);
                     graph.RGraph.clear_graph<false>(graph.RGraph.mapDynamicPasses, 0);
                     if (job->accumulate) ++RImplementation.stats.ls_shadowed_rendered;
                     ++skipped_static; ++skipped_dynamic;
@@ -841,6 +844,7 @@ bool LocalLightShadows::RenderShadows(light_Package& package)
         {
             for (const auto& item : state->unshadowed)
             {
+                if (LocalLightDebug::active) LocalLightDebug::Submitted(*item.source);
                 if (item.point) ++RImplementation.stats.ls_unshadowed_point_rendered;
                 else ++RImplementation.stats.ls_unshadowed_spot_rendered;
             }

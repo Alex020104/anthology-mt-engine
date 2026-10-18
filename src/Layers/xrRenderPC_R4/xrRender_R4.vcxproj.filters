@@ -1476,6 +1476,9 @@
     <ClInclude Include="LocalLightShadows.h">
       <Filter>Lights</Filter>
     </ClInclude>
+    <ClInclude Include="LocalLightDebug.h">
+      <Filter>Lights</Filter>
+    </ClInclude>
     <ClInclude Include="RenderContext.h">
       <Filter>Lights</Filter>
     </ClInclude>
@@ -1486,6 +1489,9 @@
       <Filter>Lights</Filter>
     </ClInclude>
     <ClCompile Include="LocalLightShadows.cpp">
+      <Filter>Lights</Filter>
+    </ClCompile>
+    <ClCompile Include="LocalLightDebug.cpp">
       <Filter>Lights</Filter>
     </ClCompile>
     <ClCompile Include="RenderContext.cpp">

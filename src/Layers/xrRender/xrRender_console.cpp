@@ -5,6 +5,9 @@
 #include	"dxRenderDeviceRender.h"
 
 #include "../../build_config_defines.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/LocalLightDebug.h"
+#endif
 
 u32 ps_Preset = 2;
 u32 ps_r_dlss_quality = 0;
@@ -1095,6 +1098,15 @@ public:
 	}
 };
 
+#if defined(USE_DX11) && RENDER == R_R4
+class CCC_LightDebugDump : public IConsole_Command
+{
+public:
+    CCC_LightDebugDump(LPCSTR name) : IConsole_Command(name) { bEmptyArgsHandled = TRUE; }
+    void Execute(LPCSTR) override { LocalLightDebug::RequestDump(); }
+};
+#endif
+
 //	Allow real-time fog config reload
 #if	(RENDER == R_R3) || (RENDER == R_R4)
 #ifdef	DEBUG
@@ -1593,6 +1605,10 @@ void xrRender_initconsole()
 	CMD3(CCC_Token, "r_fsr3_quality", &ps_r_fsr3_quality, fsr3_quality_token);
 	CMD3(CCC_Token, "r_dlss_preset", &ps_r_dlss_preset, dlss_preset_token);
 	CMD4(CCC_Float, "r_dlss_sharpness", &ps_r_dlss_sharpness, 0.0f, 1.0f);
+#if RENDER == R_R4
+    CMD4(CCC_Integer, "r4_light_debug", &LocalLightDebug::show, 0, 1);
+    CMD1(CCC_LightDebugDump, "r4_light_debug_dump");
+#endif
 #endif
 	CMD3(CCC_Mask,		"r2_gi",				&ps_r2_ls_flags,			R2FLAG_GI);
 	CMD4(CCC_Float,		"r2_gi_clip",			&ps_r2_GI_clip,				EPS,	0.1f	);

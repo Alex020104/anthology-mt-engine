@@ -2,6 +2,9 @@
 #include "light.h"
 #include "QueryHelper.h"
 #include "../../xrEngine/cl_intersect.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/LocalLightDebug.h"
+#endif
 
 const u32 delay_small_min = 1;
 const u32 delay_small_max = 3;
@@ -22,18 +25,30 @@ void light::vis_prepare()
     {
         vis.visible = false;
         vis.pending = false;
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this, LocalLightDebug::Reason::Inactive);
+#endif
         return;
     }
     if (!flags.bOccq || flags.bHudMode)
     {
         vis.visible = true;
         vis.pending = false;
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this,
+            flags.bHudMode ? LocalLightDebug::Reason::Hud : LocalLightDebug::Reason::OccqDisabled);
+#endif
         return;
     }
 
     u32 frame = Device.dwFrame;
     if (frame < vis.frame2test)
+    {
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Cached(*this);
+#endif
         return;
+    }
 
     float safe_area = VIEWPORT_NEAR;
     {
@@ -56,12 +71,18 @@ void light::vis_prepare()
 
     vis.distance = Device.vCameraPosition.distance_to(SpatialComponent->spatial.sphere.P);
 
-    if (skiptest || vis.distance <= (SpatialComponent->spatial.sphere.R * 1.01f + safe_area + (SpatialComponent->spatial.sphere.R * 0.1f))) // small error
+    const float near_limit = SpatialComponent->spatial.sphere.R * 1.01f + safe_area + (SpatialComponent->spatial.sphere.R * 0.1f);
+    if (skiptest || vis.distance <= near_limit) // small error
     {
         // small error
         vis.visible = true;
         vis.pending = false;
         vis.frame2test = frame + ::Random.randI(delay_small_min, delay_small_max);
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this, skiptest ?
+            (flags.bShadow ? LocalLightDebug::Reason::ShadowTestDisabled : LocalLightDebug::Reason::UnshadowedTestDisabled) :
+            LocalLightDebug::Reason::NearCamera, near_limit);
+#endif
         return;
     }
 
@@ -81,6 +102,9 @@ void light::vis_prepare()
         RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, 0x01, 0xff, 0x00);
     RImplementation.Target->draw_volume(this);
     CHK_DX(EndQuery(vis.Q));
+#if defined(USE_DX11) && RENDER == R_R4
+    if (LocalLightDebug::active) LocalLightDebug::QueryIssued(*this);
+#endif
 }
 
 void light::vis_update()
@@ -108,9 +132,15 @@ void light::vis_update()
             vis.pending = false;
             vis.frame2test = frame + ::Random.randI(delay_small_min, delay_small_max);
         }  
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::QueryResult(*this, hr, fragments);
+#endif
         return;
     }
     
     vis.visible = (fragments > cullfragments);
     vis.frame2test = vis.visible ? (frame + ::Random.randI(delay_large_min, delay_large_max)) : (frame + 1);
+#if defined(USE_DX11) && RENDER == R_R4
+    if (LocalLightDebug::active) LocalLightDebug::QueryResult(*this, hr, fragments);
+#endif
 }

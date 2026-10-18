@@ -3,6 +3,9 @@
 #include "../../xrEngine/xr_object.h"
 #include "FBasicVisual.h"
 #include "SkeletonCustom.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/LocalLightDebug.h"
+#endif
 
 extern int ps_r2_shadow_omnipart_vischeck;
 
@@ -124,6 +127,9 @@ void CRender::render_lights(light_Package& LP)
 					return true;
 				}
 
+#if defined(USE_DX11) && RENDER == R_R4
+                if (LocalLightDebug::active) LocalLightDebug::Accepted(*L);
+#endif
 				L->optimize_smap_size();
 
 				return false;

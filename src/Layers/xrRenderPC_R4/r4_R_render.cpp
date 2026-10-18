@@ -5,6 +5,7 @@
 #include "../../xrEngine/xr_object.h"
 #include "../xrRender/SkeletonCustom.h"
 #include "../../xrParticles/ParticlesAsyncManager.h"
+#include "LocalLightDebug.h"
 
 #include "../xrRender/QueryHelper.h"
 
@@ -121,6 +122,7 @@ void CRender::Render()
 
 	//.	VERIFY					(g_pGameLevel && g_pGameLevel->pHUD);
 
+    LocalLightDebug::BeginFrame();
 	dlss::BeginScene();
 	// Configure
 	RImplementation.o.distortion = FALSE; // disable distorion
@@ -414,6 +416,8 @@ void CRender::Render()
         PROF_EVENT("Render.Combine");
 		Target->phase_combine();
 	}
+
+    LocalLightDebug::EndFrame();
 
 	if (Details)
 		Details->details_clear();

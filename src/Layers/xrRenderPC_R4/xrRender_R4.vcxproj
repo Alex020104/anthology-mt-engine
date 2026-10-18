@@ -564,6 +564,7 @@
     <ClInclude Include="r4.h" />
     <ClInclude Include="RenderViewPreparation.h" />
     <ClInclude Include="LocalLightShadows.h" />
+    <ClInclude Include="LocalLightDebug.h" />
     <ClInclude Include="SunShadows.h" />
     <ClInclude Include="LocalShadowVisibility.h" />
     <ClInclude Include="RenderContext.h" />
@@ -804,6 +805,7 @@
     <ClCompile Include="LocalLightShadows.cpp">
       <ExceptionHandling>Sync</ExceptionHandling>
     </ClCompile>
+    <ClCompile Include="LocalLightDebug.cpp" />
     <ClCompile Include="SunShadows.cpp">
       <ExceptionHandling>Sync</ExceptionHandling>
     </ClCompile>
