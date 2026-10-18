@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "GeometryVisibility.h"
 #if RENDER == R_R4
 #include "../xrRenderPC_R4/Dlss/DlssNativeUi.h"
 #endif
@@ -336,7 +337,7 @@ void CDSGraphManager::r_dsgraph_render_ScopeSorted()  //  Redotix99: for 3D Shad
 #if RENDER == R_R4
 void CDSGraphManager::r_dsgraph_extract_native_ui()
 {
-	// Hold PDA screens and WearableDevices screen glass for the native pass.
+	// Hold screens, PRS/LFO marks and laser planes for the native HUD pass.
 	// Attachment widgets draw directly through RenderActiveItemUI, outside these
 	// queues. Their glass must follow them instead of being baked into the scene.
 	RGraph.hasNativeHudAttachments = false;
@@ -344,6 +345,10 @@ void CDSGraphManager::r_dsgraph_extract_native_ui()
 	{
 		for (const auto& pass : item.pSE->passes)
 		{
+			if (!pass) continue;
+			if (pass->ps && pass->vs &&
+				dlss::IsNativeHudOverlayShader(pass->ps->cName.c_str(), pass->vs->cName.c_str()))
+				return true;
 			if (!pass->T) continue;
 			for (const auto& texture : *pass->T)
 			{
@@ -368,7 +373,7 @@ void CDSGraphManager::r_dsgraph_extract_native_ui()
 		if (lastCount != count)
 		{
 			lastCount = count;
-			Msg("* [UPSCALER/UI] native screens=%u wearable=%u frame=%u", count,
+			Msg("* [UPSCALER/UI] native HUD packets=%u wearable=%u frame=%u", count,
 				RGraph.hasNativeHudAttachments ? 1 : 0, Device.dwFrame);
 		}
 	}
@@ -378,7 +383,8 @@ void CDSGraphManager::r_dsgraph_render_native_ui(bool renderHudUi)
 {
 	PROF_EVENT("r_dsgraph_render_native_ui");
 	// Draw widgets once, at display resolution with the unjittered HUD projection,
-	// before the sorted PDA/glass meshes, preserving the forward-pass ordering.
+	// before the sorted screen/reticle/laser meshes. Keep their original depth
+	// tests, skinning and blend state, using the reconstructed HUD depth buffer.
 	if (renderHudUi) r_dsgraph_render_hud_ui();
 	CHudInitializer initializer(true);
 	RImplementation.rmNear();
@@ -788,6 +794,17 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 						if (0 == renderable) break;
 
 						if (O && O->dcast_Renderable() == renderable) break;
+
+                        // Cull a world object once, using its complete spatial bounds.
+                        // Testing skeleton children here would drop heads before bodies.
+                        IRenderVisual* visual = renderable->renderable.visual;
+                        if (i_mask[CDSGraphManager::fl_normal] && visual &&
+                            !(spatial->spatial.type & STYPE_PARTICLE) &&
+                            !visual->flags.test(IRenderVisualFlags::eIgnoreOptimization) &&
+                            !anthology::geometry::visible(false, opt_dynamic,
+                                spatial->spatial.sphere.volume(),
+                                Device.vCameraPosition.distance_to_sqr(spatial->spatial.sphere.P), Device.fFOV))
+                            break;
 
 						// Rendering
 #if	RENDER==R_R1

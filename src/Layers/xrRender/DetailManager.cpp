@@ -655,6 +655,11 @@ void __stdcall CDetailManager::MT_CALC()
 		RDEVICE.Statistic->RenderDUMP_DT_Cache.End();
 
 		UpdateVisibleM();
+#ifdef USE_DX11
+        // The same visibility barrier protects the published instance stream.
+        // No immediate-context calls are made by the preparation worker.
+        hw_Prepare_Instances();
+#endif
 		m_frame_calc = current_frame;
 	}
 }

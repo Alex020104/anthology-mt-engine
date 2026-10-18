@@ -31,6 +31,7 @@ public:
 private:
 	Fvector4* Access(u16 offset);
 	void Store(u16 offset, const void* value, u32 bytes);
+	void StoreMatrix(u16 offset, const Fmatrix& value, u32 rows);
 
 private:
 	shared_str m_strBufferName;

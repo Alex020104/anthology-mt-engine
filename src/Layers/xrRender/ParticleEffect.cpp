@@ -14,6 +14,39 @@
 using namespace PAPI;
 using namespace PS;
 
+#if defined(USE_DX11) && !defined(_EDITOR)
+struct ParticleRenderVertex
+{
+    Fvector p;
+    u32 color;
+    Fvector2 t;
+    Fvector4 previous;
+    void set(float x, float y, float z, u32 c, float u, float v)
+    {
+        p.set(x, y, z); color = c; t.set(u, v);
+    }
+};
+static_assert(sizeof(ParticleRenderVertex) == 40, "Particle input layout");
+static D3DVERTEXELEMENT9 particleMotionDecl[] =
+{
+    {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+    {0, 12, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+    {0, 16, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0},
+    {0, 24, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
+    D3DDECL_END()
+};
+static bool ParticleMotionActive(const CParticleEffect& effect)
+{
+    static const bool disabled = strstr(Core.Params, "-particle_motion_off") != nullptr;
+    return !disabled && g_main_temporal_upscaler_active &&
+        !Device.m_SecondViewport.IsSVPFrame() && RImplementation.phase == CRender::PHASE_NORMAL &&
+        !effect.m_RT_Flags.is(CParticleEffect::flRT_HUDmode);
+}
+#else
+using ParticleRenderVertex = FVF::LIT;
+#endif
+
+
 static void ApplyTexgen(const Fmatrix& mVP)
 {
 	Fmatrix mTexgen;
@@ -318,7 +351,11 @@ void CParticleEffect::OnDeviceCreate()
 	{
 		if (m_Def->m_Flags.is(CPEDef::dfSprite))
 		{
+#if defined(USE_DX11) && !defined(_EDITOR)
+			geom.create(particleMotionDecl, RCache.Vertex.Buffer(), RCache.QuadIB);
+#else
 			geom.create(FVF::F_LIT, RCache.Vertex.Buffer(), RCache.QuadIB);
+#endif
 			if (m_Def) shader = m_Def->m_CachedShader;
 		}
 	}
@@ -338,7 +375,7 @@ void CParticleEffect::OnDeviceDestroy()
 
 #ifndef _EDITOR
 //----------------------------------------------------
-IC void FillSprite_fpu(FVF::LIT*& pv, const Fvector& T, const Fvector& R, const Fvector& pos, const Fvector2& lt,
+IC void FillSprite_fpu(ParticleRenderVertex*& pv, const Fvector& T, const Fvector& R, const Fvector& pos, const Fvector2& lt,
                        const Fvector2& rb, float r1, float r2, u32 clr, float angle)
 {
 	float sa = _sin(angle);
@@ -376,7 +413,7 @@ IC void FillSprite_fpu(FVF::LIT*& pv, const Fvector& T, const Fvector& R, const 
 
 Lock m_sprite_section;
 
-IC void FillSprite(FVF::LIT*& pv, const Fvector& T, const Fvector& R, const Fvector& pos, const Fvector2& lt,
+IC void FillSprite(ParticleRenderVertex*& pv, const Fvector& T, const Fvector& R, const Fvector& pos, const Fvector2& lt,
                    const Fvector2& rb, float r1, float r2, u32 clr, float sina, float cosa)
 {
 	m_sprite_section.Enter();
@@ -437,7 +474,7 @@ IC void FillSprite(FVF::LIT*& pv, const Fvector& T, const Fvector& R, const Fvec
 	m_sprite_section.Leave();
 }
 
-IC void FillSprite(FVF::LIT*& pv, const Fvector& pos, const Fvector& dir, const Fvector2& lt, const Fvector2& rb,
+IC void FillSprite(ParticleRenderVertex*& pv, const Fvector& pos, const Fvector& dir, const Fvector2& lt, const Fvector2& rb,
                    float r1, float r2, u32 clr, float sina, float cosa)
 {
 #ifdef _GPA_ENABLED
@@ -495,7 +532,7 @@ IC void FillSprite(FVF::LIT*& pv, const Fvector& pos, const Fvector& dir, const 
 
 struct PRS_PARAMS
 {
-	FVF::LIT* pv;
+	ParticleRenderVertex* pv;
 	u32 p_from;
 	u32 p_to;
 	PAPI::Particle* particles;
@@ -517,18 +554,29 @@ __forceinline void magnitude_sse(Fvector& vec, float& res)
 	_mm_store_ss((float*)&res, tv);
 }
 
-bool ParticleRenderStream(FVF::LIT* pv, u32 count, PAPI::Particle * particles, CParticleEffect * pPE)
+bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * particles, CParticleEffect * pPE)
 {
     const float snowSize=pPE->m_SeasonSnow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f;
 	float sina = 0.0f, cosa = 0.0f;
 	// Xottab_DUTY: changed angle to be float instead of DWORD
 	// But it must be 0xFFFFFFFF or otherwise some particles won't play
 	float angle = 0xFFFFFFFF;
+#ifdef USE_DX11
+    ParticleRenderVertex* output = pv;
+    ParticleRenderVertex vertices[4];
+    const bool motionActive = ParticleMotionActive(*pPE);
+#endif
 
 
 	for (u32 i = 0; i != count; ++i)
 	{
 		PAPI::Particle& m = particles[i];
+#ifdef USE_DX11
+        // Dynamic vertex memory is write-combined: never read generated corners
+        // back from it. Build and inspect the quad in ordinary CPU memory.
+        pv = vertices;
+        ParticleRenderVertex* quad = vertices;
+#endif
 		{
 			if (pPE->m_RT_Flags.is(CParticleEffect::flRT_LiveUpdate))
 			{
@@ -653,6 +701,30 @@ bool ParticleRenderStream(FVF::LIT* pv, u32 count, PAPI::Particle * particles, C
 				FillSprite(pv, RDEVICE.vCameraTop, RDEVICE.vCameraRight, m.posI, lt, rb, r_x, r_y, color_rgba_f(m.colorR, m.colorG, m.colorB, m.colorA), sina, cosa);
 			}
 		}
+#ifdef USE_DX11
+        // Store the exact generated corners, including billboard rotation/scale.
+        // A second pass in this frame keeps the same previous-frame geometry.
+        if (motionActive)
+        {
+            ParticleRenderHistory::Quad current;
+            for (u32 corner = 0; corner < 4; ++corner)
+                current[corner] = {quad[corner].p.x, quad[corner].p.y, quad[corner].p.z};
+            m.renderHistory.Advance(Device.mMainRenderSerial, current);
+            for (u32 corner = 0; corner < 4; ++corner)
+            {
+                const auto& previous = m.renderHistory.previous[corner];
+                quad[corner].previous.set(previous[0], previous[1], previous[2], 1.f);
+            }
+        }
+        else
+        {
+            for (u32 corner = 0; corner < 4; ++corner)
+                quad[corner].previous.set(quad[corner].p.x, quad[corner].p.y, quad[corner].p.z, 0.f);
+        }
+        CopyMemory(output, vertices, sizeof(vertices));
+        output += 4;
+#endif
+
 	}
 	return false;
 }
@@ -673,7 +745,7 @@ void CParticleEffect::Render(float)
 	{
 		if (m_Def && m_Def->m_Flags.is(CPEDef::dfSprite))
 		{
-			FVF::LIT* pv_start = (FVF::LIT*)RCache.Vertex.Lock(p_cnt * 4 * 4, geom->vb_stride, dwOffset);
+			ParticleRenderVertex* pv_start = (ParticleRenderVertex*)RCache.Vertex.Lock(p_cnt * 4, geom->vb_stride, dwOffset);
 			bool NeedExit = ParticleRenderStream(pv_start, p_cnt, particles, this);
 
 			dwCount = p_cnt << 2;

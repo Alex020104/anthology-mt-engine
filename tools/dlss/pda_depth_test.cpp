@@ -1,5 +1,5 @@
-// Runs the actual native-PDA depth shader on D3D11 WARP, then draws a one-pixel
-// checkerboard through its depth buffer to verify native UI and hand occlusion.
+// Runs Anthology's native HUD depth shader on D3D11 WARP, then draws one-pixel
+// detail through its depth buffer to verify screen/reticle detail and occlusion.
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -22,7 +22,7 @@ static ComPtr<ID3DBlob> Compile(const char* source, const char* entry, const cha
     ComPtr<ID3DBlob> code, error;
     HRESULT hr = source ? D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr,
         entry, target, D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &error) :
-        D3DCompileFromFile(L"extras/dlss_gamma/gamedata/shaders/r3/dlss_ui_depth.ps", nullptr,
+        D3DCompileFromFile(L"gamedata/shaders/r3/anthology_upscale_hud_depth.ps", nullptr,
             D3D_COMPILE_STANDARD_FILE_INCLUDE, entry, target, D3DCOMPILE_ENABLE_STRICTNESS, 0, &code, &error);
     if (error) std::printf("%s", static_cast<const char*>(error->GetBufferPointer()));
     Check(hr, "Compile");
@@ -33,15 +33,26 @@ try
 {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> ctx;
-    Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_DEBUG,
-        nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &ctx), "Device");
+    HRESULT created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_DEBUG,
+        nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &ctx);
+    if (created == DXGI_ERROR_SDK_COMPONENT_MISSING)
+    {
+        std::puts("D3D11 debug layer unavailable; running pixel/depth assertions without debug-message validation.");
+        created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+            nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &ctx);
+    }
+    Check(created, "Device");
     ComPtr<ID3D11InfoQueue> debug;
-    Check(device.As(&debug), "Debug layer");
+    device.As(&debug);
     const char* shader = R"(
-float4 VS(uint id : SV_VertexID) : SV_Position
+struct Vertex { float4 position : SV_Position; float2 uv : TEXCOORD0; };
+Vertex VS(uint id : SV_VertexID)
 {
     float2 uv = float2((id << 1) & 2, id & 2);
-    return float4(uv * float2(2, -2) + float2(-1, 1), 0.5, 1);
+    Vertex output;
+    output.position = float4(uv * float2(2, -2) + float2(-1, 1), 0.5, 1);
+    output.uv = uv;
+    return output;
 }
 float4 PS(float4 position : SV_Position) : SV_Target
 {
@@ -57,7 +68,8 @@ float4 PS(float4 position : SV_Position) : SV_Target
     Check(device->CreateVertexShader(vsCode->GetBufferPointer(), vsCode->GetBufferSize(), nullptr, &vs), "VS");
     Check(device->CreatePixelShader(depthCode->GetBufferPointer(), depthCode->GetBufferSize(), nullptr, &depthPs), "Depth PS");
     Check(device->CreatePixelShader(uiCode->GetBufferPointer(), uiCode->GetBufferSize(), nullptr, &uiPs), "UI PS");
-    constexpr unsigned width = 37, height = 23, depthMax = 0xffffff;
+    // Avoid exact texel-boundary ties in interpolated point sampling.
+    constexpr unsigned width = 64, height = 32, depthMax = 0xffffff;
     D3D11_TEXTURE2D_DESC desc = {};
     desc.Width = width; desc.Height = height; desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
     desc.Format = DXGI_FORMAT_R24G8_TYPELESS; desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
@@ -89,11 +101,18 @@ float4 PS(float4 position : SV_Position) : SV_Target
     cbDesc.ByteWidth = 16; cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     ComPtr<ID3D11Buffer> cb;
     Check(device->CreateBuffer(&cbDesc, nullptr, &cb), "Constants");
+    D3D11_SAMPLER_DESC samplerDesc = {};
+    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    ComPtr<ID3D11SamplerState> sampler;
+    Check(device->CreateSamplerState(&samplerDesc, &sampler), "Depth point sampler");
+    ctx->PSSetSamplers(0, 1, sampler.GetAddressOf());
     ctx->VSSetShader(vs.Get(), nullptr, 0);
     ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ctx->PSSetConstantBuffers(0, 1, cb.GetAddressOf());
     unsigned cases = 0;
-    for (const auto size : {std::array<unsigned, 2>{37, 23}, {25, 15}, {19, 12}, {12, 8}, {1, 1}})
+    for (const auto size : {std::array<unsigned, 2>{width, height}, {43, 21}, {32, 16}, {21, 11}, {1, 1}})
     {
         const unsigned rw = size[0], rh = size[1];
         std::vector<uint32_t> input(rw * rh);
@@ -115,7 +134,7 @@ float4 PS(float4 position : SV_Position) : SV_Target
         Check(device->CreateShaderResourceView(source.Get(), &srvDesc, &srv), "Source SRV");
         for (const auto jitter : {std::array<float, 2>{0, 0}, {0.49f, 0.33f}, {-0.49f, -0.33f}, {0.49f, -0.49f}, {-0.49f, 0.49f}})
         {
-            const std::array<float, 4> params{float(rw) / width, float(rh) / height, jitter[0], jitter[1]};
+            const std::array<float, 4> params{jitter[0] / rw, jitter[1] / rh, 0, 0};
             ctx->UpdateSubresource(cb.Get(), 0, nullptr, params.data(), 0, 0);
             const float clear[4] = {0.25f, 0.25f, 0.25f, 1};
             ctx->ClearRenderTargetView(rtv.Get(), clear);
@@ -142,13 +161,16 @@ float4 PS(float4 position : SV_Position) : SV_Target
             bool valid = true;
             for (unsigned y = 0; y < height; ++y) for (unsigned x = 0; x < width; ++x)
             {
-                const int sx = std::clamp(int(std::floor((x + 0.5f) * params[0] + jitter[0])), 0, int(rw) - 1);
-                const int sy = std::clamp(int(std::floor((y + 0.5f) * params[1] + jitter[1])), 0, int(rh) - 1);
+                const int sx = std::clamp(int(std::floor((x + 0.5f) * rw / width + jitter[0])), 0, int(rw) - 1);
+                const int sy = std::clamp(int(std::floor((y + 0.5f) * rh / height + jitter[1])), 0, int(rh) - 1);
                 const uint32_t expected = input[sy * rw + sx] & depthMax;
                 const auto actual = reinterpret_cast<const uint32_t*>(static_cast<const char*>(zd.pData) + y * zd.RowPitch)[x];
-                valid &= std::abs(int(actual & depthMax) - int(expected)) <= 1 && (actual >> 24) == 0x5a;
                 const auto pixel = reinterpret_cast<const float*>(static_cast<const char*>(cd.pData) + y * cd.RowPitch) + x * 4;
                 const float expectedColor = double(expected) / depthMax < 0.01 ? 0.25f : float((x + y) & 1);
+                if (valid && (std::abs(int(actual & depthMax) - int(expected)) > 1 || pixel[0] != expectedColor))
+                    std::printf("Mismatch size=%ux%u jitter=%g,%g pixel=%u,%u source=%d,%d depth=%u/%u color=%g/%g\n",
+                        rw, rh, jitter[0], jitter[1], x, y, sx, sy, actual & depthMax, expected, pixel[0], expectedColor);
+                valid &= std::abs(int(actual & depthMax) - int(expected)) <= 1 && (actual >> 24) == 0x5a;
                 valid &= pixel[0] == expectedColor && pixel[1] == expectedColor && pixel[2] == expectedColor && pixel[3] == 1;
             }
             ctx->Unmap(depthRead.Get(), 0); ctx->Unmap(colorRead.Get(), 0);
@@ -156,7 +178,7 @@ float4 PS(float4 position : SV_Position) : SV_Target
             ++cases;
         }
     }
-    for (UINT64 i = 0; i < debug->GetNumStoredMessages(); ++i)
+    for (UINT64 i = 0; debug && i < debug->GetNumStoredMessages(); ++i)
     {
         SIZE_T size = 0; debug->GetMessage(i, nullptr, &size);
         std::vector<char> bytes(size);
@@ -169,6 +191,6 @@ float4 PS(float4 position : SV_Position) : SV_Target
         }
     }
     ctx->ClearState(); ctx->Flush();
-    std::printf("Native PDA depth tests passed: %u scale/jitter cases, depth/stencil, occlusion and native pixel detail.\n", cases);
+    std::printf("Native HUD depth tests passed: %u scale/jitter cases, depth/stencil, occlusion and native pixel detail.\n", cases);
 }
 catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); return 1; }

@@ -43,7 +43,7 @@ uniform float4 ssfx_issvp;
 #define SKY_FOG_TINT          0.5f
 
 #define EDGE_TAPS             4
-#define EDGE_STRIDE           2
+#define EDGE_STRIDE           2   // edge test every other step (chosen in-engine)
 
 #define EDGE_DEPTH_REJECT     1
 #define DEPTH_REJECT          0.0015f
@@ -67,7 +67,7 @@ uniform float4 ssfx_issvp;
 #define EDGE_RADIUS_TEXELS    5.2f
 #define EDGE_FLOOR            0.9f
 #define EDGE_SENS             1.15f
-#define EDGE_BOOST            1.4f
+#define EDGE_BOOST            1.425f
 #define SHEET_SOFT            2.0f
 
 #define LOW_SUN_KEEP          0.55f
@@ -79,16 +79,16 @@ uniform float4 ssfx_issvp;
 
 #define TERMINUS_GUARD        7.0f
 
-#define SIGMA_T               0.036f
+#define SIGMA_T               0.035f
 
 #define PHASE_SIDE            0.77f   // strength at 90 degrees
 #define PHASE_BACK            0.0f    // strength at exactly 180 degrees
 #define BACK_SHARPNESS        1.0f    // higher keeps shafts alive further behind
 #define SUN_DIR_FLIP          0       // 1 if DEBUG 3 hotspot is opposite the sun
-#define SUN_DIR_FROM_MSHADOW  0																	 																	
- 
+#define SUN_DIR_FROM_MSHADOW  0
+
 #define USE_WEATHER_INTENSITY 1
-#define SHAFT_GAIN            5.0f
+#define SHAFT_GAIN            5.1f
 
 #define OOB_SHADOW_LIT        1
 
@@ -97,6 +97,33 @@ float4 sun_shafts_intensity;
 #if DECLARE_SSFX_SHADOWS
 float4 ssfx_shadows;
 #endif
+
+#define VOLSUN_EDGE_DEFAULT   2
+#define VOLSUN_MINMAX_DEFAULT 1
+
+int volsun_edge_mode()
+{
+    return VOLSUN_EDGE_DEFAULT;
+}
+
+bool volsun_minmax_on()
+{
+#ifdef USE_MINMAX_SM
+    return (VOLSUN_MINMAX_DEFAULT != 0);
+#else
+    // Only the minmax variant has a freshly generated reduction this frame.
+    return false;
+#endif
+}
+
+float volsun_pcf_from_gather(float4 g, float2 uv, float z, float2 smDim)
+{
+    float2 f   = frac(uv * smDim - 0.5f);
+    float4 c   = (z.xxxx <= g) ? 1.0f : 0.0f;
+    float  top = lerp(c.w, c.z, f.x);
+    float  bot = lerp(c.x, c.y, f.x);
+    return lerp(top, bot, f.y);
+}
 
 #ifdef MSAA_OPTIMIZATION
 float4 main(v2p_volume s, uint iSample : SV_SAMPLEINDEX) : SV_Target
@@ -129,6 +156,8 @@ float4 main(v2p_volume s) : SV_Target
     return float4(1.0f, 0.3f, 0.0f, 0.0f);
 #endif
 
+    // The engine removes main-view DLSS/FSR jitter in pos_decompression_params.
+    // s.hpos already addresses the jittered depth texel; do not offset it again.
     float3 rayZ1   = float3(
         s.hpos.xy * pos_decompression_params.zw - pos_decompression_params.xy,
         1.0f
@@ -195,8 +224,10 @@ float4 main(v2p_volume s) : SV_Target
     float stepLen = marchDist * invSamples;
     float stepAtt = exp(-kSigmaT * stepLen);
 
-    float smapSize = (ssfx_shadows.y > 64.0f) ? ssfx_shadows.y : SMAP_FALLBACK;
-    float r = max(kRadius, EDGE_RADIUS_MIN_TEXELS) / smapSize;
+    uint smW, smH;
+    s_smap.GetDimensions(smW, smH);
+    float2 smDim = max(float2((float)smW, (float)smH), 1.0f);
+    float r = max(kRadius, EDGE_RADIUS_MIN_TEXELS) / smDim.x;
 
     float transmittance = 1.0f;
     float scatter       = 0.0f;   // physical integral
@@ -217,7 +248,40 @@ float4 main(v2p_volume s) : SV_Target
         if ( cur4.x >= 0.0f && cur4.x <= 1.0f &&
              cur4.y >= 0.0f && cur4.y <= 1.0f )
         {
-            vis = sample_hw_pcf(cur4, float4(0.0f, 0.0f, 0.0f, 0.0f));
+            // Min-max early-out: behind every occluder in this 4x4 tile = fully
+            // shadowed. vis = 0 zeroes both scatter sums, so nothing is lost.
+            bool umbra = false;
+            [branch]
+            if (volsun_minmax_on())
+            {
+                float mm = s_smap_minmax.SampleLevel(smp_nofilter, cur4.xy, 0).x;
+                umbra = (mm < 0.0f) && (cur4.z > -mm);
+            }
+
+            [branch]
+            if (umbra)
+            {
+                vis = 0.0f;
+                capacity += transmittance * w;
+                ridePersist = 0.0f;
+#if EDGE_STRIDE > 1
+                edgeHold = 0.0f;
+#endif
+            }
+            else
+            {
+            int    em = volsun_edge_mode();
+            float4 gC = 0.0f;
+            [branch]
+            if (em >= 2)
+            {
+                gC  = s_smap.GatherRed(smp_nofilter, cur4.xy);
+                vis = volsun_pcf_from_gather(gC, cur4.xy, cur4.z, smDim);
+            }
+            else
+            {
+                vis = sample_hw_pcf(cur4, float4(0.0f, 0.0f, 0.0f, 0.0f));
+            }
             capacity += transmittance * w;
 
 #if EDGE_STRIDE <= 1
@@ -225,26 +289,53 @@ float4 main(v2p_volume s) : SV_Target
             {
 #else
             float e = edgeHold;
-            if (strideCount == 0)
+            [branch] if (strideCount == 0)     // forced: flattened, fxc would run the edge Gathers every step
             {
 #endif
                 float vmin, vmax;
             #if EDGE_DEPTH_REJECT
                 #define VISF(d) (1.0f - smoothstep(DEPTH_REJECT, DEPTH_REJECT + DEPTH_SOFT, cur4.z - (d)))
-                float dC = s_smap.SampleLevel(smp_nofilter, cur4.xy, 0).x;
-                #if EDGE_TAPS == 2
-                float dA = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2( r,  r), 0).x;
-                float dB = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(-r, -r), 0).x;
-                float dmin = min(min(dA, dB), dC);
-                float dmax = max(max(dA, dB), dC);
-                #else
-                float d1 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2( r, 0.0f), 0).x;
-                float d2 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(-r, 0.0f), 0).x;
-                float d3 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(0.0f,  r), 0).x;
-                float d4 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(0.0f, -r), 0).x;
-                float dmin = min(min(d1, d2), min(min(d3, d4), dC));
-                float dmax = max(max(d1, d2), max(max(d3, d4), dC));
-                #endif
+                float dmin, dmax;
+                [branch]
+                if (em >= 2)
+                {
+                    float4 lo = gC, hi = gC;
+                    float4 gA, gB;
+                    if (em == 2)
+                    {
+                        // Triangle at radius r: same boundary coverage as the cross
+                        gA = s_smap.GatherRed(smp_nofilter, cur4.xy + float2( 0.0f,          r));
+                        gB = s_smap.GatherRed(smp_nofilter, cur4.xy + float2(-0.8660254f*r, -0.5f*r));
+                        float4 gT = s_smap.GatherRed(smp_nofilter, cur4.xy + float2( 0.8660254f*r, -0.5f*r));
+                        lo = min(lo, gT); hi = max(hi, gT);
+                    }
+                    else
+                    {
+                        // One diagonal: cheapest, weaker on diagonal-parallel boundaries
+                        gA = s_smap.GatherRed(smp_nofilter, cur4.xy + float2( r,  r));
+                        gB = s_smap.GatherRed(smp_nofilter, cur4.xy + float2(-r, -r));
+                    }
+                    lo = min(lo, min(gA, gB)); hi = max(hi, max(gA, gB));
+                    dmin = min(min(lo.x, lo.y), min(lo.z, lo.w));
+                    dmax = max(max(hi.x, hi.y), max(hi.z, hi.w));
+                }
+                else
+                {
+                    float dC = s_smap.SampleLevel(smp_nofilter, cur4.xy, 0).x;
+                    #if EDGE_TAPS == 2
+                    float dA = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2( r,  r), 0).x;
+                    float dB = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(-r, -r), 0).x;
+                    dmin = min(min(dA, dB), dC);
+                    dmax = max(max(dA, dB), dC);
+                    #else
+                    float d1 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2( r, 0.0f), 0).x;
+                    float d2 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(-r, 0.0f), 0).x;
+                    float d3 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(0.0f,  r), 0).x;
+                    float d4 = s_smap.SampleLevel(smp_nofilter, cur4.xy + float2(0.0f, -r), 0).x;
+                    dmin = min(min(d1, d2), min(min(d3, d4), dC));
+                    dmax = max(max(d1, d2), max(max(d3, d4), dC));
+                    #endif
+                }
                 vmin = VISF(dmin);
                 vmax = VISF(dmax);
                 #undef VISF
@@ -284,6 +375,7 @@ float4 main(v2p_volume s) : SV_Target
                 termW = smoothstep(0.0f, kTermGrd, marchDist - sampleDist);
 
             scatterEdge += vis * e * rideW * termW * transmittance * w;
+            }
         }
         else
         {

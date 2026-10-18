@@ -354,6 +354,31 @@ void CRenderTarget::phase_ssfx_ssr()
 
 void CRenderTarget::phase_ssfx_volumetric_blur()
 {
+	const bool main_ready = rt_Generic_2 && rt_Generic_2->pRT && rt_Generic_2->pSurface;
+	const bool volume_ready = rt_ssfx_volumetric && rt_ssfx_volumetric->pRT;
+	const bool temporary_ready = rt_ssfx_volumetric_tmp && rt_ssfx_volumetric_tmp->pRT;
+	const bool accumulator_ready = rt_ssfx_accum && rt_ssfx_accum->pRT && rt_ssfx_accum->pSurface;
+	if (!HW.pContext || !main_ready || !volume_ready || !temporary_ready || !accumulator_ready)
+	{
+		static bool reported = false;
+		if (!reported)
+		{
+			Msg("! [SSFX/VOLUMETRIC v172i] unavailable targets: main=%d volume=%d temporary=%d accumulator=%d; pass skipped",
+				main_ready, volume_ready, temporary_ready, accumulator_ready);
+			reported = true;
+		}
+		if (HW.pContext)
+		{
+			const FLOAT clear[4] = { 0.f, 0.f, 0.f, 0.f };
+			if (main_ready)
+				HW.pContext->ClearRenderTargetView(rt_Generic_2->pRT, clear);
+			if (volume_ready)
+				HW.pContext->ClearRenderTargetView(rt_ssfx_volumetric->pRT, clear);
+		}
+		m_bHasActiveVolumetric = false;
+		m_bHasActiveVolumetric_spot = false;
+		return;
+	}
 
 	// Be careful and clear the buffer ( rt_Generic_2 contain unspeakable stuff if no volumetric is written )
 	if (!m_bHasActiveVolumetric)

@@ -23,6 +23,8 @@ private:
 	Fvector m_position;
 	Fvector m_angles;
 	float m_entrance_time;
+	u32 m_last_scheduled_update;
+	u32 m_next_scheduled_update;
 	shared_str m_invite_str;
 	bool m_b_enabled;
 

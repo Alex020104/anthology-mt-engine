@@ -14,6 +14,12 @@
 
 using namespace luabind;
 
+static bool same_script_game_object(const CScriptGameObject* left, const CScriptGameObject* right)
+{
+	// Lua can hold separate userdata wrappers for the same native object.
+	return left == right;
+}
+
 extern class_<CScriptGameObject> script_register_game_object1(class_<CScriptGameObject> &&);
 extern class_<CScriptGameObject> script_register_game_object2(class_<CScriptGameObject> &&);
 extern class_<CScriptGameObject> script_register_game_object_trader(class_<CScriptGameObject> &&);
@@ -49,7 +55,7 @@ void CScriptGameObject::script_register(lua_State* L)
 
 		script_register_game_object2(
 			script_register_game_object1(
-				script_register_game_object_trader(std::move(instance))
+			script_register_game_object_trader(std::move(instance).def("__eq", &same_script_game_object))
 			)
 		),
 

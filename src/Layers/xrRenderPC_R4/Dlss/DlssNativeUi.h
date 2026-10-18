@@ -18,6 +18,21 @@ inline bool IsNativeHudUiTexture(std::string_view name)
     return name == "$user$ui" || IsWearableScreenGlass(name);
 }
 
+inline bool IsNativeHudOverlayShader(std::string_view pixel, std::string_view vertex)
+{
+    // Resource names retain skinning/MSAA suffixes, e.g. model_def_lplanes(2).
+    pixel = pixel.substr(0, pixel.find('('));
+    vertex = vertex.substr(0, vertex.find('('));
+    // PRS marks and weapon lasers have no stable scene motion/depth of their
+    // own. Reconstructing these thin alpha planes loses the mark and trails it.
+    return pixel == "models_reflex_reticle" || pixel == "models_reflex_reticle_3db" ||
+        pixel == "models_reflex_reticle_simple" || pixel == "models_reflex_reticle_simple_3db" ||
+        pixel == "models_lfo_light_dot_weapons" || pixel == "models_lfo_light_dot_weapons_simple" ||
+        pixel == "models_laserbeam" ||
+        // Legacy collimators and laser rays share this unlit HUD-plane pair.
+        (pixel == "base_lplanes" && vertex == "model_def_lplanes");
+}
+
 // The queues retain the original draw packets (including skinning and object
 // transforms) until the display-resolution pass in the SAME rendered view.
 template<class Queue, class Predicate>

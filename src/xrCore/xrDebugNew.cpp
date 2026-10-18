@@ -107,6 +107,12 @@ protected:
         Msg("%s", s.c_str());
     }
 };
+static void LogNativeStackTrace(const CONTEXT* context = nullptr)
+{
+    auto stack = xr_StackWalker();
+    stack.ShowCallstack(GetCurrentThread(), context);
+}
+
 extern void printLuaStack();
 void LogStackTrace(LPCSTR header = nullptr, bool printStack = false)
 {
@@ -119,8 +125,7 @@ void LogStackTrace(LPCSTR header = nullptr, bool printStack = false)
     if (printStack) {
         printLuaStack();
         Msg("\n");
-        auto s = xr_StackWalker();
-        s.ShowCallstack();
+        LogNativeStackTrace();
     }
 }
 
@@ -806,14 +811,27 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 	string256 error_message;
 	format_message(error_message, sizeof(error_message));
 
-	CONTEXT save = *pExceptionInfo->ContextRecord;
-	//    BuildStackTrace(pExceptionInfo);
-	*pExceptionInfo->ContextRecord = save;
+    // Preserve the original exception before any optional stack inspection.
+    if (pExceptionInfo && pExceptionInfo->ExceptionRecord)
+    {
+        const EXCEPTION_RECORD* record = pExceptionInfo->ExceptionRecord;
+        Msg("! [CRASH v172i] code=0x%08lX thread=%lu", record->ExceptionCode, GetCurrentThreadId());
+        Msg("at address 0x%p", record->ExceptionAddress);
+        if ((record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
+            record->ExceptionCode == EXCEPTION_IN_PAGE_ERROR) && record->NumberParameters >= 2)
+        {
+            Msg("! [CRASH v172i] access=%llu target=0x%p (0=read, 1=write, 8=execute)",
+                static_cast<unsigned long long>(record->ExceptionInformation[0]),
+                reinterpret_cast<void*>(record->ExceptionInformation[1]));
+        }
+    }
+    xrLogger::FlushLog();
 
 	if (shared_str_initialized)
 		Msg("stack trace:\n");
 
-    LogStackTrace(nullptr, true);
+    // Lua may be damaged or running on another thread when native code faults.
+    LogNativeStackTrace(pExceptionInfo ? pExceptionInfo->ContextRecord : nullptr);
 
 	if (!IsDebuggerPresent())
 	{
@@ -844,10 +862,6 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 #endif //-DEBUG
 	}
 
-	if (pExceptionInfo->ExceptionRecord)
-	{
-		Msg("at address 0x%p", pExceptionInfo->ExceptionRecord->ExceptionAddress);
-	}
 	//return EXCEPTION_CONTINUE_EXECUTION;
 
     xrLogger::FlushLog();

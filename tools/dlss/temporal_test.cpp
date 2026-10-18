@@ -39,6 +39,37 @@ int main()
     Require(history.Begin(1, false), "restarted frame sequence resets");
     history.Invalidate();
     Require(history.Begin(20, false), "vid_restart and failed evaluations reset history");
+    const char* nativeShaders[] = {"models_reflex_reticle", "models_reflex_reticle_3db",
+        "models_reflex_reticle_simple", "models_reflex_reticle_simple_3db",
+        "models_lfo_light_dot_weapons", "models_lfo_light_dot_weapons_simple", "models_laserbeam"};
+    for (const char* name : nativeShaders)
+        Require(IsNativeHudOverlayShader(name, "models_reflex_reticle(2)"), "PRS/LFO/laser packets bypass temporal input");
+    Require(IsNativeHudOverlayShader("models_reflex_reticle_simple_3db(0)", "models_reflex_reticle(4)"),
+        "skinning/MSAA resource suffixes do not defeat classification");
+    Require(IsNativeHudOverlayShader("base_lplanes", "model_def_lplanes(1)"), "legacy collimator and laser-ray pair");
+    Require(!IsNativeHudOverlayShader("base_lplanes", "effects_lplanes"), "do not move unrelated particle planes");
+    Require(!IsNativeHudOverlayShader("models_scope_reticle", "models_scope_reticle"), "PiP retains its separate pass");
+    Require(!IsNativeHudOverlayShader("models_reflex_reticle_glass", "models_reflex_reticle"), "do not classify scope glass by prefix");
+    Require(!IsNativeHudOverlayShader("deffer_model", "deffer_model") && !IsNativeHudOverlayShader("", ""),
+        "opaque HUD and missing shaders remain in the scene");
+    struct OverlayDraw { int pVisual, pMatrix; const char* ps; const char* vs; };
+    std::vector<OverlayDraw> overlayScene{{1, 10, "deffer_model", "deffer_model"},
+        {2, 20, "models_reflex_reticle_3db", "models_reflex_reticle(2)"},
+        {3, 30, "models_laserbeam", "models_laserbeam(1)"},
+        {4, 40, "base_lplanes", "model_def_lplanes(0)"}};
+    auto distortion = overlayScene;
+    distortion.push_back({3, 99, "models_laserbeam", "models_laserbeam(1)"});
+    std::vector<OverlayDraw> overlayDisplay;
+    ExtractNativeUi(overlayScene, overlayDisplay, [](const OverlayDraw& draw)
+        { return IsNativeHudOverlayShader(draw.ps, draw.vs); });
+    RemoveNativeUiDuplicates(distortion, overlayDisplay);
+    Require(overlayScene.size() == 1 && overlayDisplay.size() == 3 && overlayDisplay[1].pMatrix == 30,
+        "reticle/laser transforms survive extraction and weapon body stays in temporal input");
+    Require(distortion.size() == 2 && distortion[1].pMatrix == 99,
+        "no low-resolution distortion duplicate or accidental removal of another laser instance");
+    ExtractNativeUi(overlayScene, overlayDisplay, [](const OverlayDraw& draw)
+        { return IsNativeHudOverlayShader(draw.ps, draw.vs); });
+    Require(overlayDisplay.empty(), "holstering clears deferred reticles and lasers on the next frame");
     struct Draw { int pVisual, pMatrix; bool ui; };
     std::vector<Draw> scene{{1, 10, false}, {2, 20, true}, {3, 30, false}, {4, 40, true}};
     std::vector<Draw> native{{99, 99, true}};

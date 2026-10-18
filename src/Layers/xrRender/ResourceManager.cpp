@@ -845,6 +845,14 @@ void CResourceManager::QueueTextureLoad(const ref_texture& texture)
 
 void CResourceManager::WaitForTextureLoads()
 {
+	if (textureOwnerThread != GetCurrentThreadId())
+	{
+		void* callers[12]{};
+		const USHORT count = CaptureStackBackTrace(0, 12, callers, nullptr);
+		Msg("! [texture-owner] expected=%lu actual=%lu", textureOwnerThread, GetCurrentThreadId());
+		for (USHORT i = 0; i < count; ++i)
+			Msg("! [texture-owner] caller[%u]=%p", i, callers[i]);
+	}
 	R_ASSERT2(textureOwnerThread == GetCurrentThreadId(), "Texture generation must be committed by the render owner thread");
 	ResourceLoadGenerationPtr generation;
 	{

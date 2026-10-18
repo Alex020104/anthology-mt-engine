@@ -1,6 +1,5 @@
 #include "common.h"
-#ifdef SSFX_MV_LOADED
-#include "common.h"
+#include "dlss_contract.h"
 #include "anomaly_shaders.h"
 #include "check_screenspace.h"
 
@@ -30,13 +29,14 @@ Texture2D s_distort;
 float4 main(v2p_aa_AA I) : SV_Target
 {
 	float2 center = I.Tex0;
-	float depth = s_position.SampleLevel(smp_nofilter, I.Tex0, 0.0f).z;
+	float2 raster = dlss_raster_uv(I.Tex0);
+	float depth = s_position.SampleLevel(smp_nofilter, raster, 0.0f).z;
 
 #ifdef USE_DISTORT
-	float4 distort = s_distort.SampleLevel(smp_nofilter, I.Tex0, 0.0f);
+	float4 distort = s_distort.SampleLevel(smp_nofilter, raster, 0.0f);
 	float2 offset = (distort.xy - (127.0f / 255.0f)) * def_distort;
 	center += offset;
-	float depthOffset = s_position.SampleLevel(smp_nofilter, center, 0.0f).z;
+	float depthOffset = s_position.SampleLevel(smp_nofilter, dlss_raster_uv(center), 0.0f).z;
 	if ((depthOffset + 0.001f) < depth)
 		center = I.Tex0;
 #endif
@@ -79,7 +79,3 @@ float4 main(v2p_aa_AA I) : SV_Target
 
 	return float4(img, 1.0f);
 }
-
-#else
-#include "combine_2_naa.ps"
-#endif

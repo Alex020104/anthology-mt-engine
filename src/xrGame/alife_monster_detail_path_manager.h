@@ -78,6 +78,7 @@ public:
 	IC const PATH& path() const;
 	IC const float& walked_distance() const;
 	Fvector draw_level_position() const;
+	Fvector draw_squad_map_position() const;
 
 DECLARE_SCRIPT_REGISTER_FUNCTION
 };

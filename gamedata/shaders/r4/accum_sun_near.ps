@@ -21,7 +21,6 @@
 #ifdef SSFX_SSS
 	#include "screenspace_shadows.h"
 	Texture2D s_ssfx_sss;
-	uniform float4 ssfx_issvp;
 #endif
 
 #ifdef USE_SUNFILTER
@@ -78,7 +77,7 @@ float4 main ( v2p_volume I ) : SV_Target
 			s *= shadow( PS );
 
 #ifdef SSFX_SSS
-	s *= saturate(s_ssfx_sss.Sample( smp_nofilter, I.tc.xy / I.tc.w ).b + ssfx_issvp.x);
+	s *= saturate(s_ssfx_sss.Sample( smp_nofilter, I.tc.xy / I.tc.w ).b);
 #endif
 
 #ifdef SSFX_ENHANCED_SHADERS // We have Enhanced Shaders installed

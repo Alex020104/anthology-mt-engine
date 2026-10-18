@@ -16,13 +16,10 @@ void CRender::Calculate()
 {
 	// Transfer to global space to avoid deep pointer access
 	float fov_factor = _sqr(90.f / Device.fFOV);
-	// The previous frame ends on the display-sized upscale target, while this
-	// calculation runs before the next core render target is selected. Using the
-	// mutable target dimensions here kept SSA/LOD submission at native resolution
-	// even when DLSS/FSR rasterized the world at a lower resolution.
-	const u32 renderWidth = GetMainRenderWidth();
-	const u32 renderHeight = GetMainRenderHeight();
-	g_fSCREEN = float(renderWidth * renderHeight) * fov_factor * (EPS_S + ps_r__LOD);
+	// Visibility and geometric LOD belong to the displayed image. Internal
+	// upscaler resolution must not cull heads, fence wires or other small parts
+	// which are still visible at the output resolution.
+	g_fSCREEN = float(Device.dwWidth * Device.dwHeight) * fov_factor * (EPS_S + ps_r__LOD);
 	// The SecondVP quality RT bank is selected after Calculate(), so its reduced
 	// dimensions are not visible to this traversal. Apply a deliberately linear
 	// PiP-only SSA/LOD budget here: the physical RT already supplies the quadratic

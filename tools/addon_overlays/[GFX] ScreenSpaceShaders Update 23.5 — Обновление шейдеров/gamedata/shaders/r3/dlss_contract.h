@@ -4,6 +4,15 @@
 // current-minus-previous UV convention; the engine supplies NGX's negative scale.
 uniform float4 dlss_params; // active, render width, render height, reserved
 uniform float4 dlss_temporal_jitter; // current raster UV offset, previous raster UV offset
+// View-space projections address the jittered G-buffer, not the output grid.
+float2 dlss_raster_uv(float2 uv)
+{
+    return uv + (dlss_params.x > 0.5f ? dlss_temporal_jitter.xy : float2(0, 0));
+}
+float2 dlss_raster_clip(float4 clip)
+{
+    return clip.xy + (dlss_raster_uv(float2(0, 0)) * float2(2, -2)) * clip.w;
+}
 float2 dlss_history_offset()
 {
     return dlss_params.x > 0.5f ? dlss_temporal_jitter.zw - dlss_temporal_jitter.xy : float2(0, 0);

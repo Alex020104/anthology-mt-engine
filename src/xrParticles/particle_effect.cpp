@@ -89,6 +89,7 @@ BOOL ParticleEffect::Add(const pVector& pos, const pVector& posB,
 	P.age = age;
 	P.frame = frame;
 	P.flags.assign(flags);
+	P.renderHistory.Reset();
 
 	if (b_cb)
 		b_cb(owner, param, P, p_count);

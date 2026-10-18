@@ -236,6 +236,10 @@ public:
 	ID3DVertexBuffer* hw_instanceVB;
 	u32 hw_instance_capacity;
 	u32 hw_frame_filled;
+    u32 hw_prepared_frame = u32(-1);
+    u32 hw_prepared_count = 0;
+    xr_vector<u8> hw_instance_data; // CPU staging, published under m_mt_calc_guard.
+    void hw_Prepare_Instances();
 	u32 hw_inst_base[3][dm_max_objects];
 	u32 hw_inst_count[3][dm_max_objects];
 	void hw_EnsureInstanceCapacity(u32 required);

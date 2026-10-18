@@ -1385,6 +1385,10 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 
 #ifndef DEDICATED_SERVER
 		startup_phase_timer.Start();
+#ifdef STATIC_RENDERER_R4
+		// A missing/empty user.ltx must still initialize the built-in renderer flags.
+		Console->Execute("renderer renderer_r4");
+#endif
 		if (Core.ParamsData.test(ECoreParams::r2a))
 			Console->Execute("renderer renderer_r2a");
 		else if (Core.ParamsData.test(ECoreParams::r2))
@@ -1395,6 +1399,12 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 			pTmp->Execute(Console->ConfigFile);
 			xr_delete(pTmp);
 		}
+#ifdef STATIC_RENDERER_R4
+		extern ENGINE_API BOOL r2_advanced_pp;
+		extern ENGINE_API BOOL r2_sun_static;
+		Msg("* [STARTUP/RENDERER v172i] renderer_r4 advanced_pp=%d sun_static=%d config=%s",
+			r2_advanced_pp, r2_sun_static, Console->ConfigFile);
+#endif
 		Msg("* [STARTUP] renderer config: %d ms", startup_phase_timer.GetElapsed_ms());
 #else
         Console->Execute("renderer renderer_r1");

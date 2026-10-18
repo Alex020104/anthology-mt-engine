@@ -184,11 +184,9 @@ void CRenderTarget::phase_pp(bool upscaledSource)
 	static shared_str s_upscaler_params = "anthology_upscaler_params";
 	RCache.set_c(s_brightness, p_brightness.x, p_brightness.y, p_brightness.z, 0);
 	RCache.set_c(s_colormap, param_color_map_influence, param_color_map_interpolate, 0, 0);
-	// DLSS 3.10 no longer honours NGX InSharpness. FSR performs RCAS inside
-	// its own dispatch, so only DLSS requests the optional compact display pass.
-	const float displaySharpen = upscaledSource && g_AnthologyUpscaler.Mode() == AnthologyUpscalerDLSS
-		? clampr(ps_r4_upscaler_sharpness, 0.f, 1.f) : 0.f;
-	RCache.set_c(s_upscaler_params, displaySharpen, 0.f, 0.f, 0.f);
+	// phase_upscale_finish already applies CAS once, before native HUD overlays.
+	// Keep the legacy presentation uniform disabled to avoid a second sharpen.
+	RCache.set_c(s_upscaler_params, 0.f, 0.f, 0.f, 0.f);
 	RCache.set_Geometry(g_postprocess);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 }

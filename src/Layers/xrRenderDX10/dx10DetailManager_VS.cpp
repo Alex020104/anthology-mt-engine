@@ -190,10 +190,9 @@ void CDetailManager::hw_Render(light* L)
 }
 
 #ifdef USE_DX11
-void CDetailManager::hw_Fill_Instances()
+void CDetailManager::hw_Prepare_Instances()
 {
-	// Count first so dense modded levels grow the buffer before Map. This avoids
-	// the original PR's fixed-capacity blade loss.
+	// Prepare the CPU stream while visible source instances are still hot.
 	u32 required = 0;
 	for (u32 variant = 0; variant < 3; ++variant)
 	{
@@ -202,11 +201,9 @@ void CDetailManager::hw_Fill_Instances()
 			for (SlotItemVec* items : list[object])
 				required += static_cast<u32>(items->size());
 	}
-	hw_EnsureInstanceCapacity(_max(required, 1u));
-
-	D3D11_MAPPED_SUBRESOURCE mapped;
-	CHK_DX(HW.pContext->Map(hw_instanceVB, 0, D3D_MAP_WRITE_DISCARD, 0, &mapped));
-	DetailInstanceHW* destination = static_cast<DetailInstanceHW*>(mapped.pData);
+    const size_t bytes = size_t(required) * hw_InstanceStride;
+    if (hw_instance_data.size() < bytes) hw_instance_data.resize(bytes);
+    DetailInstanceHW* destination = reinterpret_cast<DetailInstanceHW*>(hw_instance_data.data());
 
 	u32 total = 0;
 	for (u32 variant = 0; variant < 3; ++variant)
@@ -218,9 +215,20 @@ void CDetailManager::hw_Fill_Instances()
 			xr_vector<SlotItemVec*>& visible = list[object];
 			for (SlotItemVec* items : visible)
 			{
-				for (SlotItem* item_ptr : *items)
-				{
-					SlotItem& instance = *item_ptr;
+                // Independent source objects can be scattered across pool pages.
+                // Fetch ahead before alpha/transform reads reach those cache lines.
+                auto fetch = [](const SlotItem* item)
+                {
+                    _mm_prefetch(reinterpret_cast<const char*>(&item->mRotY_calculated._11), _MM_HINT_T0);
+                    _mm_prefetch(reinterpret_cast<const char*>(&item->mRotY_calculated._44), _MM_HINT_T0);
+                    _mm_prefetch(reinterpret_cast<const char*>(&item->alpha), _MM_HINT_T0);
+                };
+                const size_t count = items->size();
+                for (size_t i = 0; i < _min(size_t(8), count); ++i) fetch((*items)[i]);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    if (i + 8 < count) fetch((*items)[i + 8]);
+                    SlotItem& instance = *(*items)[i];
 					instance.alpha += GoToValue(instance.alpha, instance.alpha_target);
 					if (instance.alpha <= 0.f)
 						break;
@@ -245,9 +253,39 @@ void CDetailManager::hw_Fill_Instances()
 		}
 	}
 
-	HW.pContext->Unmap(hw_instanceVB, 0);
-	hw_frame_filled = Device.dwFrame;
+    hw_prepared_count = total;
+    hw_prepared_frame = Device.dwFrame;
 }
+
+void CDetailManager::hw_Fill_Instances()
+{
+    static const bool profile = strstr(Core.Params, "-cb_profile") != nullptr;
+    const u64 started = profile ? CPU::QPC() : 0;
+    // Initial load or explicit comparison mode can reach rendering first.
+    // Render() has already joined MT_CALC before this fallback is used.
+    const bool fallback = hw_prepared_frame != Device.dwFrame;
+    if (fallback) hw_Prepare_Instances();
+    hw_EnsureInstanceCapacity(_max(hw_prepared_count, 1u));
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    CHK_DX(HW.pContext->Map(hw_instanceVB, 0, D3D_MAP_WRITE_DISCARD, 0, &mapped));
+    if (hw_prepared_count)
+        CopyMemory(mapped.pData, hw_instance_data.data(), size_t(hw_prepared_count) * hw_InstanceStride);
+    HW.pContext->Unmap(hw_instanceVB, 0);
+    hw_frame_filled = Device.dwFrame;
+    if (profile && CPU::qpc_freq && !Device.dwPrecacheFrame)
+    {
+        static u64 ticks = 0, instances = 0; static u32 calls = 0, fallbacks = 0;
+        ticks += CPU::QPC() - started; instances += hw_prepared_count; fallbacks += fallback;
+        if (++calls >= 120)
+        {
+            Msg("* [detail-upload/profile] cpu-ms=%.4f instances=%.1f main-fallback=%u/%u",
+                1000.0 * double(ticks) / double(CPU::qpc_freq) / calls,
+                double(instances) / calls, fallbacks, calls);
+            ticks = instances = calls = fallbacks = 0;
+        }
+    }
+}
+
 #endif
 
 void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave, const Fvector4& wind, 

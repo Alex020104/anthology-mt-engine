@@ -1,3 +1,38 @@
+# AOE
+
+Текущий движок A.N.T.H.O.L.O.G.Y, отдельная ветка для передачи исходников.
+Снимок от 18.10.2026 включает накопленные изменения до v172n: DLSS/FSR,
+шейдеры и PiP, детализацию геометрии, плавное движение отрядов на карте КПК,
+защиту настроек при запуске, исправление потока перехода между уровнями
+и сравнение Lua-объектов для совместимости с лаунчером.
+
+```sh
+git clone --branch AOE --recurse-submodules https://github.com/Alex020104/anthology-mt-engine.git
+```
+
+Для сборки: Visual Studio 2022, C++ toolset v143 и Windows 10 SDK.
+Открыть `src/engine-vs2022.sln`, выбрать `x64` и `DX11` либо `DX11-AVX`;
+собирать проект `xrEngine` с зависимостями. Из Developer Command Prompt:
+
+```bat
+msbuild src\engine-vs2022.sln /m:2 /t:xrEngine /p:Configuration=DX11-AVX /p:Platform=x64
+```
+
+Согласованные ресурсы находятся в `gamedata`, варианты для аддонов —
+в `tools/addon_overlays`. Нужна установленная Anthology с её ресурсами.
+Файлы `tools/releases/Anthology_Engine_Test_2026-10-12.*` описывают предыдущий
+пакет от 12 октября, а не весь текущий снимок.
+
+Ранее для v172n проверены сборки DX11/DX11-AVX, новая игра, сохранение,
+загрузка и выполнение команд лаунчера. Публикация этой ветки не добавляет
+нового игрового тестирования. Отдельные native access violation остаются
+на разборе; их исправление здесь не заявляется.
+
+Исходные лицензии и сведения об авторах сохранены ниже и в
+`License.txt` / `INTEGRATION_NOTICES.txt`.
+
+---
+
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/themrdemonized/xray-monolith)
 
 # STALKER-Anomaly-modded-exes

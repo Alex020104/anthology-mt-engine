@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ConstantBufferValue.h"
+#include "ConstantBufferMatrix.h"
 
 IC void dx10ConstantBuffer::Store(u16 offset, const void* value, u32 bytes)
 {
@@ -19,6 +20,14 @@ IC void dx10ConstantBuffer::Store(u16 offset, const void* value, u32 bytes)
 		m_bChanged = true;
 }
 
+IC void dx10ConstantBuffer::StoreMatrix(u16 offset, const Fmatrix& value, u32 rows)
+{
+    VERIFY(rows >= 2 && rows <= 4 && u32(offset) + rows * lineSize <= m_uiBufferSize);
+    float packed[16];
+    PackConstantBufferMatrix(packed, &value._11, rows);
+    Store(offset, packed, rows * lineSize);
+}
+
 IC Fvector4* dx10ConstantBuffer::Access(u16 offset)
 {
 	//	TODO: DX10: Implement code which will check if set actually changes code.
@@ -33,42 +42,14 @@ IC Fvector4* dx10ConstantBuffer::Access(u16 offset)
 
 IC void dx10ConstantBuffer::set(R_constant* C, R_constant_load& L, const Fmatrix& A)
 {
-	VERIFY(RC_float == C->type);
-	//	TEST
-	//return;
-
-	//Fvector4*	it	= c_f.access	(L.index);
-	Fvector4* it = Access(L.index);
-	switch (L.cls)
-	{
-	case RC_2x4:
-		//c_f.dirty			(L.index,L.index+2);
-		VERIFY(u32((u32)L.index+2*lineSize) <= m_uiBufferSize);
-		it[0].set(A._11, A._21, A._31, A._41);
-		it[1].set(A._12, A._22, A._32, A._42);
-		break;
-	case RC_3x4:
-		//c_f.dirty			(L.index,L.index+3);
-		VERIFY(u32((u32)L.index+3*lineSize) <= m_uiBufferSize);
-		it[0].set(A._11, A._21, A._31, A._41);
-		it[1].set(A._12, A._22, A._32, A._42);
-		it[2].set(A._13, A._23, A._33, A._43);
-		break;
-	case RC_4x4:
-		//c_f.dirty			(L.index,L.index+4);
-		VERIFY(u32((u32)L.index+4*lineSize) <= m_uiBufferSize);
-		it[0].set(A._11, A._21, A._31, A._41);
-		it[1].set(A._12, A._22, A._32, A._42);
-		it[2].set(A._13, A._23, A._33, A._43);
-		it[3].set(A._14, A._24, A._34, A._44);
-		break;
-	default:
-#ifdef DEBUG
-		Debug.fatal		(DEBUG_INFO,"Invalid constant run-time-type for '%s'",*C->name);
-#else
-		NODEFAULT;
-#endif
-	}
+    VERIFY(RC_float == C->type);
+    switch (L.cls)
+    {
+    case RC_2x4: StoreMatrix(L.index, A, 2); break;
+    case RC_3x4: StoreMatrix(L.index, A, 3); break;
+    case RC_4x4: StoreMatrix(L.index, A, 4); break;
+    default: NODEFAULT;
+    }
 }
 
 IC void dx10ConstantBuffer::set(R_constant* C, R_constant_load& L, const Fvector4& A)
@@ -126,53 +107,18 @@ IC void dx10ConstantBuffer::set(R_constant* C, R_constant_load& L, int A)
 
 IC void dx10ConstantBuffer::seta(R_constant* C, R_constant_load& L, u32 e, const Fmatrix& A)
 {
-	//	TEST
-	//return;
-	VERIFY(RC_float == C->type);
-	u32 base;
-	Fvector4* it;
-	switch (L.cls)
-	{
-	case RC_2x4:
-		//base				= L.index + 2*e;
-		//it					= c_f.access	(base);
-		//c_f.dirty			(base,base+2);
-		base = (u32)L.index + 2 * lineSize * e;
-		it = Access((u16)base);
-		VERIFY((base+2*lineSize) <= m_uiBufferSize);
-		it[0].set(A._11, A._21, A._31, A._41);
-		it[1].set(A._12, A._22, A._32, A._42);
-		break;
-	case RC_3x4:
-		//base				= L.index + 3*e;
-		//it					= c_f.access	(base);
-		//c_f.dirty			(base,base+3);
-		base = (u32)L.index + 3 * lineSize * e;
-		it = Access((u16)base);
-		VERIFY((base+3*lineSize) <= m_uiBufferSize);
-		it[0].set(A._11, A._21, A._31, A._41);
-		it[1].set(A._12, A._22, A._32, A._42);
-		it[2].set(A._13, A._23, A._33, A._43);
-		break;
-	case RC_4x4:
-		//base				= L.index + 4*e;
-		//it					= c_f.access	(base);
-		//c_f.dirty			(base,base+4);
-		base = (u32)L.index + 4 * lineSize * e;
-		it = Access((u16)base);
-		VERIFY((base+4*lineSize) <= m_uiBufferSize);
-		it[0].set(A._11, A._21, A._31, A._41);
-		it[1].set(A._12, A._22, A._32, A._42);
-		it[2].set(A._13, A._23, A._33, A._43);
-		it[3].set(A._14, A._24, A._34, A._44);
-		break;
-	default:
-#ifdef DEBUG
-		Debug.fatal		(DEBUG_INFO,"Invalid constant run-time-type for '%s'",*C->name);
-#else
-		NODEFAULT;
-#endif
-	}
+    VERIFY(RC_float == C->type);
+    u32 rows = 0;
+    switch (L.cls)
+    {
+    case RC_2x4: rows = 2; break;
+    case RC_3x4: rows = 3; break;
+    case RC_4x4: rows = 4; break;
+    default: NODEFAULT;
+    }
+    const u32 base = u32(L.index) + rows * lineSize * e;
+    VERIFY(base + rows * lineSize <= m_uiBufferSize && base <= 0xffff);
+    StoreMatrix(u16(base), A, rows);
 }
 
 IC void dx10ConstantBuffer::seta(R_constant* C, R_constant_load& L, u32 e, const Fvector4& A)
@@ -184,9 +130,8 @@ IC void dx10ConstantBuffer::seta(R_constant* C, R_constant_load& L, u32 e, const
 
 	static const u16 lineSize = 4 * sizeof(float);
 	u32 base = (u32)L.index + lineSize * e;
-	Fvector4* it = Access((u16)base);
 	VERIFY((base+lineSize) <= m_uiBufferSize);
-	it->set(A);
+	Store(u16(base), &A[0], lineSize);
 
 	//u32			base	= L.index + e;
 	//c_f.access	(base)->set	(A);

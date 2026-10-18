@@ -318,3 +318,44 @@ Fvector CALifeMonsterDetailPathManager::draw_level_position() const
 	direction.normalize();
 	return (current_vertex.mad(direction, walked_distance()));
 }
+
+Fvector CALifeMonsterDetailPathManager::draw_squad_map_position() const
+{
+	const auto& server_object = object().get_object();
+	const Fvector fallback = server_object.Position();
+	if (!m_last_update_time || m_path.size() < 2 || !actual() || completed() ||
+		m_path.back() != server_object.m_tGraphID)
+		return fallback;
+
+	const auto& graph = ai().game_graph();
+	const GameGraph::_GRAPH_ID current_id = server_object.m_tGraphID;
+	const GameGraph::_GRAPH_ID next_id = (GameGraph::_GRAPH_ID)m_path[m_path.size() - 2];
+	if (m_path[m_path.size() - 2] != next_id ||
+		!graph.valid_vertex_id(current_id) || !graph.valid_vertex_id(next_id))
+		return fallback;
+	const auto* current = graph.vertex(current_id);
+	const auto* next = graph.vertex(next_id);
+	if (current->level_id() != next->level_id())
+		return fallback;
+
+	const float edge_length = graph.distance(current_id, next_id);
+	const auto& time = ai().alife().time_manager();
+	const float normal_factor = time.normal_time_factor();
+	if (!_valid(edge_length) || edge_length <= EPS_S || !_valid(m_walked_distance) ||
+		m_walked_distance < 0.f || !_valid(m_speed) || m_speed < 0.f ||
+		!_valid(normal_factor) || normal_factor <= EPS_S ||
+		!_valid(current->level_point()) || !_valid(next->level_point()))
+		return fallback;
+
+	// Match follow_path's clock and speed, but only predict the displayed point.
+	// No brain/planner update, graph transition or member-position writes in UI.
+	const ALife::_TIME_ID now = time.game_time();
+	const double elapsed = now > m_last_update_time ? double(now - m_last_update_time) : 0.;
+	const double distance = m_walked_distance + elapsed * m_speed / (1000. * normal_factor);
+	float fraction = float(distance / edge_length);
+	clamp(fraction, 0.f, 1.f);
+	Fvector result;
+	// Edge cost may exceed straight-line length: normalize before interpolating.
+	result.lerp(current->level_point(), next->level_point(), fraction);
+	return _valid(result) ? result : fallback;
+}

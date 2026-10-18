@@ -289,6 +289,7 @@ void SimulatorStates::UpdateDesc(D3D_DEPTH_STENCIL_DESC& desc) const
 #ifdef USE_DX11
 void SimulatorStates::UpdateDesc(D3D_BLEND_DESC& desc) const
 {
+	bool particleMotion = false;
 	for (u32 it = 0; it < States.size(); it++)
 	{
 		const State& S = States[it];
@@ -296,6 +297,9 @@ void SimulatorStates::UpdateDesc(D3D_BLEND_DESC& desc) const
 		{
 			switch (S.v1)
 			{
+			case XRDX11RS_PARTICLE_MOTION:
+				particleMotion = S.v2 != 0;
+				break;
 			case XRDX10RS_ALPHATOCOVERAGE:
 				for (int i = 0; i < 8; ++i)
 					desc.AlphaToCoverageEnable = S.v2 ? 1 : 0;
@@ -356,7 +360,24 @@ void SimulatorStates::UpdateDesc(D3D_BLEND_DESC& desc) const
 			}
 		}
 	}
+
+    if (particleMotion)
+    {
+        // Color/heat retain their material blend. Motion uses visible coverage,
+        // including additive effects, and preserves the opaque ownership tags.
+        desc.IndependentBlendEnable = TRUE;
+        auto& motion = desc.RenderTarget[2];
+        motion.BlendEnable = TRUE;
+        motion.SrcBlend = D3D_BLEND_SRC_ALPHA;
+        motion.DestBlend = D3D_BLEND_INV_SRC_ALPHA;
+        motion.BlendOp = D3D_BLEND_OP_ADD;
+        motion.SrcBlendAlpha = D3D_BLEND_ZERO;
+        motion.DestBlendAlpha = D3D_BLEND_ONE;
+        motion.BlendOpAlpha = D3D_BLEND_OP_ADD;
+        motion.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN;
+    }
 }
+
 #else
 void SimulatorStates::UpdateDesc(D3D_BLEND_DESC& desc) const
 {

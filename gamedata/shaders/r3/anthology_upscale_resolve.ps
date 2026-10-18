@@ -26,7 +26,7 @@ float4 main(p_screen I) : SV_Target
     float depth = s_position.SampleLevel(smp_nofilter, raster_uv, 0).z;
     if (ssfx_motionblur.w < 1)
     {
-        float4 p = float4(depth * (uv * anthology_core_res.xy * pos_decompression_params.zw - pos_decompression_params.xy), depth, 1);
+        float4 p = float4(depth * (raster_uv * anthology_core_res.xy * pos_decompression_params.zw - pos_decompression_params.xy), depth, 1);
         float4 current = mul(m_current, p), previous = mul(m_previous, p);
         float2 camera = (current.xy / current.w - previous.xy / previous.w) * float2(0.5, -0.5);
         mv.xy -= camera * (1 - ssfx_motionblur.w);

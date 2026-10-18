@@ -126,10 +126,16 @@ static class cl_pos_decompress_params : public R_constant_setup
 		float VertTan = -1.0f * tanf(deg2rad(Device.fFOV / 2.0f));
 		float HorzTan = - VertTan / Device.fASPECT;
 
-		const float width = RImplementation.Target ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
-		const float height = RImplementation.Target ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
-		RCache.set_c(C, HorzTan, VertTan, (2.0f * HorzTan) / width,
-		             (2.0f * VertTan) / height);
+		// Native HUD laser shaders reconstruct from display-sized SV_Position.
+		const bool core = RImplementation.Target && !g_upscale_reticle_pass;
+		const float width = core ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
+		const float height = core ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
+		const float stepX = (2.0f * HorzTan) / width, stepY = (2.0f * VertTan) / height;
+		// G-buffer depth was rasterized with jitter; remove the same offset when
+		// reconstructing view-space rays for lighting, shadows and reflections.
+		const bool jittered = core && g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame();
+		RCache.set_c(C, HorzTan + (jittered ? g_main_taa_jitter_pixels.x * stepX : 0.f),
+		             VertTan + (jittered ? g_main_taa_jitter_pixels.y * stepY : 0.f), stepX, stepY);
 	}
 } binder_pos_decompress_params;
 
@@ -137,8 +143,9 @@ static class cl_pos_decompress_params2 : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		const float width = RImplementation.Target ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
-		const float height = RImplementation.Target ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
+		const bool core = RImplementation.Target && !g_upscale_reticle_pass;
+		const float width = core ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
+		const float height = core ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
 		RCache.set_c(C, width, height, 1.0f / width, 1.0f / height);
 	}
 } binder_pos_decompress_params2;
@@ -2054,6 +2061,29 @@ HRESULT CRender::shader_compile(
 		}
 	}
 
+    // Hash the effective source, including active includes and defines. The
+    // stored bytecode CRC detects corruption only, not changed shader inputs.
+    struct PreprocessedSource
+    {
+        ID3DBlob* text = nullptr;
+        ID3DBlob* errors = nullptr;
+        ~PreprocessedSource() { _RELEASE(text); _RELEASE(errors); }
+    } preprocessed;
+    includer sourceIncludes;
+    const HRESULT preprocessResult = D3DPreprocess(pSrcData, SrcDataLen, "",
+        defines, &sourceIncludes, &preprocessed.text, &preprocessed.errors);
+    if (FAILED(preprocessResult))
+    {
+        Msg("! shader preprocessing failed: %s.%s hr=0x%08x", name, pTarget, preprocessResult);
+        if (preprocessed.errors)
+            Log("! error: ", static_cast<LPCSTR>(preprocessed.errors->GetBufferPointer()));
+        return preprocessResult;
+    }
+    u32 sourceCRC = crc32(preprocessed.text->GetBufferPointer(), (u32)preprocessed.text->GetBufferSize());
+    sourceCRC = crc32(pTarget, xr_strlen(pTarget), sourceCRC);
+    sourceCRC = crc32(pFunctionName, xr_strlen(pFunctionName), sourceCRC);
+    sourceCRC = crc32(&Flags, sizeof(Flags), sourceCRC);
+
 	HRESULT _result = E_FAIL;
 
 	string_path folder_name, folder;
@@ -2081,37 +2111,19 @@ HRESULT CRender::shader_compile(
 	if (useGeneratedShaderCache)
 	{
 		string_path file;
-		// v164 changes shared motion-mask and SSS includes. Cached bytecode only
-		// validates corruption, so use a fresh namespace for the new contracts.
+		// v172f changes SSS projection and volumetric jitter includes. Cached
+		// bytecode checks corruption, not source freshness; invalidate old variants.
 		// Native and SSS have different gbuffer/interpolant layouts.
 		// Never reuse one layout after switching the optional shader addon.
-		xr_strcpy(file, "shaders_cache\\r4\\v172b\\");
+		xr_strcpy(file, "shaders_cache\\r4\\v172f\\");
 		xr_strcat(file, o.ssfx_core ? "sss\\" : "native\\");
 		xr_strcat(file, name);
 		xr_strcat(file, ".");
 		xr_strcat(file, extension);
 		xr_strcat(file, "\\");
-		// This producer is self-contained. Its bytecode CRC checks corruption,
-		// not staleness: include the actual source in its generated-cache key.
-		if (0 == xr_strcmp(name, "svp_motion_map") || 0 == xr_strcmp(name, "effects_sun") ||
-            0 == strncmp(name, "anthology_snow_", 15))
-		{
-			string32 sourceKey;
-            u32 sourceCRC=crc32(pSrcData,SrcDataLen);
-            if(0==strncmp(name,"anthology_snow_",15))
-            {
-                string_path include;
-                strconcat(sizeof(include),include,::Render->getShaderPath(),"anthology_snow_field.h");
-                if(IReader* header=FS.r_open("$game_shaders$",include))
-                {
-                    sourceCRC=crc32(header->pointer(),header->length(),sourceCRC);
-                    FS.r_close(header);
-                }
-            }
-            xr_sprintf(sourceKey, "%08x_", sourceCRC);
-			xr_strcat(file, sourceKey);
-			Msg("* [pip152/cache] %s source=%s bytes=%u", name, sourceKey, u32(SrcDataLen));
-		}
+        string32 sourceKey;
+        xr_sprintf(sourceKey, "%08x_", sourceCRC);
+        xr_strcat(file, sourceKey);
 		xr_strcat(file, sh_name);
 		FS.update_path(file_name, "$app_data_root$", file);
 	}
@@ -2141,15 +2153,14 @@ HRESULT CRender::shader_compile(
 
 	if (FAILED(_result))
 	{
-		includer Includer;
 		LPD3DBLOB pShaderBuf = NULL;
 		LPD3DBLOB pErrorBuf = NULL;
 		_result =
 			D3DCompile(
-				pSrcData,
-				SrcDataLen,
-				"", //NULL, //LPCSTR pFileName,	//	NVPerfHUD bug workaround.
-				defines, &Includer, pFunctionName,
+                preprocessed.text->GetBufferPointer(),
+                preprocessed.text->GetBufferSize(),
+                "",
+                nullptr, nullptr, pFunctionName,
 				pTarget,
 				Flags, 0,
 				&pShaderBuf,

@@ -577,6 +577,8 @@ public:
 	u32 npc_count() const;
 	void clear_location_types();
 	void add_location_type(LPCSTR mask);
+	virtual Fvector draw_level_position() const override;
+	bool agw_microstep_supported() const { return true; }
 	void force_change_position(Fvector position);
 	//void					force_change_game_vertex_id(GameGraph::_GRAPH_ID game_vertex_id);
 	virtual void on_failed_switch_online();

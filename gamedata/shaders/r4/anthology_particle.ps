@@ -1,0 +1,65 @@
+#include "common.h"
+
+struct v2p
+{
+    float2 tc : TEXCOORD0;
+    float4 c : COLOR0;
+#ifdef USE_SOFT_PARTICLES
+    float4 tctexgen : TEXCOORD1;
+#endif
+    float4 current_clip : TEXCOORD2;
+    float4 previous_clip : TEXCOORD3;
+    float motion_enabled : TEXCOORD4;
+    float fog : FOG;
+    float4 hpos : SV_Position;
+};
+struct particle_output
+{
+    float4 color : SV_Target0;
+    float4 heat : SV_Target1;
+    float4 motion : SV_Target2;
+};
+uniform float4 particle_blend_mode;
+
+particle_output main(v2p I)
+{
+    particle_output O;
+    float4 result = I.c * s_base.Sample(smp_base, I.tc);
+#ifdef USE_SOFT_PARTICLES
+    float2 projected = I.tctexgen.xy / I.tctexgen.w;
+    gbuffer_data gbd = gbuffer_load_data(projected, I.hpos.xy);
+    float spaceDepth = gbd.P.z - I.tctexgen.z - 0.1;
+    if (spaceDepth < -0.2) spaceDepth = 100000.0;
+    result *= Contrast(saturate(spaceDepth * 1.3), 2);
+#endif
+    clip(result.a - (0.01 / 255.0));
+    result.a *= I.fog * I.fog;
+    O.color = result;
+    O.heat = result.a > 0.2 ? float4(0, (result.r + result.g + result.b) / 3.0, 0, 1) : 0;
+
+    // Black texels of additive sprites are transparent despite alpha=1.
+    // Multiplicative sprites use their distance from the neutral multiplier.
+    float peak = max(result.r, max(result.g, result.b));
+    float coverage = result.a;
+    if (particle_blend_mode.x > 1.5 && particle_blend_mode.x < 2.5)
+        coverage = saturate(peak);
+    else if (particle_blend_mode.x > 2.5 && particle_blend_mode.x < 3.5)
+        coverage = saturate(1.0 - min(result.r, min(result.g, result.b)));
+    else if (particle_blend_mode.x > 3.5 && particle_blend_mode.x < 4.5)
+    {
+        float3 delta = abs(result.rgb * 2.0 - 1.0);
+        coverage = saturate(max(delta.r, max(delta.g, delta.b)));
+    }
+    else if (particle_blend_mode.x > 4.5)
+        coverage = saturate(peak * result.a);
+
+    float2 velocity = 0;
+    if (I.motion_enabled > 0.5 && I.current_clip.w > 0.001 && I.previous_clip.w > 0.001)
+        velocity = (I.current_clip.xy / I.current_clip.w - I.previous_clip.xy / I.previous_clip.w) * float2(0.5, -0.5);
+    else
+        coverage = 0;
+    if (any(abs(velocity) > 1.0)) { velocity = 0; coverage = 0; }
+    // The independent blend writes RG only, leaving HUD/owner tags intact.
+    O.motion = float4(velocity, 0, saturate(coverage));
+    return O;
+}

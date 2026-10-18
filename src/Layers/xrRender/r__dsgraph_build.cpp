@@ -8,6 +8,7 @@
 #include "flod.h"
 #include "particlegroup.h"
 #include "FTreeVisual.h"
+#include "GeometryVisibility.h"
 
 using namespace R_dsgraph;
 
@@ -267,6 +268,12 @@ void CDSGraphManager::r_dsgraph_insert_static(dxRender_Visual *pVisual)
 	float distSQ;
 	float SSA = CalcSSA(distSQ, pVisual->vis.sphere.P, pVisual);
     Flags16& flags = pVisual->flags;
+    if (i_mask[CDSGraphManager::fl_normal] &&
+        !flags.test(IRenderVisualFlags::eIgnoreOptimization) &&
+        pVisual->Type != MT_TREE_ST && pVisual->Type != MT_TREE_PM && pVisual->Type != MT_LOD &&
+        !anthology::geometry::visible(true, opt_static, pVisual->vis.sphere.volume(), distSQ, Device.fFOV))
+        return;
+
     if (!flags.test(IRenderVisualFlags::eIgnoreOptimization))
     {
         if (SSA < r_ssaDISCARD)

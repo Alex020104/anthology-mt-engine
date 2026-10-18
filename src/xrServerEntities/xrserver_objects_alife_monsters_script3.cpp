@@ -104,6 +104,7 @@ void CSE_ALifeOnlineOfflineGroup::script_register(lua_State* L)
 		.def("npc_count", &CSE_ALifeOnlineOfflineGroup::npc_count)
 		.def("add_location_type", &CSE_ALifeOnlineOfflineGroup::add_location_type)
 		.def("clear_location_types", &CSE_ALifeOnlineOfflineGroup::clear_location_types)
+		.def("agw_microstep_supported", &CSE_ALifeOnlineOfflineGroup::agw_microstep_supported)
 		.def("force_change_position", &CSE_ALifeOnlineOfflineGroup::force_change_position)
 		//.def("force_change_game_vertex_id", &CSE_ALifeOnlineOfflineGroup::force_change_game_vertex_id)
 #endif //#ifdef XRGAME_EXPORTS

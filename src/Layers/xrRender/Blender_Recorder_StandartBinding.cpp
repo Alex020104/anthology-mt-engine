@@ -1481,7 +1481,8 @@ static class dlss_params : public R_constant_setup
     {
         bool active = false;
 #ifdef USE_DX11
-        active = g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame();
+        active = g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame() && !g_upscale_reticle_pass &&
+            RImplementation.phase != CRender::PHASE_SMAP;
 #endif
         RCache.set_c(C, active ? 1.f : 0.f, g_main_taa_render_size.x, g_main_taa_render_size.y, 0.f);
     }

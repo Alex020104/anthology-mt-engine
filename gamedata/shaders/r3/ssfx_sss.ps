@@ -9,6 +9,8 @@
 
 #include "screenspace_shadows.h"
 
+uniform float4 ssfx_issvp;
+
 float4x4 m_current; // Current projection matrix
 float4x4 m_previous; // Previous projection matrix
 
@@ -46,6 +48,11 @@ float4 main(p_screen I) : SV_Target
 
 	// Direct Light SSS
 	sss.r = SSFX_ScreenSpaceShadows(float4(P, mtl), N, tc, Motion_Vectors.z, 0);
+
+    // PiP has its own shadow target, but no temporal G-buffer history.
+    // Never reproject it with the main camera's matrices or previous position.
+    if (ssfx_issvp.x > 0.5f)
+        return float4(sss.r, 0, sss.r, 0);
 
 // Accumulation ----------------------------------------------------
 

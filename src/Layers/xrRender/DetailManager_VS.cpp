@@ -175,6 +175,8 @@ void CDetailManager::hw_Load_Geom()
 #ifdef USE_DX11
 	hw_EnsureInstanceCapacity(hw_InitialInstanceCapacity);
 	hw_frame_filled = u32(-1);
+	hw_prepared_frame = u32(-1);
+	hw_prepared_count = 0;
 #endif
 }
 
@@ -222,6 +224,9 @@ void CDetailManager::hw_Unload()
 		HW.stats_manager.decrement_stats_vb(hw_instanceVB);
 	_RELEASE(hw_instanceVB);
 	hw_instance_capacity = 0;
+	hw_prepared_frame = u32(-1);
+	hw_prepared_count = 0;
+	hw_instance_data.clear_and_free();
 #endif
 }
 

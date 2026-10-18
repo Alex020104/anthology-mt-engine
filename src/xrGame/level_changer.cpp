@@ -49,6 +49,8 @@ void CLevelChanger::net_Destroy()
 BOOL CLevelChanger::net_Spawn(CSE_Abstract* DC)
 {
 	m_entrance_time = 0;
+	m_last_scheduled_update = Device.dwTimeGlobal;
+	m_next_scheduled_update = Device.dwTimeGlobal;
 	m_b_enabled = true;
 	m_invite_str = DEF_INVITATION;
 	CCF_Shape* l_pShape = xr_new<CCF_Shape>(this);
@@ -94,6 +96,10 @@ BOOL CLevelChanger::net_Spawn(CSE_Abstract* DC)
 	BOOL bOk = inherited::net_Spawn(DC);
 	if (bOk)
 	{
+		// Invitations touch UI; silent transitions save and start resource loads.
+		// Both must run in the main-thread scheduler, including during precache.
+		shedule_unregister();
+		Engine.Sheduler.Register(this, TRUE);
 		l_pShape->ComputeBounds();
 		Fvector P;
 		XFORM().transform_tiny(P, CFORM()->getSphere().P);
@@ -105,7 +111,19 @@ BOOL CLevelChanger::net_Spawn(CSE_Abstract* DC)
 
 void CLevelChanger::shedule_Update(u32 dt)
 {
-	inherited::shedule_Update(dt);
+	const u32 now = Device.dwTimeGlobal;
+	if (s32(now - m_next_scheduled_update) < 0)
+		return;
+
+	// Preserve the deferred scheduler's distance-based cadence on the RT list.
+	const u32 elapsed = now - m_last_scheduled_update;
+	m_last_scheduled_update = now;
+	const u32 minimum = _max(u32(30), shedule.t_min);
+	const u32 maximum = (1000 + shedule.t_max) / 2;
+	u32 interval = minimum + iFloor(float(maximum - minimum) * shedule_Scale());
+	clamp(interval, minimum, maximum);
+	m_next_scheduled_update = now + interval;
+	inherited::shedule_Update(clampr(elapsed, u32(1), u32(_max(u32(shedule.t_max), u32(1000)))));
 
 	const Fsphere& s = CFORM()->getSphere();
 	Fvector P;
@@ -127,6 +145,7 @@ void CLevelChanger::feel_touch_new(CObject* tpObject)
 
 	if (m_bSilentMode)
 	{
+		Msg("* [level-change v172m] silent trigger=%s scheduler=main", *cName());
 		NET_Packet p;
 		p.w_begin(M_CHANGE_LEVEL);
 		p.w(&m_game_vertex_id, sizeof(m_game_vertex_id));

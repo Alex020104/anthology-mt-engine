@@ -1,6 +1,7 @@
 #ifndef PSystemH
 #define PSystemH
 #pragma once
+#include "ParticleRenderHistory.h"
 
 #ifdef XR_PARTICLES_EXPORTS
 #define PARTICLES_API
@@ -141,6 +142,7 @@ namespace PAPI
 		float age; // 4       
 		u16 frame; // 2
 		Flags16 flags; // 2
+		ParticleRenderHistory renderHistory;
 	}; // = 116
 
 	typedef void (* OnBirthParticleCB)(void* owner, u32 param, PAPI::Particle& P, u32 idx);

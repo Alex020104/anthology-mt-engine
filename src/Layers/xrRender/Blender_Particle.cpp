@@ -3,6 +3,20 @@
 
 #include "Blender_Particle.h"
 
+#ifdef USE_DX11
+class ParticleBlendBinding : public R_constant_setup
+{
+    float mode;
+public:
+    explicit ParticleBlendBinding(float value) : mode(value) {}
+    void setup(R_constant* constant) override { RCache.set_c(constant, mode, 0.f, 0.f, 0.f); }
+};
+static ParticleBlendBinding particleBlendBindings[] = {
+    ParticleBlendBinding(0), ParticleBlendBinding(1), ParticleBlendBinding(2),
+    ParticleBlendBinding(3), ParticleBlendBinding(4), ParticleBlendBinding(5)};
+#endif
+
+
 #define					oBlendCount	6
 
 //////////////////////////////////////////////////////////////////////
@@ -155,6 +169,13 @@ void CBlender_Particle::Compile(CBlender_Compile& C)
 void CBlender_Particle::Compile(CBlender_Compile& C)
 {
 	IBlender::Compile(C);
+#ifdef USE_DX11
+	const LPCSTR particleVS = "anthology_particle";
+	const LPCSTR particlePS = "anthology_particle";
+#else
+	const LPCSTR particleVS = "particle";
+	const LPCSTR particlePS = "particle";
+#endif
 	switch (C.iElement)
 	{
 	case SE_R2_NORMAL_HQ: // deffer
@@ -164,17 +185,17 @@ void CBlender_Particle::Compile(CBlender_Compile& C)
 		case 0: C.r_Pass("deffer_particle", "deffer_particle", FALSE, TRUE,TRUE, FALSE, D3DBLEND_ONE, D3DBLEND_ZERO,
 		                 FALSE, 200);
 			break; // SET
-		case 1: C.r_Pass("particle", "particle", FALSE, TRUE,FALSE, TRUE, D3DBLEND_SRCALPHA, D3DBLEND_INVSRCALPHA, TRUE,
+		case 1: C.r_Pass(particleVS, particlePS, FALSE, TRUE,FALSE, TRUE, D3DBLEND_SRCALPHA, D3DBLEND_INVSRCALPHA, TRUE,
 		                 0);
 			break; // BLEND
-		case 2: C.r_Pass("particle", "particle", FALSE, TRUE,FALSE, TRUE, D3DBLEND_ONE, D3DBLEND_ONE, TRUE, 0);
+		case 2: C.r_Pass(particleVS, particlePS, FALSE, TRUE,FALSE, TRUE, D3DBLEND_ONE, D3DBLEND_ONE, TRUE, 0);
 			break; // ADD
-		case 3: C.r_Pass("particle", "particle", FALSE, TRUE,FALSE, TRUE, D3DBLEND_DESTCOLOR, D3DBLEND_ZERO, TRUE, 0);
+		case 3: C.r_Pass(particleVS, particlePS, FALSE, TRUE,FALSE, TRUE, D3DBLEND_DESTCOLOR, D3DBLEND_ZERO, TRUE, 0);
 			break; // MUL
-		case 4: C.r_Pass("particle", "particle", FALSE, TRUE,FALSE, TRUE, D3DBLEND_DESTCOLOR, D3DBLEND_SRCCOLOR, TRUE,
+		case 4: C.r_Pass(particleVS, particlePS, FALSE, TRUE,FALSE, TRUE, D3DBLEND_DESTCOLOR, D3DBLEND_SRCCOLOR, TRUE,
 		                 0);
 			break; // MUL_2X
-		case 5: C.r_Pass("particle", "particle", FALSE, TRUE,FALSE, TRUE, D3DBLEND_SRCALPHA, D3DBLEND_ONE, TRUE, 0);
+		case 5: C.r_Pass(particleVS, particlePS, FALSE, TRUE,FALSE, TRUE, D3DBLEND_SRCALPHA, D3DBLEND_ONE, TRUE, 0);
 			break; // ALPHA-ADD
 		};
 		{
@@ -188,6 +209,13 @@ void CBlender_Particle::Compile(CBlender_Compile& C)
 			C.r_dx10Texture("s_position", "$user$position");
 			C.r_dx10Sampler("smp_nofilter");
 		}
+#ifdef USE_DX11
+		if (oBlend.IDselected != 0)
+		{
+			C.r_Constant("particle_blend_mode", &particleBlendBindings[oBlend.IDselected]);
+			C.RS.SetRS(XRDX11RS_PARTICLE_MOTION, TRUE);
+		}
+#endif
 		C.r_End();
 		break;
 	case SE_R2_SHADOW: // smap

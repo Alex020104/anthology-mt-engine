@@ -389,6 +389,14 @@ void CSE_ALifeOnlineOfflineGroup::add_location_type(LPCSTR mask)
 	}
 }
 
+// AGW map movement: display the native route without relocating ALife objects.
+Fvector CSE_ALifeOnlineOfflineGroup::draw_level_position() const
+{
+	if (m_bOnline || m_members.empty() || !m_brain)
+		return o_Position;
+	return brain().movement().detail().draw_squad_map_position();
+}
+
 void CSE_ALifeOnlineOfflineGroup::force_change_position(Fvector position)
 {
 	u32 new_level_vertex = ai().level_graph().vertex_id(position);

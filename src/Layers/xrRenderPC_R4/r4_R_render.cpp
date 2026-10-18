@@ -366,6 +366,7 @@ void CRender::Render()
 		ID3D11Resource* zbuffer_res;
 		Target->main_depth()->GetResource(&zbuffer_res);
 		HW.pContext->CopyResource(RImplementation.Target->rt_tempzb->pSurface, zbuffer_res);
+		_RELEASE(zbuffer_res);
 	}
 
 	if (RImplementation.o.dx10_msaa)
