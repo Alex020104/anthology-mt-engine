@@ -3,11 +3,11 @@
 #include "../../xrEngine/RenderMotionDrawState.h"
 #include "../../xrEngine/irenderable.h"
 
-// Used only by the render thread, along with RCache. No allocations, locks or
+// Each recording worker owns its state, along with its RCache. No allocations, locks or
 // clock reads are added to packet/child draws.
 inline RenderMotionDrawState& CurrentPipMotionDraw()
 {
-    static RenderMotionDrawState state;
+    static thread_local RenderMotionDrawState state;
     return state;
 }
 

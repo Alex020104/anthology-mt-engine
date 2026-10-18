@@ -29,6 +29,15 @@ class dxRender_Visual;
 class CRender : public IRender_interface, public pureFrame
 {
 public:
+    xr_vector<R_dsgraph::ScopeHeatItem> scope_heat_items;
+    bool scope_heat_only = false;
+    bool scope_heat_collect = false;
+    bool scope_capture_active = false;
+    light_Package LP_scope_hud;
+    void AddScopeHeatItem(const R_dsgraph::DSGraphItem<u32, false>& item, ShaderElement* shader);
+    void RenderScopeHeat();
+    void render_scope_hud_lights();
+
 	struct _options
 	{
 		u32 bug : 1;
@@ -80,6 +89,17 @@ public:
 		s32 s_used, s_merged, s_finalclip;
 		u32 o_queries, o_culled;
 		u32 ic_total, ic_culled;
+		u32 ls_shadowed_in;
+		u32 ls_shadowed_after_vis;
+		u32 ls_shadowed_rendered;
+		u32 ls_shadowed_pending_skipped;
+		u32 ls_shadowed_invisible_skipped;
+		u32 ls_shadowed_peak_in;
+		u32 ls_shadowed_peak_after_vis;
+		u32 ls_unshadowed_point_in;
+		u32 ls_unshadowed_spot_in;
+		u32 ls_unshadowed_point_rendered;
+		u32 ls_unshadowed_spot_rendered;
 	} stats;
 
 public:
@@ -156,7 +176,9 @@ public:
 	void render_indirect(light* L);
 	void render_lights(light_Package& LP);
 	void render_menu();
-	void render_sun_cascade(u32 cascade_ind);
+	void prepare_sun_cascade(u32 cascade_ind, const Fmatrix& inverse);
+    void render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared = nullptr, u64 revision = 0);
+    void capture_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared, u64 revision, bool static_only = false);
 	void init_cacades();
 	void render_sun_cascades();
 
@@ -183,6 +205,7 @@ public:
 
 	ICF void apply_object(IRenderable* O)
 	{
+		RCache.bus_object.apply(O);
 		if (0 == O) return;
 		if (0 == O->renderable_ROS()) return;
 		CROS_impl& LT = *((CROS_impl*)O->renderable_ROS());
@@ -194,6 +217,7 @@ public:
 
 	IC void apply_lmaterial()
 	{
+		RCache.bus_object.apply_static();
 		R_constant* C = RCache.get_c(c_sbase); // get sampler
 		if (0 == C) return;
 		VERIFY(RC_dest_sampler == C->destination);
@@ -229,7 +253,7 @@ public:
 	virtual void level_Load(IReader*);
 	virtual void level_Unload();
 
-	virtual IDirect3DBaseTexture9* texture_load(LPCSTR fname, u32& msize);
+	virtual IDirect3DBaseTexture9* texture_load(LPCSTR fname, u32& msize, Fvector2* source_size = nullptr);
 	virtual HRESULT shader_compile(
 		LPCSTR name,
 		DWORD const* pSrcData,

@@ -3,6 +3,7 @@
 #include "../xrEngine/fmesh.h"
 #include "../xrEngine/x_ray.h"
 #include "../xrEngine/xr_ioconsole.h"
+#include "../xrEngine/x_ray.h"
 #include "../xrEngine/gamemtllib.h"
 #include "../Include/xrRender/Kinematics.h"
 #include "profiler.h"
@@ -44,6 +45,7 @@
 
 extern BOOL mt_Scheduler;
 extern BOOL g_bLoaded;
+extern BOOL mt_SchedulerRT;
 
 //#ifdef DEBUG_MEMORY_MANAGER
 //	static	void *	ode_alloc	(size_t size)								{ return Memory.mem_alloc(size,"ODE");			}
@@ -69,8 +71,7 @@ CGamePersistent::CGamePersistent(void)
 	ambient_effect_wind_out_time = 0.f;
 	ambient_effect_wind_on = false;
 
-	ZeroMemory(ambient_sound_next_time, sizeof(ambient_sound_next_time));
-
+    ambient_sound_next_time.assign(32, 0);
 
 	m_pUI_core = NULL;
 	m_pMainMenu = NULL;
@@ -158,22 +159,27 @@ extern void init_game_globals();
 
 void CGamePersistent::OnAppStart()
 {
+    PROF_EVENT("Startup.GamePersistentAppStart");
 	CTimer timer;
 	timer.Start();
 	xr_task_group nativeTasks;
 	u32 materialsMs = 0;
 #ifndef _EDITOR
-	nativeTasks.run([this]() { Environment().load(); });
+	nativeTasks.run([this]() { PROF_EVENT("Startup.Environment"); Environment().load(); });
 #endif
 	nativeTasks.run([&materialsMs]()
 	{
 		CTimer materialsTimer;
 		materialsTimer.Start();
-		GMLib.Load();
+		PROF_EVENT("Startup.GameMaterials");
+        GMLib.Load();
 		materialsMs = materialsTimer.GetElapsed_ms();
 	});
 	timer.Start();
-	init_game_globals();
+    {
+        PROF_EVENT("Startup.GameGlobals");
+        init_game_globals();
+    }
 	Msg("* [STARTUP] game globals: %d ms", timer.GetElapsed_ms());
 	timer.Start();
 	nativeTasks.wait();
@@ -298,6 +304,36 @@ void CGamePersistent::OnGameEnd()
 	xr_delete(g_stalker_velocity_holder);
 }
 
+// { volume_mult = number } from a sound hook's return. 1.0 (vanilla) when nil, not a table, or not a number.
+static float ambient_hook_volume_mult(const ::luabind::object& output)
+{
+	if (output && output.type() == LUA_TTABLE)
+	{
+		auto volume_mult_obj = output["volume_mult"];
+		if (volume_mult_obj.type() == LUA_TNUMBER)
+			return ::luabind::object_cast<float>(volume_mult_obj);
+	}
+	return 1.0f;
+}
+
+// Thunderbolt clap crossing. CEffect_Thunderbolt (xrEngine) has no script-engine reach, so it calls this
+// IGame_Persistent virtual and the functor fires here, the COnBeforePlayHudSound shape. An unset global leaves vanilla.
+float CGamePersistent::OnThunderboltSound(LPCSTR file, float distance)
+{
+	::luabind::functor<::luabind::object> funct;
+	if (ai().script_engine().functor("_G.COnThunderboltSound", funct))
+		return ambient_hook_volume_mult(funct(file, distance));
+	return 1.0f;
+}
+
+float CGamePersistent::OnRainSound(LPCSTR file)
+{
+	::luabind::functor<::luabind::object> funct;
+	if (ai().script_engine().functor("_G.COnRainSound", funct))
+		return ambient_hook_volume_mult(funct(file));
+	return 1.0f;
+}
+
 void CGamePersistent::WeathersUpdate()
 {
 	PROF_EVENT("CGamePersistent WeathersUpdate");
@@ -316,14 +352,14 @@ void CGamePersistent::WeathersUpdate()
 		if (env_amb)
 		{
 			CEnvAmbient::SSndChannelVec& vec = env_amb->get_snd_channels();
-			CEnvAmbient::SSndChannelVecIt I = vec.begin();
-			CEnvAmbient::SSndChannelVecIt E = vec.end();
 
-			for (u32 idx = 0; I != E; ++I, ++idx)
+			auto I = vec.cbegin();
+			const auto E = vec.cend();
+
+			for (size_t idx = 0; I != E; ++I, ++idx)
 			{
 				CEnvAmbient::SSndChannel& ch = **I;
-				R_ASSERT(idx<32);
-				if (ambient_sound_next_time[idx] == 0) //first
+				if (ambient_sound_next_time[idx] == 0)
 				{
 					ambient_sound_next_time[idx] = Device.dwTimeGlobal + ch.get_rnd_sound_first_time();
 				}
@@ -338,7 +374,22 @@ void CGamePersistent::WeathersUpdate()
 					pos.z = _sin(angle);
 					pos.normalize().mul(ch.get_rnd_sound_dist()).add(Device.vCameraPosition);
 					pos.y += 10.f;
-					snd.play_at_pos(0, pos);
+
+					// Ambient bed hook, mirrors COnBeforePlayHudSound: Lua may veto (0) or attenuate; absent global = exact vanilla
+					float bed_volume_mult = 1.0f;
+					::luabind::functor<::luabind::object> bed_funct;
+					if (ai().script_engine().functor("_G.COnAmbientBed", bed_funct))
+					{
+						LPCSTR bed_file = snd._handle() ? snd._handle()->file_name() : "";
+						bed_volume_mult = ambient_hook_volume_mult(bed_funct(ch.m_load_section.c_str(), bed_file, pos));
+					}
+
+					if (bed_volume_mult > EPS_S)
+					{
+						snd.play_at_pos(0, pos);
+						if (bed_volume_mult < 1.0f)
+							snd.set_volume(bed_volume_mult);
+					}
 
 					if (!snd._handle() || Core.ParamsData.test(ECoreParams::nosound))
 						continue;
@@ -346,27 +397,9 @@ void CGamePersistent::WeathersUpdate()
 					VERIFY(snd._handle());
 					u32 _length_ms = iFloor(snd.get_length_sec() * 1000.0f);
 					ambient_sound_next_time[idx] = Device.dwTimeGlobal + _length_ms + ch.get_rnd_sound_time();
-					//					Msg("- Playing ambient sound channel [%s] file[%s]",ch.m_load_section.c_str(),snd._handle()->file_name());
 				}
 			}
-			/*
-			            if (Device.dwTimeGlobal > ambient_sound_next_time)
-			            {
-			            ref_sound* snd			= env_amb->get_rnd_sound();
-			            ambient_sound_next_time	= Device.dwTimeGlobal + env_amb->get_rnd_sound_time();
-			            if (snd)
-			            {
-			            Fvector	pos;
-			            float	angle		= ::Random.randF(PI_MUL_2);
-			            pos.x				= _cos(angle);
-			            pos.y				= 0;
-			            pos.z				= _sin(angle);
-			            pos.normalize		().mul(env_amb->get_rnd_sound_dist()).add(Device.vCameraPosition);
-			            pos.y				+= 10.f;
-			            snd->play_at_pos	(0,pos);
-			            }
-			            }
-			            */
+
 			// start effect
 			if ((FALSE == bIndoor) && (0 == ambient_particles) && Device.dwTimeGlobal > ambient_effect_next_time)
 			{
@@ -385,9 +418,28 @@ void CGamePersistent::WeathersUpdate()
 
 					ambient_particles	= Particles::Details::Create(eff->particles.c_str(),FALSE,false);
 					Fvector pos;
-					pos.add(Device.vCameraPosition, eff->offset);
+                    Fvector offset = eff->offset;
+                    offset.x += Random.randF(0.5f, 5.f) * (Random.randF(0.f, 1.f) < 0.5f ? -1.f : 1.f);
+                    offset.z += Random.randF(0.5f, 5.f) * (Random.randF(0.f, 1.f) < 0.5f ? -1.f : 1.f);
+					pos.add(Device.vCameraPosition, offset);
 					ambient_particles->play_at_pos(pos);
-					if (eff->sound._handle()) eff->sound.play_at_pos(0, pos);
+
+					// Ambient-effect sound hook. Lua may veto (0) or attenuate the recording. The particle burst and wind blast play either way.
+					// An unset global leaves exact vanilla.
+					if (eff->sound._handle())
+					{
+						float effect_volume_mult = 1.0f;
+						::luabind::functor<::luabind::object> effect_funct;
+						if (ai().script_engine().functor("_G.COnAmbientEffectSound", effect_funct))
+							effect_volume_mult = ambient_hook_volume_mult(effect_funct(eff->sound._handle()->file_name(), pos));
+
+						if (effect_volume_mult > EPS_S)
+						{
+							eff->sound.play_at_pos(0, pos);
+							if (effect_volume_mult < 1.0f)
+								eff->sound.set_volume(effect_volume_mult);
+						}
+					}
 
 
 					Environment().wind_blast_strength_start_value = Environment().wind_strength_factor;
@@ -530,6 +582,11 @@ void CGamePersistent::update_logo_intro()
 	}
 }
 
+namespace crash_saving {
+    extern void (*save_impl)();
+    extern void _save_impl();
+}
+
 void CGamePersistent::game_loaded()
 {
 	// Do not show a key prompt while the covered world warm-up still owns the
@@ -571,20 +628,28 @@ void CGamePersistent::game_loaded()
 		{
 			Msg("intro_start game_loaded");
 
+            // demonized: Reset mouse state on loading the game
+            pInput->resetMouseState();
+
 			::luabind::functor<void> funct;
 			if (ai().script_engine().functor("_G.OnLoadingScreenKeyPrompt", funct))
 			{
 				funct();
 			}
+
+            // demonized
+            // Enable crash saving here
+            crash_saving::save_impl = &crash_saving::_save_impl;
+
+            // Callback for when player dismisses loading screen after "Press Any Key to Continue" pressed
+            if (ai().script_engine().functor("_G.OnLoadingScreenDismissed", funct))
+            {
+                funct();
+            }
 		}
 
 		m_intro_event = 0;
 	}
-}
-
-namespace crash_saving {
-	extern void (*save_impl)();
-	extern void _save_impl();
 }
 
 void CGamePersistent::update_game_loaded()
@@ -814,6 +879,8 @@ void CGamePersistent::OnFrame()
 		}
 		else
 		{
+            if (!mt_SchedulerRT)
+            {
 			PROF_EVENT("Sheduler RT");
 			const u64 scheduler_init_started_at = measure_frame ? CPU::QPC() : 0;
 			::Engine.Sheduler.UpdateInit();
@@ -827,6 +894,7 @@ void CGamePersistent::OnFrame()
 				frame_profile.scheduler_rt += elapsed;
 				frame_profile.max_scheduler_rt = std::max(frame_profile.max_scheduler_rt, elapsed);
 			}
+            }
 		}
 		if (measure_precache_scheduler)
 			pApp->LoadSessionRecordPrecacheScheduler(CPU::QPC() - scheduler_started_at);
@@ -926,6 +994,9 @@ void CGamePersistent::OnEvent(EVENT E, u64 P1, u64 P2)
 {
 	if (E == eQuickLoad)
 	{
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickLoadGameBegin(LPCSTR(P1));
+#endif
 		PROF_EVENT("eQuickLoad");
 		pApp->LoadSessionContinue("quickload");
 		pApp->LoadSessionSetScenario("quickload");
@@ -1046,8 +1117,6 @@ void CGamePersistent::OnRenderPPUI_PP()
 }
 
 #include "string_table.h"
-#include "../xrEngine/x_ray.h"
-
 void CGamePersistent::LoadTitle(bool change_tip, shared_str map_name)
 {
     {

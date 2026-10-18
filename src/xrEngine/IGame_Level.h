@@ -82,6 +82,8 @@ public:
 	BOOL bReady;
 
 	CInifile* pLevel;
+
+    bool schedulerFlush;
 public: // deferred sound events
 	struct _esound_delegate
 	{
@@ -95,6 +97,7 @@ public:
 	// Main, global functions
 	IGame_Level();
 	virtual ~IGame_Level();
+    virtual bool RestoreLuaGCBindings() { return false; }
 
 	virtual shared_str name() const = 0;
 	virtual void GetLevelInfo(CServerInfo* si) = 0;

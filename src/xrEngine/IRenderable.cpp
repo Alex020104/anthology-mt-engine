@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "shader_bus.h"
 #include "../xrcdb/ispatial.h"
 #include "irenderable.h"
 #include "ICollidable.h"
@@ -50,6 +51,7 @@ IRenderable::~IRenderable()
 	renderable.visual = NULL;
 	renderable.pROS = NULL;
 	SurfaceOwners().Release(m_surfaceOwnerSlot);
+	ShaderBus::object_forget(this);
 }
 
 IRender_ObjectSpecific* IRenderable::renderable_ROS()

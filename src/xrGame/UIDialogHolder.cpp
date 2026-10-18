@@ -43,6 +43,8 @@ CDialogHolder::CDialogHolder()
 {
 	m_b_in_update = false;
     m_b_in_render = false;
+    m_dialogsToRender.reserve(64);
+    m_dialogsToRender_new.reserve(64);
 }
 
 CDialogHolder::~CDialogHolder()
@@ -207,7 +209,7 @@ CUIDialogWnd* CDialogHolder::TopInputReceiver()
 
 void CDialogHolder::SetMainInputReceiver(CUIDialogWnd* ir, bool _find_remove)
 {
-	if (TopInputReceiver() == ir) return;
+	if (!_find_remove && TopInputReceiver() == ir) return;
 
 	if (!ir || _find_remove)
 	{
@@ -219,19 +221,21 @@ void CDialogHolder::SetMainInputReceiver(CUIDialogWnd* ir, bool _find_remove)
 		{
 			VERIFY(ir && _find_remove);
 
-			u32 cnt = m_input_receivers.size();
-			for (; cnt > 0; --cnt)
-				if (m_input_receivers[cnt - 1].m_item == ir)
+			for (int currentIndex = m_input_receivers.size() - 1; currentIndex >= 0; --currentIndex)
+			{
+				if (m_input_receivers[currentIndex].m_item != ir)
+					continue;
+
+				const u32 nextIndex = currentIndex + 1;
+				if (nextIndex < m_input_receivers.size())
 				{
-					m_input_receivers[cnt].m_flags.set(recvItem::eCrosshair,
-					                                   m_input_receivers[cnt - 1].m_flags.test(recvItem::eCrosshair));
-					m_input_receivers[cnt].m_flags.set(recvItem::eIndicators,
-					                                   m_input_receivers[cnt - 1].m_flags.test(recvItem::eIndicators));
-					xr_vector<recvItem>::iterator it = m_input_receivers.begin();
-					std::advance(it, cnt - 1);
-					m_input_receivers.erase(it);
-					break;
+					m_input_receivers[nextIndex].m_flags.set(recvItem::eCrosshair, m_input_receivers[currentIndex].m_flags.test(recvItem::eCrosshair));
+					m_input_receivers[nextIndex].m_flags.set(recvItem::eIndicators,	m_input_receivers[currentIndex].m_flags.test(recvItem::eIndicators));
 				}
+
+				m_input_receivers.erase(m_input_receivers.begin() + currentIndex);
+				break;
+			}
 		}
 	}
 	else

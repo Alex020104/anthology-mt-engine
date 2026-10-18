@@ -132,6 +132,10 @@ protected:
 
 	// Globals
 	CInifile* pUserData;
+#if defined(USE_DX11) && RENDER == R_R4
+    xr_vector<Fmatrix> palette_source[2];
+    xr_vector<Fvector4> palette_rows[2];
+#endif
 	CBoneInstance* bone_instances; // bone instances
 	vecBones* bones; // all bones	(shared)
 	u16 bones_size;
@@ -144,6 +148,7 @@ protected:
 	BOOL Update_Visibility;
 	u32 UCalc_Time;
 	s32 UCalc_Visibox;
+	u32 Visibox_frame = 0;
 	bool UCalc_ThisFrame;
 
 	Flags64 visimask;
@@ -242,6 +247,66 @@ public:
 	ICF Fmatrix& _BCL LL_GetTransform(u16 bone_id) { return LL_GetBoneVisible(bone_id) ? LL_GetBoneInstance(bone_id).mTransform : LL_GetBoneInstance(bone_id).mTransformHidden; }
 	ICF Fmatrix& _BCL LL_GetTransform_safed(u16 bone_id) { xrCriticalSectionGuard guard(&UCalc_Mutex); return LL_GetBoneVisible(bone_id) ? LL_GetBoneInstance(bone_id).mTransform : LL_GetBoneInstance(bone_id).mTransformHidden; }
 	ICF const Fmatrix& _BCL LL_GetTransform(u16 bone_id) const { return LL_GetBoneVisible(bone_id) ? LL_GetBoneInstance(bone_id).mTransform : LL_GetBoneInstance(bone_id).mTransformHidden; }
+	ICF void _BCL LL_GetBoneLocalPosition(u16 bone_id, Fvector& result)
+	{
+		xrCriticalSectionGuard guard(&UCalc_Mutex);
+		result = LL_GetBoneInstance(bone_id).mTransform.c;
+	}
+	ICF void _BCL LL_GetBoneLocalTransform(u16 bone_id, Fmatrix& result)
+	{
+		xrCriticalSectionGuard guard(&UCalc_Mutex);
+		result = LL_GetBoneInstance(bone_id).mTransform;
+	}
+	ICF void _BCL LL_GetBoneWorldPosition(u16 bone_id, const Fmatrix& xform, Fvector& result)
+	{
+		LL_GetBoneLocalPosition(bone_id, result);
+		xform.transform_tiny(result);
+	}
+	ICF void _BCL LL_GetBoneWorldTransform(u16 bone_id, const Fmatrix& xform, Fmatrix& result)
+	{
+		LL_GetBoneLocalTransform(bone_id, result);
+		result.mulA_43(xform);
+	}
+	ICF void _BCL CalculateBBox(BOOL bforce = TRUE)
+	{
+		if (!bforce && Device.dwFrame == Visibox_frame)
+			return;
+
+		Visibox_frame = Device.dwFrame;
+
+		Fbox Box;
+		Box.invalidate();
+		for (u32 b = 0; b < bones->size(); b++)
+		{
+			if (!LL_GetBoneVisible(u16(b)))
+				continue;
+
+			Fobb& obb = (*bones)[b]->obb;
+			Fmatrix& Mbone = LL_GetBoneInstance((u16)b).mTransform;
+			Fmatrix Mbox;
+			obb.xform_get(Mbox);
+			Fmatrix X;
+			X.mul_43(Mbone, Mbox);
+			Fvector& S = obb.m_halfsize;
+
+			Fvector P, A;
+			A.set(-S.x, -S.y, -S.z); X.transform_tiny(P, A); Box.modify(P);
+			A.set(-S.x, -S.y, S.z); X.transform_tiny(P, A); Box.modify(P);
+			A.set(S.x, -S.y, S.z); X.transform_tiny(P, A); Box.modify(P);
+			A.set(S.x, -S.y, -S.z); X.transform_tiny(P, A); Box.modify(P);
+			A.set(-S.x, S.y, -S.z); X.transform_tiny(P, A); Box.modify(P);
+			A.set(-S.x, S.y, S.z); X.transform_tiny(P, A); Box.modify(P);
+			A.set(S.x, S.y, S.z); X.transform_tiny(P, A); Box.modify(P);
+			A.set(S.x, S.y, -S.z); X.transform_tiny(P, A); Box.modify(P);
+		}
+
+		if (bones->size())
+		{
+			vis.box.min = (Box.min);
+			vis.box.max = (Box.max);
+			vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+		}
+	}
 	ICF Fmatrix& LL_GetTransform_R(u16 bone_id) { return LL_GetBoneInstance(bone_id).mRenderTransform; }
 	// rendering only
 	Fobb& LL_GetBox(u16 bone_id)
@@ -281,6 +346,10 @@ public:
 	// Main functionality
 	virtual void CalculateBones(BOOL bForceExact = FALSE); // Recalculate skeleton
 	void CalculateBones_Invalidate();
+#if defined(USE_DX11) && RENDER == R_R4
+    const Fvector4* RenderPalette(u32 count, bool previous);
+#endif
+	bool CopyBonesFrom(IKinematics* from);
 
 	void Callback(UpdateCallback C, void* Param)
 	{

@@ -675,6 +675,9 @@
     <ClInclude Include="..\xrRenderDX10\dx10BufferUtils.h">
       <Filter>dx9 to dx10 Utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\xrRenderDX10\dx10DebugName.h">
+      <Filter>dx9 to dx10 Utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\xrRenderDX10\dx10StateUtils.h">
       <Filter>dx9 to dx10 Utils</Filter>
     </ClInclude>
@@ -781,6 +784,9 @@
       <Filter>Interfase implementations\ImGuiRender</Filter>
     </ClInclude>
     <ClInclude Include="..\xrRenderDX10\dx10EventWrapper.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\xrRender\gifPlayer.h">
       <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="..\xrRender\CHudInitializer.h">
@@ -1437,6 +1443,9 @@
     <ClCompile Include="..\xrRenderDX10\dx10EventWrapper.cpp">
       <Filter>Core</Filter>
     </ClCompile>
+    <ClCompile Include="..\xrRender\gifPlayer.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
     <ClCompile Include="..\xrRender\CHudInitializer.cpp">
       <Filter>Core</Filter>
     </ClCompile>
@@ -1460,6 +1469,35 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\light_vis.cpp">
+      <Filter>Lights</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="LocalLightShadows.h">
+      <Filter>Lights</Filter>
+    </ClInclude>
+    <ClInclude Include="LocalLightDebug.h">
+      <Filter>Lights</Filter>
+    </ClInclude>
+    <ClInclude Include="RenderContext.h">
+      <Filter>Lights</Filter>
+    </ClInclude>
+    <ClInclude Include="SunShadows.h">
+      <Filter>Lights</Filter>
+    </ClInclude>
+    <ClInclude Include="LocalShadowVisibility.h">
+      <Filter>Lights</Filter>
+    </ClInclude>
+    <ClCompile Include="LocalLightShadows.cpp">
+      <Filter>Lights</Filter>
+    </ClCompile>
+    <ClCompile Include="LocalLightDebug.cpp">
+      <Filter>Lights</Filter>
+    </ClCompile>
+    <ClCompile Include="RenderContext.cpp">
+      <Filter>Lights</Filter>
+    </ClCompile>
+    <ClCompile Include="SunShadows.cpp">
       <Filter>Lights</Filter>
     </ClCompile>
   </ItemGroup>

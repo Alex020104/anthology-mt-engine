@@ -10,6 +10,7 @@ static NVSDK_NGX_PerfQuality_Value NgxQuality(Quality quality)
 {
     switch (quality)
     {
+    case Quality::UltraQuality:
     case Quality::Quality: return NVSDK_NGX_PerfQuality_Value_MaxQuality;
     case Quality::Balanced: return NVSDK_NGX_PerfQuality_Value_Balanced;
     case Quality::Performance: return NVSDK_NGX_PerfQuality_Value_MaxPerf;
@@ -84,12 +85,17 @@ bool D3D11Backend::Initialize(ID3D11Device* device, const wchar_t* cachePath, Lo
 bool D3D11Backend::OptimalSize(Quality quality, Size display, Size& render)
 {
     render = {};
-    if (!m_parameters || quality == Quality::Off || quality > Quality::UltraPerformance || !display.Valid())
+    if (!m_parameters || quality == Quality::Off || quality > Quality::UltraQuality || !display.Valid())
     {
         if (m_log) m_log("DLSS optimal dimensions: missing capabilities, invalid quality or display size", unsigned(E_INVALIDARG));
         return false;
     }
     if (quality == Quality::DLAA) { render = display; return true; }
+    if (quality == Quality::UltraQuality)
+    {
+        render = { (std::max)(1u, display.width * 5u / 6u), (std::max)(1u, display.height * 5u / 6u) };
+        return true;
+    }
     Size optimal, minimum, maximum;
     float sharpness;
     if (!Check(NGX_DLSS_GET_OPTIMAL_SETTINGS(m_parameters, display.width, display.height, NgxQuality(quality),
@@ -107,7 +113,7 @@ bool D3D11Backend::OptimalSize(Quality quality, Size display, Size& render)
 bool D3D11Backend::Create(Quality quality, Size render, Size display, bool hdr, Preset preset, bool allocateOutput)
 {
     ReleaseFeature();
-    if (!m_parameters || !ValidPreset(preset) || quality == Quality::Off || quality > Quality::UltraPerformance ||
+    if (!m_parameters || !ValidPreset(preset) || quality == Quality::Off || quality > Quality::UltraQuality ||
         !render.Valid() || !display.Valid() || render.width > display.width || render.height > display.height)
     {
         if (m_log) m_log("DLSS feature creation: invalid capabilities, quality, preset or dimensions", unsigned(E_INVALIDARG));

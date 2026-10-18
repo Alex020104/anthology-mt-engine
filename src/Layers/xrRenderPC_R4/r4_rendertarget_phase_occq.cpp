@@ -6,6 +6,7 @@ void CRenderTarget::phase_occq()
 		u_setrt(m_renderWidth, m_renderHeight, nullptr, nullptr, nullptr, main_depth());
 	else
 		u_setrt(m_renderWidth, m_renderHeight,NULL,NULL,NULL, rt_MSAADepth->pZRT);
+    RCache.set_RT(NULL, 3);
 	RCache.set_Shader(s_occq);
 	RCache.set_CullMode(CULL_CCW);
 	RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, 0x01, 0xff, 0x00);

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "RenderDimensions.h"
 
 
 IC bool SortLights(light* i, light* j)
@@ -8,6 +9,7 @@ IC bool SortLights(light* i, light* j)
 
 void CRenderTarget::phase_blur()
 {
+    PROF_EVENT("RenderTarget.Blur");
 	//Get common data
 	u32 Offset = 0;
 	float d_Z = EPS_S;
@@ -193,6 +195,7 @@ void CRenderTarget::phase_blur()
 
 void CRenderTarget::phase_ssfx_ssr()
 {
+    PROF_EVENT("RenderTarget.SSFX.SSR");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -354,6 +357,7 @@ void CRenderTarget::phase_ssfx_ssr()
 
 void CRenderTarget::phase_ssfx_volumetric_blur()
 {
+    PROF_EVENT("phase_ssfx_volumetric_blur");
 	const bool main_ready = rt_Generic_2 && rt_Generic_2->pRT && rt_Generic_2->pSurface;
 	const bool volume_ready = rt_ssfx_volumetric && rt_ssfx_volumetric->pRT;
 	const bool temporary_ready = rt_ssfx_volumetric_tmp && rt_ssfx_volumetric_tmp->pRT;
@@ -461,6 +465,7 @@ void CRenderTarget::phase_ssfx_volumetric_blur()
 
 void CRenderTarget::phase_ssfx_water_blur()
 {
+    PROF_EVENT("RenderTarget.SSFX.WaterBlur");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -547,6 +552,7 @@ void CRenderTarget::phase_ssfx_water_blur()
 
 void CRenderTarget::phase_ssfx_water_waves()
 {
+    PROF_EVENT("RenderTarget.SSFX.WaterWaves");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -586,6 +592,7 @@ void CRenderTarget::phase_ssfx_water_waves()
 
 void CRenderTarget::phase_ssfx_sss()
 {
+    PROF_EVENT("RenderTarget.SSFX.SSS");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(255, 255, 255, 255);
@@ -675,6 +682,7 @@ void CRenderTarget::phase_ssfx_sss()
 
 void CRenderTarget::phase_ssfx_sss_ext(light_Package& LP)
 {
+    PROF_EVENT("RenderTarget.SSFX.SSSExtended");
 	static shared_str strLights("lights_data");
 	static light* LightSlot[8];
 	static u32 sss_currentframe;
@@ -737,7 +745,8 @@ void CRenderTarget::phase_ssfx_sss_ext(light_Package& LP)
 		for (int slot = 0; slot < 8; slot++)
 			Lights_Array[slot].set(0, 0, 0, 1);
 
-		xr_vector<light*> LightsSort;
+		static xr_vector<light*> LightsSort;
+        LightsSort.clear();
 		bool CheckPackage = true;
 
 		if (Device.dwFrame > sss_currentframe)
@@ -745,12 +754,22 @@ void CRenderTarget::phase_ssfx_sss_ext(light_Package& LP)
 			sss_currentframe = Device.dwFrame + 2;
 
 			xr_vector<light*>& source = LP.v_shadowed;
+
+            // demonized: use whatever omni light visible by checking its parent
+            // normally it should be omnipart_num 0, but with omnipart_vischeck its not guaranteed, hope its stable
+            static xr_unordered_flat_set<light*> omni_parents;
+            omni_parents.clear();
 			for (u32 it = 0; it < source.size(); it++)
 			{
 				light* L = source[it];
+                light* parent = L->omipart_parent;
 
-				if (L->omnipart_num == 0 && L->range > 1.5f)
+				if ((L->omnipart_num == 0 || (parent && omni_parents.find(parent) == omni_parents.end())) && L->range > 1.5f)
 				{
+                    light* to_insert = L->omnipart_num == 0 ? L : parent;
+                    if (to_insert)
+                        omni_parents.insert(to_insert);
+
 					if (L->distance < 800 && L->flags.bActive)
 					{
 						L->distance_lpos = Device.vCameraPosition.distance_to(L->position);
@@ -965,6 +984,7 @@ void CRenderTarget::phase_ssfx_sss_ext(light_Package& LP)
 
 void CRenderTarget::phase_ssfx_fog_scattering()
 {
+    PROF_EVENT("RenderTarget.SSFX.FogScattering");
 	u32 Offset = 0;
 	Fvector2 p0, p1;
 
@@ -1034,6 +1054,7 @@ void CRenderTarget::phase_ssfx_fog_scattering()
 
 void CRenderTarget::phase_ssfx_motion_blur()
 {
+    PROF_EVENT("RenderTarget.SSFX.MotionBlur");
 	u32 Offset = 0;
 	Fvector2 p0, p1;
 

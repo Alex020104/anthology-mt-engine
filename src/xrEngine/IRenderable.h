@@ -7,6 +7,11 @@ ENGINE_API u64 GetRenderSurfaceOwnerGeneration();
 ENGINE_API void SetRenderSurfaceOwnerMainSerial(u64 serial);
 ENGINE_API void SetRenderSurfaceOwnerHistoryBoundary(u64 serial);
 
+namespace ShaderBus
+{
+	struct object_values;
+}
+
 //////////////////////////////////////////////////////////////////////////
 // definition ("Renderable")
 class ENGINE_API IRenderable:
@@ -25,6 +30,8 @@ public:
 		IRenderVisual* visual;
 		IRender_ObjectSpecific* pROS;
 		BOOL pROS_Allowed;
+		// own values on shader bus obj_ lanes, null while it has none
+		ShaderBus::object_values* bus_values = nullptr;
 	} renderable;
 
 public:

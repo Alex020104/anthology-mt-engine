@@ -93,7 +93,7 @@ namespace luabind
 
 		bool is_valid() const { return ref_.is_valid(); }
 	
-		lua_State* lua_state() const { return L_; }
+		lua_State* lua_state() const { detail::prepare_lua_call(L_); return L_; }
 		void pushvalue() const { ref_.get(L_); }
 
 		void reset()
@@ -444,6 +444,7 @@ namespace luabind
     template<typename... Args>
     decltype(auto) functor<Ret>::operator()(const Args&... args) const
     {
+        detail::prepare_lua_call(L_);
         using proxy_type = std::conditional_t<
             std::is_void_v<Ret>,
             luabind::detail::proxy_functor_void_caller<const Args*...>,

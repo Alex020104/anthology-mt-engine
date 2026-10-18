@@ -180,6 +180,7 @@ public:
 
 public:
 	DetailVec objects;
+	Fbox m_visible_bounds;
 	vis_list m_visibles [3]; // 0=still, 1=Wave1, 2=Wave2
 
 #ifndef _EDITOR
@@ -290,6 +291,14 @@ public:
 	void Suspend();
 	void Resume();
 	void Render();
+    bool GetVisibleBounds(Fbox& bounds);
+    bool TryGetVisibleBounds(Fbox& bounds);
+#if RENDER == R_R4
+    bool CanRecordShadow() const;
+    bool PrimeShadow(class RenderContext& context);
+    void RenderShadow(float fade, light* source = nullptr);
+#endif
+
 
 	/// MT stuff
 	u32 m_frame_calc;

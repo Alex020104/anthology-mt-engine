@@ -69,8 +69,9 @@ void CTextureDescrMngr::LoadTHM(LPCSTR initial, map_TD& s_texture_details, map_C
 		result.name = name;
 	}
 
-	xr_parallel_for(0u, static_cast<u32>(prepared.size()), [&](u32 index)
-	{
+    for (u32 index = 0; index < prepared.size(); ++index)
+    {
+        PROF_EVENT("Render.THMRead");
 		PreparedThm& result = prepared[index];
 		string_path path;
 		FS.update_path(path, initial, result.file.c_str());
@@ -102,7 +103,7 @@ void CTextureDescrMngr::LoadTHM(LPCSTR initial, map_TD& s_texture_details, map_C
 			F->r_stringZ(result.bump_name);
 		}
 		FS.r_close(F);
-	});
+	}
 	const u32 prepareMs = timer.GetElapsed_ms();
 
 	for (const PreparedThm& result : prepared)
@@ -157,8 +158,60 @@ void CTextureDescrMngr::LoadTHM(LPCSTR initial, map_TD& s_texture_details, map_C
 		initial, static_cast<u32>(prepared.size()), prepareMs, timer.GetElapsed_ms() - prepareMs, timer.GetElapsed_ms());
 }
 
+void CTextureDescrMngr::LoadLTX(LPCSTR initial, map_TD& s_texture_details)
+{
+	PROF_EVENT();
+
+	FS_FileSet flist;
+	FS.file_list(flist, initial, FS_ListFiles, "*.ltx");
+	for (const FS_File& file : flist)
+	{
+		string_path name;
+		xr_strcpy(name, file.name.c_str());
+		fix_texture_thm_name(name);
+		if (s_texture_details.find(name) != s_texture_details.end())
+			continue;
+
+		string_path path;
+		FS.update_path(path, initial, file.name.c_str());
+		CInifile ini(path, TRUE, TRUE, FALSE);
+		if (!ini.section_exist("texture"))
+			continue;
+
+		LPCSTR mode = ini.line_exist("texture", "bump_mode")
+			? ini.r_string("texture", "bump_mode") : "none";
+		if (!mode || (stricmp(mode, "none") && stricmp(mode, "use") && stricmp(mode, "parallax")))
+		{
+			Msg("! Invalid texture bump_mode in '%s': expected none, use or parallax", path);
+			continue;
+		}
+
+		const bool use_bump = stricmp(mode, "none") != 0;
+		string_path bump_name = {};
+		if (use_bump)
+		{
+			LPCSTR configured_name = ini.line_exist("texture", "bump_name")
+				? ini.r_string("texture", "bump_name") : nullptr;
+			if (configured_name && configured_name[0])
+			{
+				xr_strcpy(bump_name, configured_name);
+				fix_texture_thm_name(bump_name);
+			}
+			else
+				strconcat(sizeof(bump_name), bump_name, name, "_bump");
+		}
+
+		texture_desc& desc = s_texture_details[name];
+		desc.m_spec = xr_new<texture_spec>();
+		desc.m_spec->m_material = ini.line_exist("texture", "material") ? ini.r_float("texture", "material") : 1.0f;
+		desc.m_spec->m_bump_name = bump_name;
+		desc.m_spec->m_use_steep_parallax = stricmp(mode, "parallax") == 0;
+	}
+}
+
 void CTextureDescrMngr::Load()
 {
+    PROF_EVENT("Render.TextureDescriptions");
 	map_TD gameDetails;
 	map_TD levelDetails;
 	map_CS gameScalers;
@@ -166,30 +219,10 @@ void CTextureDescrMngr::Load()
 	std::exception_ptr gameFailure;
 	std::exception_ptr levelFailure;
 
-	xr_task_group scans;
-	scans.run([&]()
-	{
-		try
-		{
-			LoadTHM("$game_textures$", gameDetails, gameScalers);
-		}
-		catch (...)
-		{
-			gameFailure = std::current_exception();
-		}
-	});
-	scans.run([&]()
-	{
-		try
-		{
-			LoadTHM("$level$", levelDetails, levelScalers);
-		}
-		catch (...)
-		{
-			levelFailure = std::current_exception();
-		}
-	});
-	scans.wait();
+    try { LoadTHM("$game_textures$", gameDetails, gameScalers); }
+    catch (...) { gameFailure = std::current_exception(); }
+    try { LoadTHM("$level$", levelDetails, levelScalers); }
+    catch (...) { levelFailure = std::current_exception(); }
 
 	auto clearTemporary = [](map_TD& details, map_CS& scalers)
 	{
@@ -245,6 +278,8 @@ void CTextureDescrMngr::Load()
 	// Level THMs override game THMs deterministically, as intended by the old two-source load.
 	merge(gameDetails, gameScalers);
 	merge(levelDetails, levelScalers);
+    LoadLTX("$game_textures$", m_texture_details);
+    LoadLTX("$level$", m_texture_details);
 }
 
 void CTextureDescrMngr::UnLoad()

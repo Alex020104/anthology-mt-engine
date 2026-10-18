@@ -24,12 +24,11 @@ REM Generate buildvm_arch.h with DynASM
 echo [LuaJIT] Running DynASM to generate host\buildvm_arch.h
 "host\minilua.exe" "%DYNASM%" -LN %DFLAGS% -o "host\buildvm_arch.h" "vm_x86.dasc" || exit /b 1
 
-REM Build buildvm if missing
-if not exist "host\buildvm.exe" (
-  echo [LuaJIT] Building host\buildvm.exe
-  cl /nologo /c /O2 /Ob3 /Oi /Ot /Oy /GT /W3 /fp:precise /MD /GF /GS- /Zi /I "." /I "..\dynasm" host\buildvm.c host\buildvm_peobj.c host\buildvm_lib.c host\buildvm_asm.c host\buildvm_fold.c || exit /b 1
-  link /nologo /OPT:REF /OPT:ICF /out:host\buildvm.exe buildvm.obj buildvm_peobj.obj buildvm_lib.obj buildvm_asm.obj buildvm_fold.obj || exit /b 1
-)
+REM buildvm embeds internal structure offsets into lj_vm.obj. Rebuild it for
+REM the current headers and DynASM output, including after a branch switch.
+echo [LuaJIT] Building host\buildvm.exe for the current internal layout
+cl /nologo /c /O2 /Ob3 /Oi /Ot /Oy /GT /W3 /fp:precise /MD /GF /GS- /Zi /I "." /I "..\dynasm" host\buildvm.c host\buildvm_peobj.c host\buildvm_lib.c host\buildvm_asm.c host\buildvm_fold.c || exit /b 1
+link /nologo /OPT:REF /OPT:ICF /out:host\buildvm.exe buildvm.obj buildvm_peobj.obj buildvm_lib.obj buildvm_asm.obj buildvm_fold.obj || exit /b 1
 
 REM Generate VM object and header files
 echo [LuaJIT] Generating lj_vm.obj and headers

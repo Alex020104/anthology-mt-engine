@@ -128,6 +128,13 @@ CKinematics::~CKinematics()
 void CKinematics::IBoneInstances_Create()
 {
 	motionHistoryEpoch.Reset();
+#if defined(USE_DX11) && RENDER == R_R4
+    for (u32 i = 0; i < 2; ++i)
+    {
+        palette_source[i].clear();
+        palette_rows[i].clear();
+    }
+#endif
 	// VERIFY2				(bones->size() < 64, "More than 64 bones is a crazy thing!");
 	u32 size = bones->size();
 	bone_instances = xr_alloc<CBoneInstance>(size);
@@ -137,6 +144,13 @@ void CKinematics::IBoneInstances_Create()
 
 void CKinematics::IBoneInstances_Destroy()
 {
+#if defined(USE_DX11) && RENDER == R_R4
+    for (u32 i = 0; i < 2; ++i)
+    {
+        palette_source[i].clear();
+        palette_rows[i].clear();
+    }
+#endif
 	if (bone_instances)
 	{
 		xr_free(bone_instances);
@@ -448,6 +462,30 @@ void CKinematics::Copy(dxRender_Visual* P)
 	m_lod = (pFrom->m_lod) ? (dxRender_Visual*)::Render->model_Duplicate(pFrom->m_lod) : 0;
 }
 
+#if defined(USE_DX11) && RENDER == R_R4
+const Fvector4* CKinematics::RenderPalette(u32 count, bool previous)
+{
+    PROF_EVENT("Render.Skinning.ValidatePalette");
+    if (!count || count > LL_BoneCount()) return nullptr;
+    auto& source = palette_source[previous ? 1 : 0];
+    auto& rows = palette_rows[previous ? 1 : 0];
+    const u32 initialized = u32(source.size());
+    if (count > initialized) { source.resize(count); rows.resize(count * 3); }
+    for (u32 bone = 0; bone < count; ++bone)
+    {
+        const Fmatrix& m = previous ? bone_instances[bone].mRenderTransform_prev : bone_instances[bone].mRenderTransform;
+        if (bone < initialized && !memcmp(&source[bone], &m, sizeof(m))) continue;
+        source[bone] = m;
+        Fvector4* packed = rows.data() + bone * 3;
+        packed[0].set(m._11, m._21, m._31, m._41);
+        packed[1].set(m._12, m._22, m._32, m._42);
+        packed[2].set(m._13, m._23, m._33, m._43);
+    }
+    return rows.data();
+}
+
+#endif
+
 void CKinematics::CalculateBones_Invalidate()
 {
 	UCalc_Time = 0x0;
@@ -569,6 +607,56 @@ void CKinematics::LL_SetBonesVisible(u64 mask)
 	}
 	CalculateBones_Invalidate();
 	Visibility_Invalidate();
+}
+
+bool CKinematics::CopyBonesFrom(IKinematics* _from)
+{
+	CKinematics* from = smart_cast<CKinematics*>(_from);
+	if (!from || from == this)
+		return false;
+
+	// Calculate now, so that the renderer doesn't recalculate the bones this frame and overwrite the copy
+	CalculateBones_Invalidate();
+	CalculateBones(TRUE);
+
+	CBoneInstance& root = bone_instances[iRoot];
+	root.mTransform.identity();
+	root.mRenderTransform.mul_43(root.mTransform, (*bones)[iRoot]->m2b_transform);
+
+	auto copy_bone = [&](u16 dst_id, u16 src_id)
+	{
+		CBoneInstance& dst = bone_instances[dst_id];
+		const Fmatrix& pose = from->LL_GetTransform(src_id);
+
+		// Hidden bones stay collapsed, but keep the pose for when they are shown again
+		dst.mTransformHidden = pose;
+		if (LL_GetBoneVisible(dst_id))
+		{
+			dst.mTransform = pose;
+			dst.mRenderTransform = from->bone_instances[src_id].mRenderTransform;
+		}
+	};
+
+	if (LL_BoneCount() == from->LL_BoneCount())
+	{
+		for (u16 i = 0; i < LL_BoneCount(); ++i)
+			copy_bone(i, i);
+	}
+	else
+	{
+		for (const auto& [name, id] : *bone_map_N)
+		{
+			u16 src_id = from->LL_BoneID(name);
+			if (src_id != BI_NONE)
+				copy_bone(id, src_id);
+		}
+	}
+
+	// Bounds of the copied pose
+	vis.box = from->vis.box;
+	vis.sphere = from->vis.sphere;
+
+	return true;
 }
 
 void CKinematics::Visibility_Update()

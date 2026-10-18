@@ -808,6 +808,18 @@ void format_message(LPSTR buffer, const u32& buffer_size)
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 {
     xrLogger::SetImmediateMode(true);
+    const EXCEPTION_RECORD* exception = pExceptionInfo->ExceptionRecord;
+    Msg("[error] Unhandled exception 0x%08X at 0x%p", exception->ExceptionCode, exception->ExceptionAddress);
+    if (exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && exception->NumberParameters >= 2)
+        Msg("[error] Access violation: operation=%llu address=0x%p",
+            static_cast<unsigned long long>(exception->ExceptionInformation[0]),
+            reinterpret_cast<void*>(exception->ExceptionInformation[1]));
+
+#ifdef USE_OWN_MINI_DUMP
+    // Preserve the original exception even if later diagnostics fail.
+    save_mini_dump(pExceptionInfo);
+#endif
+
 	string256 error_message;
 	format_message(error_message, sizeof(error_message));
 
@@ -865,10 +877,6 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 	//return EXCEPTION_CONTINUE_EXECUTION;
 
     xrLogger::FlushLog();
-
-# ifdef USE_OWN_MINI_DUMP
-	save_mini_dump(pExceptionInfo);
-# endif // USE_OWN_MINI_DUMP
 
     if (IsDebuggerPresent())
         DebugBreak();

@@ -2,6 +2,7 @@
 #include "xrSheduler.h"
 #include "xr_object.h"
 #include "EngineThreading.h"
+#include "IGame_Level.h"
 
 #include "../xrCore/profiler.h"
 
@@ -251,22 +252,11 @@ void CSheduler::Unregister(ISheduled* A)
 	// wait until done with m_current_step_obj
 	if (m_current_step_obj == A)
 	{
-		int spin_count = 0;
-
 		// Loop until the worker releases the object
+        xrSpinWait w;
 		while (m_current_step_obj == A)
 		{
-			// Phase 1: Spin briefly (fast reaction if it finishes instantly)
-			if (spin_count < 16)
-			{
-				_mm_pause();
-				spin_count++;
-			}
-			// Phase 2: Yield CPU (don't burn 100% CPU waiting for a heavy update)
-			else
-			{
-				std::this_thread::yield();
-			}
+            w();
 		}
 	}
 
@@ -338,6 +328,7 @@ void CSheduler::Pop()
 
 int SchedulerBatchSize = 256;
 BOOL SchedulerLog = FALSE;
+extern ENGINE_API IGame_Level* g_pGameLevel;
 void CSheduler::ProcessStep()
 {
 	// Normal priority
@@ -358,7 +349,9 @@ void CSheduler::ProcessStep()
 	// 2048 still drains a 37k-object Anthology backlog within the preserved 60
 	// logical precache frames, while allowing render/resource workers to make
 	// progress between batches instead of producing multi-second frame spikes.
-	const u32 batch_size = Device.dwPrecacheFrame ? 2048u : u32(SchedulerBatchSize);
+	const u32 batch_size = Device.dwPrecacheFrame ? 2048u :
+        (g_pGameLevel && g_pGameLevel->schedulerFlush ? 65536u : u32(SchedulerBatchSize));
+
 
 	{
 		xrSRWLockGuard g(ItemsLock);
@@ -401,7 +394,7 @@ void CSheduler::ProcessStep()
 			// a single expensive object cannot be pre-empted by either variant.
 			if ((i % 8) == 0 && Device.dwPrecacheFrame == 0 && CPU::QPC() > cycles_limit)
 			{
-				psShedulerTarget += (psShedulerReaction * 3);
+				psShedulerTarget += psShedulerReaction * 1.5f;
 				break;
 			}
 
@@ -620,8 +613,8 @@ void CSheduler::UpdateFinalize()
 {
 	PROF_EVENT();
 
-	clamp(psShedulerTarget, 3.f, 66.f);
-	psShedulerCurrent = 0.9f * psShedulerCurrent + 0.1f * psShedulerTarget;
+	clamp(psShedulerTarget, 1.f, 5.f);
+	psShedulerCurrent = _inertion(psShedulerCurrent, psShedulerTarget, .9f);
 	Device.Statistic->fShedulerLoad = psShedulerCurrent;
 
 	// Finalize

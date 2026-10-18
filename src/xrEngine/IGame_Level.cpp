@@ -12,6 +12,7 @@
 #include "EngineThreading.h"
 #include "xr_object.h"
 #include "feel_sound.h"
+#include "shader_bus.h"
 
 #include "../xrCore/profiler.h"
 
@@ -40,7 +41,6 @@ IGame_Level::IGame_Level()
 
 IGame_Level::~IGame_Level()
 {
-	// Device.details_task.wait();
 	Device.secondary_tasks.wait();
 
 	if (Core.ParamsData.test(ECoreParams::nes_texture_storing))
@@ -210,6 +210,7 @@ bool IGame_Level::Load(u32 dwNum)
 	Render->level_BeginAsyncLoad();
 	try
 	{
+        PROF_EVENT("LoadGame.RenderLevel");
 		Render->level_Load(LL_Stream);
 	}
 	catch (...)
@@ -232,7 +233,10 @@ bool IGame_Level::Load(u32 dwNum)
 	// Msg ("* S-CREATE: %f ms, %d times",tscreate.result,tscreate.count);
 
 	// Objects
-	Objects.Load();
+    {
+        PROF_EVENT("LoadGame.LevelObjects");
+        Objects.Load();
+    }
 	//. ANDY R_ASSERT (Load_GameSpecific_After ());
 
 	// Done
@@ -245,6 +249,8 @@ bool IGame_Level::Load(u32 dwNum)
 
 	Device.seqFrame.Add(this);
 	Msg("* [LEVEL LOAD] total: %d ms", level_timer.GetElapsed_ms());
+
+	ShaderBus::dump();
 
 	//SECUROM_MARKER_PERFORMANCE_OFF(10)
 
@@ -292,6 +298,9 @@ void IGame_Level::OnRender()
 			Render->Render();
 			if (measure_precache)
 				render_ticks = CPU::QPC() - started_at;
+#if XRCORE_PROFILER == PROFILER_OPTICK
+            OptickLoadGameLevelRendered();
+#endif
 		}
 		if (measure_precache)
 			pApp->LoadSessionRecordPrecacheLevel(calculate_ticks, render_ticks, render_world);
@@ -452,7 +461,10 @@ void IGame_Level::SoundEvent_Register(ref_sound_data_ptr S, float range)
 
 	// Query objects
 	Fvector bb_size = {range, range, range};
-	g_SpatialSpace->q_box(snd_ER, 0, STYPE_REACTTOSOUND, snd_position, bb_size);
+	{
+		PROF_EVENT("Sound: hearing spatial query");
+		g_SpatialSpace->q_box(snd_ER, 0, STYPE_REACTTOSOUND, snd_position, bb_size);
+	}
 
 	// Iterate
 	auto it = snd_ER.begin();

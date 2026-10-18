@@ -5,6 +5,7 @@
 #include "blenders\blender.h"
 
 
+
 void CResourceManager::OnDeviceDestroy(BOOL)
 {
 	if (RDEVICE.b_is_Ready) return;
@@ -12,6 +13,7 @@ void CResourceManager::OnDeviceDestroy(BOOL)
 	m_level_shader_cache.clear();
 	m_level_shader_jobs.clear();
 	m_reduceLodTextureList.clear();
+    DestroyNecessaryTextures();
 	m_textures_description.UnLoad();
 
 	// Matrices
@@ -55,6 +57,7 @@ void CResourceManager::OnDeviceDestroy(BOOL)
 
 void CResourceManager::OnDeviceCreate(IReader* F)
 {
+    PROF_EVENT("Render.LoadResources");
 	if (!RDEVICE.b_is_Ready) return;
 
 	CTimer startupTimer;
@@ -174,27 +177,21 @@ void CResourceManager::OnDeviceCreate(LPCSTR shName)
 
 void CResourceManager::StoreNecessaryTextures()
 {
-	xrCriticalSectionGuard guard(creationGuard);
-	if (!m_necessary.empty())
-		return;
+    xrCriticalSectionGuard guard(creationGuard);
+    if (!m_necessary.empty()) return;
 
-	map_TextureIt it = m_textures.begin();
-	map_TextureIt it_e = m_textures.end();
-
-	for (; it != it_e; ++it)
-	{
-		LPCSTR texture_name = it->first;
-		if (strstr(texture_name, "\\levels\\")) continue;
-		if (!strchr(texture_name, '\\')) continue;
-
-		ref_texture T;
-		T.create(texture_name);
-		m_necessary.push_back(T);
-	}
+    for (const auto& entry : m_textures)
+    {
+        if (strstr(entry.first, "\\levels\\") || !strchr(entry.first, '\\')) continue;
+        ref_texture texture = AcquireTexture(entry.second);
+        if (texture && std::find(m_necessary.begin(), m_necessary.end(), texture) == m_necessary.end())
+            m_necessary.push_back(texture);
+    }
 }
 
 void CResourceManager::DestroyNecessaryTextures()
 {
+    xrCriticalSectionGuard guard(creationGuard);
 	m_necessary.clear();
 	xr_map<CTexture*, ref_texture> prefetched;
 	{

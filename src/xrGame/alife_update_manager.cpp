@@ -363,6 +363,7 @@ void CALifeUpdateManager::load(LPCSTR game_name, bool no_assert, bool new_only)
 #endif
 	//	g_pGamePersistent->LoadTitle		("st_server_connecting");
 	g_pGamePersistent->LoadTitle(true, g_pGameLevel->name());
+    START_PROFILE("LoadGame.LevelLoadBarrier");
 	// Immutable level data was prepared in parallel with ALife/Lua. Publish it
 	// only now, after the Lua lifecycle has completed, on the owner thread.
 	try
@@ -375,6 +376,7 @@ void CALifeUpdateManager::load(LPCSTR game_name, bool no_assert, bool new_only)
 		throw;
 	}
 	pApp->LoadSessionPhaseEnd(LoadSessionNativeLevel);
+    STOP_PROFILE;
 }
 
 void CALifeUpdateManager::reload(LPCSTR section)

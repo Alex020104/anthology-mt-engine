@@ -25,6 +25,142 @@
 
 using namespace luabind;
 
+#if XRCORE_PROFILER == PROFILER_OPTICK
+namespace
+{
+    int ProfileDxmlCall(lua_State* state)
+    {
+        const int arguments = lua_gettop(state);
+        const bool measure = !lua_toboolean(state, lua_upvalueindex(3)) ||
+            (lua_type(state, 1) == LUA_TSTRING && strcmp(lua_tostring(state, 1), "on_xml_read") == 0);
+        lua_pushvalue(state, lua_upvalueindex(1));
+        lua_insert(state, 1);
+        if (!measure)
+        {
+            lua_call(state, arguments, LUA_MULTRET);
+            return lua_gettop(state);
+        }
+
+        int status;
+        {
+            PROF_EVENT_DYNAMIC(lua_tostring(state, lua_upvalueindex(2)));
+            status = lua_pcall(state, arguments, LUA_MULTRET, 0);
+        }
+        // Close the profiling event before Lua propagates an error by longjmp.
+        return status ? lua_error(state) : lua_gettop(state);
+    }
+
+    class DxmlProfileScope
+    {
+        struct Hook
+        {
+            int table;
+            LPCSTR field;
+            int original;
+            int wrapper;
+        };
+
+        lua_State* state;
+        Hook hooks[4];
+        unsigned count = 0;
+
+        void Wrap(int table, LPCSTR field, LPCSTR event, bool namedCallback = false)
+        {
+            lua_getfield(state, table, field);
+            if (!lua_isfunction(state, -1) || lua_tocfunction(state, -1) == ProfileDxmlCall)
+            {
+                lua_pop(state, 1);
+                return;
+            }
+            lua_pushstring(state, event);
+            lua_pushboolean(state, namedCallback);
+            lua_pushcclosure(state, ProfileDxmlCall, 3);
+            const int wrapper = luabind::detail::ref(state);
+            lua_pushvalue(state, table);
+            const int owner = luabind::detail::ref(state);
+            lua_pushstring(state, field);
+            lua_rawget(state, table);
+            const int original = luabind::detail::ref(state);
+            hooks[count++] = { owner, field, original, wrapper };
+            lua_pushstring(state, field);
+            lua_rawgeti(state, LUA_REGISTRYINDEX, wrapper);
+            lua_rawset(state, table);
+        }
+
+    public:
+        DxmlProfileScope(lua_State* state, int function) : state(state)
+        {
+            if (!Optick::IsActive() || lua_iscfunction(state, function))
+                return;
+
+            PROF_EVENT("DXML.ProfileSetup");
+            const int top = lua_gettop(state);
+            for (int index = 1; LPCSTR name = lua_getupvalue(state, function, index); ++index)
+            {
+                if (strcmp(name, "parser") == 0 && lua_istable(state, -1))
+                {
+                    const int parser = lua_gettop(state);
+                    Wrap(parser, "simple_dom", "DXML.Parse");
+                    Wrap(parser, "simple_xml", "DXML.Serialize");
+                    lua_pop(state, 1);
+                    break;
+                }
+                lua_pop(state, 1);
+            }
+
+            lua_getfenv(state, function);
+            const int environment = lua_gettop(state);
+            Wrap(environment, "xml_object", "DXML.BuildObject");
+            lua_pushliteral(state, "xmlDispatch");
+            lua_rawget(state, environment);
+            const bool directDispatch = lua_isfunction(state, -1);
+            lua_pop(state, 1);
+            Wrap(environment, directDispatch ? "xmlDispatch" : "SendScriptCallback", "DXML.Callbacks",
+                !directDispatch);
+            PROF_TAG("DXMLStageHooks", count);
+            lua_settop(state, top);
+        }
+
+        ~DxmlProfileScope()
+        {
+            if (!count)
+                return;
+
+            PROF_EVENT("DXML.ProfileRestore");
+            const int top = lua_gettop(state);
+            while (count)
+            {
+                const Hook& hook = hooks[--count];
+                lua_rawgeti(state, LUA_REGISTRYINDEX, hook.table);
+                lua_pushstring(state, hook.field);
+                lua_rawget(state, -2);
+                lua_rawgeti(state, LUA_REGISTRYINDEX, hook.wrapper);
+                const bool unchanged = lua_rawequal(state, -1, -2);
+                lua_pop(state, 2);
+                // Preserve replacements made by a callback, including inherited fields.
+                if (unchanged)
+                {
+                    lua_pushstring(state, hook.field);
+                    if (hook.original == LUA_REFNIL)
+                        lua_pushnil(state);
+                    else
+                        lua_rawgeti(state, LUA_REGISTRYINDEX, hook.original);
+                    lua_rawset(state, -3);
+                }
+                lua_pop(state, 1);
+                luabind::detail::unref(state, hook.wrapper);
+                luabind::detail::unref(state, hook.original);
+                luabind::detail::unref(state, hook.table);
+            }
+            lua_settop(state, top);
+        }
+
+        DxmlProfileScope(const DxmlProfileScope&) = delete;
+        DxmlProfileScope& operator=(const DxmlProfileScope&) = delete;
+    };
+}
+#endif
+
 void _attach_child(CUIWindow* _child, CUIWindow* _parent)
 {
 	if (!_parent) return;
@@ -59,7 +195,17 @@ void XMLLuaCallback(CXml &m_xml, LPCSTR xml_string) {
 	::luabind::functor<LPCSTR> funct;
 	if (ai().script_engine().functor("_G.COnXmlRead", funct))
 	{
-		LPCSTR res = funct(m_xml.m_xml_file_name, xml_string);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        lua_State* state = funct.lua_state();
+        funct.pushvalue();
+        DxmlProfileScope dxmlProfile(state, lua_gettop(state));
+        lua_pop(state, 1);
+#endif
+		LPCSTR res;
+		{
+			PROF_EVENT("XML.LuaTransform");
+			res = funct(m_xml.m_xml_file_name, xml_string);
+		}
 		//Msg("XMLLuaCallback, xml %s, contents %s", m_xml.m_xml_file_name, res);
 		m_xml.LoadFromString(res);
 	}

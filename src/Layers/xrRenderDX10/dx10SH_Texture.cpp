@@ -10,6 +10,7 @@
 
 #include "../../xrEngine/tntQAVI.h"
 #include "../../xrEngine/xrTheora_Surface.h"
+#include "../xrRender/gifPlayer.h"
 
 #include "../xrRender/dxRenderDeviceRender.h"
 
@@ -19,10 +20,17 @@
 #define		PRIORITY_NORMAL	8
 #define		PRIORITY_LOW	4
 
+// Background PPL task group used to (re)load textures off the calling thread.
+// Defined in dx10ResourceManager_Resources.cpp; CResourceManager::_CreateTexture
+// dispatches brand-new textures' initial Load() through it whenever the device is
+// ready. apply_load() below reuses the same queue for evicted textures instead of
+// calling Load() inline.
+
 void resptrcode_texture::create(LPCSTR _name)
 {
 	PROF_EVENT("resptrcode_texture::create");
-	_set(DEV->_CreateTexture(_name));
+	ref_texture texture = DEV->_CreateTexture(_name);
+    _set(texture._get());
 }
 
 
@@ -35,6 +43,7 @@ CTexture::CTexture()
 	m_pSRView = NULL;
 	pAVI = NULL;
 	pTheora = NULL;
+    gifPlayer = nullptr;
 	desc_cache = 0;
 	desc = {};
 	seqMSPF = 0;
@@ -153,6 +162,7 @@ void CTexture::PostLoad()
 	if (pTheora) bind = xr_make_delegate(this, &CTexture::apply_theora);
 	else if (pAVI) bind = xr_make_delegate(this, &CTexture::apply_avi);
 	else if (!seqDATA.empty()) bind = xr_make_delegate(this, &CTexture::apply_seq);
+	else if (gifPlayer) bind = xr_make_delegate(this, &CTexture::apply_gif);
 	else bind = xr_make_delegate(this, &CTexture::apply_normal);
 }
 
@@ -224,7 +234,7 @@ void CTexture::ProcessStaging()
 		VERIFY(!"CTexture::ProcessStaging unsupported dimensions.");
 	}
 
-	HW.pContext->CopyResource(pTargetSurface, pSurface);
+	RenderDeviceContext()->CopyResource(pTargetSurface, pSurface);
 	/*
 	for( int i=0; i<iNumSubresources; ++i)
 	{
@@ -262,7 +272,12 @@ void CTexture::Apply(u32 dwStage)
 	if (flags.bLoadedAsStaging)
 		ProcessStaging();
 
-	//if( !RImplementation.o.dx10_msaa )
+	#if defined(USE_DX11) && RENDER == R_R4
+    auto* view = RCache.TextureView(this, m_pSRView);
+#else
+    auto* view = m_pSRView;
+#endif
+    //if( !RImplementation.o.dx10_msaa )
 	//   VERIFY( !((!pSurface)^(!m_pSRView)) );	//	Both present or both missing
 	//else
 	//{
@@ -273,30 +288,30 @@ void CTexture::Apply(u32 dwStage)
 	if (dwStage < rstVertex) //	Pixel shader stage resources
 	{
 		//HW.pDevice->PSSetShaderResources(dwStage, 1, &m_pSRView);
-		SRVSManager.SetPSResource(dwStage, m_pSRView);
+		SRVSManager.SetPSResource(dwStage, view);
 	}
 	else if (dwStage < rstGeometry) //	Vertex shader stage resources
 	{
 		//HW.pDevice->VSSetShaderResources(dwStage-rstVertex, 1, &m_pSRView);
-		SRVSManager.SetVSResource(dwStage - rstVertex, m_pSRView);
+		SRVSManager.SetVSResource(dwStage - rstVertex, view);
 	}
 	else if (dwStage < rstHull) //	Geometry shader stage resources
 	{
 		//HW.pDevice->GSSetShaderResources(dwStage-rstGeometry, 1, &m_pSRView);
-		SRVSManager.SetGSResource(dwStage - rstGeometry, m_pSRView);
+		SRVSManager.SetGSResource(dwStage - rstGeometry, view);
 	}
 #ifdef USE_DX11
 	else if (dwStage < rstDomain) //	Geometry shader stage resources
 	{
-		SRVSManager.SetHSResource(dwStage - rstHull, m_pSRView);
+		SRVSManager.SetHSResource(dwStage - rstHull, view);
 	}
 	else if (dwStage < rstCompute) //	Geometry shader stage resources
 	{
-		SRVSManager.SetDSResource(dwStage - rstDomain, m_pSRView);
+		SRVSManager.SetDSResource(dwStage - rstDomain, view);
 	}
 	else if (dwStage < rstInvalid) //	Geometry shader stage resources
 	{
-		SRVSManager.SetCSResource(dwStage - rstCompute, m_pSRView);
+		SRVSManager.SetCSResource(dwStage - rstCompute, view);
 	}
 #endif
 	else
@@ -323,7 +338,7 @@ void CTexture::apply_theora(u32 dwStage)
 
 		//R_CHK				(T2D->LockRect(0,&R,&rect,0));
 #ifdef USE_DX11
-		R_CHK(HW.pContext->Map(T2D, 0, D3D_MAP_WRITE_DISCARD, 0, &mapData));
+		R_CHK(RenderDeviceContext()->Map(T2D, 0, D3D_MAP_WRITE_DISCARD, 0, &mapData));
 #else
 		R_CHK(T2D->Map(0,D3D_MAP_WRITE_DISCARD,0,&mapData));
 #endif
@@ -334,7 +349,7 @@ void CTexture::apply_theora(u32 dwStage)
 		VERIFY(u32(_pos) == rect.bottom*_w);
 		//R_CHK				(T2D->UnlockRect(0));
 #ifdef USE_DX11
-		HW.pContext->Unmap(T2D, 0);
+		RenderDeviceContext()->Unmap(T2D, 0);
 #else
 		T2D->Unmap(0);
 #endif
@@ -357,7 +372,7 @@ void CTexture::apply_avi(u32 dwStage)
 		// AVI
 		//R_CHK	(T2D->LockRect(0,&R,NULL,0));
 #ifdef USE_DX11
-		R_CHK(HW.pContext->Map(T2D, 0, D3D_MAP_WRITE_DISCARD, 0, &mapData));
+		R_CHK(RenderDeviceContext()->Map(T2D, 0, D3D_MAP_WRITE_DISCARD, 0, &mapData));
 #else
 		R_CHK(T2D->Map(0,D3D_MAP_WRITE_DISCARD,0,&mapData));
 #endif
@@ -367,7 +382,7 @@ void CTexture::apply_avi(u32 dwStage)
 		CopyMemory(mapData.pData, ptr, pAVI->m_dwWidth*pAVI->m_dwHeight*4);
 		//R_CHK	(T2D->UnlockRect(0));
 #ifdef USE_DX11
-		HW.pContext->Unmap(T2D, 0);
+		RenderDeviceContext()->Unmap(T2D, 0);
 #else
 		T2D->Unmap(0);
 #endif
@@ -398,6 +413,20 @@ void CTexture::apply_seq(u32 dwStage)
 	//CHK_DX(HW.pDevice->SetTexture(dwStage,pSurface));
 	Apply(dwStage);
 };
+
+void CTexture::apply_gif(u32 dwStage)
+{
+    wait_for_loading();
+	if (gifPlayer->UpdateFrame())
+	{
+        const CGIFAnimationPlayer::Frame* const gifFrame = gifPlayer->GetActiveFrame();
+        R_ASSERT(gifFrame);
+
+        pSurface = gifFrame->surface;
+        m_pSRView = gifFrame->srv;
+	}
+	Apply(dwStage);
+}
 
 void CTexture::apply_normal(u32 dwStage)
 {
@@ -777,6 +806,26 @@ void CTexture::Load(bool queued)
 		pSurface = 0;
 		FS.r_close(_fs);
 	}
+    else if (FS.exist(fn, "$game_textures$", *cName, ".gif"))
+    {
+        gifPlayer = xr_new<CGIFAnimationPlayer>();
+        if (!gifPlayer->Load(fn))
+        {
+            xr_delete(gifPlayer);
+            pSurface = nullptr;
+            m_pSRView = nullptr;
+        }
+        else
+        {
+            flags.MemoryUsage = gifPlayer->GetUsedMemory();
+
+            gifPlayer->Play();
+
+            const CGIFAnimationPlayer::Frame* const gifFrame = gifPlayer->GetActiveFrame();
+            pSurface = gifFrame->surface;
+            m_pSRView = gifFrame->srv;
+        }
+    }
 	else
 	{
 		// Normal texture
@@ -859,6 +908,13 @@ void CTexture::ReleaseLoadedData()
 		pSurface = 0;
 		m_pSRView = 0;
 	}
+
+    if (gifPlayer)
+    {
+        xr_delete(gifPlayer);
+        pSurface = nullptr;
+        m_pSRView = nullptr;
+    }
 
 #ifdef DEBUG
 	_SHOW_REF		(msg_buff, pSurface);

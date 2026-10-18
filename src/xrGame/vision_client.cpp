@@ -53,7 +53,7 @@ void vision_client::eye_pp_s01()
 	mProject.build_projection(field_of_view, aspect_ratio, near_plane, far_plane);
 	mFull.mul(mProject, mView);
 
-	feel_vision_query(mFull, c);
+	feel_vision_query(mFull);
 
 	Device.Statistic->AI_Vis_Query.End();
 }
@@ -70,7 +70,7 @@ void vision_client::eye_pp_s2()
 	{
 		const u64 profile_started_at = XRay::Engine::BeginVisionTaskProfile();
 		if (caller_thread_id != GetCurrentThreadId()) { PROF_THREAD("X-Ray PPL Thread") }
-		feel_vision_update(m_object, m_position, float(dwDT) / 1000.f, visual().transparency_threshold());
+		feel_vision_update(m_position, float(dwDT) / 1000.f, visual().transparency_threshold());
 		XRay::Engine::EndVisionTaskProfile(profile_started_at);
 	});
 

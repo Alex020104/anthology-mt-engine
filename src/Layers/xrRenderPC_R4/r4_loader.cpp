@@ -16,6 +16,8 @@
 #include "../xrRenderDX10/3DFluid/dx103DFluidVolume.h"
 
 #include "../xrRender/FHierrarhyVisual.h"
+#include "../xrRender/FVisual.h"
+#include "../xrRender/FTreeVisual.h"
 
 #pragma warning(push)
 #pragma warning(disable:4995)
@@ -289,6 +291,8 @@ struct CRender::LevelStaticPackage
 	xr_vector<ID3DVertexBuffer*> fast_vertex_buffers;
 	xr_vector<ID3DIndexBuffer*> normal_index_buffers;
 	xr_vector<ID3DIndexBuffer*> fast_index_buffers;
+    xr_vector<xr_vector<u16>> normal_index_data, fast_index_data;
+    xr_vector<xr_vector<std::array<u8, 20>>> tree_vertex_data;
 	xr_vector<dxRender_Visual*> visuals;
 	xr_vector<LevelShaderDescription> shader_descriptions;
 	xr_vector<u32> shader_indices;
@@ -452,7 +456,7 @@ void CRender::level_Prepare(LPCSTR canonical_level_path)
 			CStreamReader* reader = FS.rs_open(nullptr, file_name.c_str());
 			R_ASSERT2(reader, file_name.c_str());
 			LoadBuffers(reader, geometry->normal_declarations, geometry->normal_vertex_buffers,
-				geometry->normal_index_buffers);
+				geometry->normal_index_buffers, geometry->normal_index_data, &geometry->tree_vertex_data);
 			LoadSWIs(reader, geometry->swis);
 			FS.r_close(reader);
 		};
@@ -462,7 +466,7 @@ void CRender::level_Prepare(LPCSTR canonical_level_path)
 			CStreamReader* reader = FS.rs_open(nullptr, file_name.c_str());
 			R_ASSERT2(reader, file_name.c_str());
 			LoadBuffers(reader, geometry->fast_declarations, geometry->fast_vertex_buffers,
-				geometry->fast_index_buffers);
+				geometry->fast_index_buffers, geometry->fast_index_data);
 			FS.r_close(reader);
 		};
 
@@ -488,7 +492,8 @@ void CRender::level_Prepare(LPCSTR canonical_level_path)
 		{
 			&geometry->normal_declarations, &geometry->fast_declarations,
 			&geometry->normal_vertex_buffers, &geometry->fast_vertex_buffers,
-			&geometry->normal_index_buffers, &geometry->fast_index_buffers, &geometry->swis
+			&geometry->normal_index_buffers, &geometry->fast_index_buffers, &geometry->swis,
+            &geometry->normal_index_data, &geometry->fast_index_data
 		};
 		IReader visuals(geometry->visual_data.data(), static_cast<int>(geometry->visual_data.size()));
 		PrepareVisuals(&visuals, geometry->visuals, &source);
@@ -699,6 +704,14 @@ void CRender::CommitLevelEnvironmentOwner()
 	}
 	for (dxRender_Visual* visual : Visuals)
 		CommitVisualShaderTree(visual);
+    for (auto* visual : Visuals)
+        if (visual->Type == MT_NORMAL) static_cast<Fvisual*>(visual)->immutable_level_geometry = true;
+    Fvisual::BuildStaticBatches(Visuals);
+    Fvisual::BuildShadowBatches(Visuals);
+    FTreeVisual::BuildShadowGeometry(Visuals);
+    levelTreeVBData.clear_and_free();
+    levelShadowIBData.clear_and_free();
+    levelIBData.clear_and_free();
 	if (m_level_prepared_sectors_ready)
 		LoadPreparedSectors();
 	else
@@ -730,6 +743,7 @@ void CRender::level_AbortAsyncLoad()
 
 void CRender::level_Load(IReader* fs)
 {
+    PROF_EVENT("LoadGame.RenderResources");
 	CTimer level_timer;
 	level_timer.Start();
 	R_ASSERT(0!=g_pGameLevel);
@@ -782,6 +796,11 @@ void CRender::level_Load(IReader* fs)
 			CommitVisualShaderTree(visual);
 		m_active_level_shader_descriptions = m_level_shader_descriptions;
 		m_active_level_shader_cpp_results = m_level_shader_cpp_results;
+        if (!g_dedicated_server)
+        {
+            if (!view_preparation) view_preparation.reset(new RenderViewPreparation());
+            view_preparation->Load(*this);
+        }
 		Msg("* [LEVEL CACHE] R4 attach: %d ms (%s)", level_timer.GetElapsed_ms(), level_key.c_str());
 		return;
 	}
@@ -819,6 +838,9 @@ void CRender::level_Load(IReader* fs)
 		nVB.swap(prepared_geometry->normal_vertex_buffers);
 		xVB.swap(prepared_geometry->fast_vertex_buffers);
 		nIB.swap(prepared_geometry->normal_index_buffers);
+        levelIBData.swap(prepared_geometry->normal_index_data);
+        levelShadowIBData.swap(prepared_geometry->fast_index_data);
+        levelTreeVBData.swap(prepared_geometry->tree_vertex_data);
 		xIB.swap(prepared_geometry->fast_index_buffers);
 		Msg("* [LEVEL PREPARE] geometry committed: %s", level_key.c_str());
 	}
@@ -879,6 +901,7 @@ void CRender::level_Load(IReader* fs)
 	g_pGamePersistent->LoadTitle();
 	if (!use_prepared_shaders)
 	{
+        PROF_EVENT("LoadGame.LevelShaders");
 		chunk = fs->open_chunk(fsL_SHADERS);
 		R_ASSERT2(chunk, "Level doesn't builded correctly.");
 		u32 count = chunk->r_u32();
@@ -1028,7 +1051,7 @@ void CRender::level_Load(IReader* fs)
 			xr_string file_name = xr_string(level_key.c_str()) + "level.geom";
 			CStreamReader* geom = FS.rs_open(nullptr, file_name.c_str());
 			R_ASSERT2(geom, file_name.c_str());
-			LoadBuffers(geom, nDC, nVB, nIB);
+			LoadBuffers(geom, nDC, nVB, nIB, levelIBData, &levelTreeVBData);
 			LoadSWIs(geom, SWIs);
 			FS.r_close(geom);
 			Msg("* [LEVEL LOAD] R4 level.geom: %d ms", timer.GetElapsed_ms());
@@ -1043,7 +1066,7 @@ void CRender::level_Load(IReader* fs)
 			xr_string file_name = xr_string(level_key.c_str()) + "level.geomx";
 			CStreamReader* geom = FS.rs_open(nullptr, file_name.c_str());
 			R_ASSERT2(geom, file_name.c_str());
-			LoadBuffers(geom, xDC, xVB, xIB);
+			LoadBuffers(geom, xDC, xVB, xIB, levelShadowIBData);
 			FS.r_close(geom);
 			Msg("* [LEVEL LOAD] R4 level.geomx: %d ms", timer.GetElapsed_ms());
 		});
@@ -1080,9 +1103,14 @@ void CRender::level_Load(IReader* fs)
 	m_level_owner_reader = fs;
 	CommitLevelEnvironmentOwner();
 	R_ASSERT2(!m_level_async_failed.load(std::memory_order_acquire), "R4 owner sectors/fluid commit failed");
-	m_level_owner_reader = nullptr;
+    m_level_owner_reader = nullptr;
+    if (!g_dedicated_server)
+    {
+        if (!view_preparation) view_preparation.reset(new RenderViewPreparation());
+        view_preparation->Load(*this);
+    }
 
-	// End
+    // End
 	pApp->LoadEnd();
 
 	// signal loaded
@@ -1094,6 +1122,13 @@ void CRender::level_Load(IReader* fs)
 
 void CRender::level_Unload()
 {
+    PROF_EVENT("LoadGame.RenderUnload");
+    if (local_light_shadows) local_light_shadows->Clear();
+    if (sun_shadows) sun_shadows->Clear();
+    if (rain_shadows) rain_shadows->Clear();
+    if (view_preparation) view_preparation->Clear();
+    for (auto& list : sun_query_results) list.clear_and_free();
+	if (0 == g_pGameLevel) return;
 	if (!b_loaded) return;
 
 	const bool clear_resources = psDeviceFlags2.test(rsClearAllResources);
@@ -1140,6 +1175,9 @@ CRender::LevelStaticPackage* CRender::DetachLevelStaticPackage()
 	package->identity = m_active_level_identity;
 
 	GMBase.clear();
+    levelTreeVBData.clear_and_free();
+    levelShadowIBData.clear_and_free();
+    levelIBData.clear_and_free();
 	GMRainWet.clear();
 	for (sun::cascade& cascade : m_sun_cascades)
 		cascade.GMCascade.clear();
@@ -1319,8 +1357,11 @@ void CRender::DestroyActiveLevel()
 }
 
 void CRender::LoadBuffers(CStreamReader* base_fs, xr_vector<VertexDeclarator>& declarations,
-	xr_vector<ID3DVertexBuffer*>& vertex_buffers, xr_vector<ID3DIndexBuffer*>& index_buffers)
+	xr_vector<ID3DVertexBuffer*>& vertex_buffers, xr_vector<ID3DIndexBuffer*>& index_buffers,
+    xr_vector<xr_vector<u16>>& index_source,
+    xr_vector<xr_vector<std::array<u8, 20>>>* tree_source)
 {
+    PROF_EVENT("LoadGame.GeometryBuffers");
 	R_ASSERT2(base_fs, "Could not load geometry. File not found.");
 	//	u32	dwUsage					= D3DUSAGE_WRITEONLY;
 
@@ -1342,6 +1383,7 @@ void CRender::LoadBuffers(CStreamReader* base_fs, xr_vector<VertexDeclarator>& d
 
 	// Vertex buffers
 	{
+        PROF_EVENT("LoadGame.VertexBuffers");
 		// Use DX9-style declarators
 		CStreamReader* fs = base_fs->open_chunk(fsL_VB);
 		R_ASSERT2(fs, "Could not load geometry. File 'level.geom?' corrupted.");
@@ -1349,6 +1391,8 @@ void CRender::LoadBuffers(CStreamReader* base_fs, xr_vector<VertexDeclarator>& d
 		_DC.resize(count);
 		_VB.resize(count);
 		vertex_data.resize(count);
+        if (tree_source) tree_source->resize(count);
+        u32 tree_bytes = 0;
 		u32 bufferSize = (MAXD3DDECLLENGTH + 1) * sizeof(D3DVERTEXELEMENT9);
 		D3DVERTEXELEMENT9* dcl = (D3DVERTEXELEMENT9*)_alloca(bufferSize);
 		for (u32 i = 0; i < count; i++)
@@ -1378,6 +1422,24 @@ void CRender::LoadBuffers(CStreamReader* base_fs, xr_vector<VertexDeclarator>& d
 			//	Check if buffer is less then 2048 kb
 			vertex_data[i].resize(vCount * vSize);
 			fs->r(vertex_data[i].data(), vertex_data[i].size());
+            if (tree_source && vSize == 32 && dcl_len == 6 &&
+                dcl[0].Stream == 0 && dcl[0].Offset == 0 && dcl[0].Type == D3DDECLTYPE_FLOAT3 &&
+                dcl[0].Usage == D3DDECLUSAGE_POSITION && !dcl[0].UsageIndex &&
+                dcl[4].Stream == 0 && dcl[4].Offset == 24 && dcl[4].Type == D3DDECLTYPE_SHORT4 &&
+                dcl[4].Usage == D3DDECLUSAGE_TEXCOORD && !dcl[4].UsageIndex &&
+                vCount <= (64u * 1024u * 1024u - tree_bytes) / 20u)
+            {
+                auto& keys = (*tree_source)[i];
+                keys.resize(vCount);
+                for (u32 vertex = 0; vertex < vCount; ++vertex)
+                {
+                    const u8* data = vertex_data[i].data() + size_t(vertex) * vSize;
+                    CopyMemory(keys[vertex].data(), data, 12);
+                    CopyMemory(keys[vertex].data() + 12, data + 24, 8);
+                }
+                tree_bytes += vCount * 20u;
+            }
+
 
 			//			fs->advance			(vCount*vSize);
 		}
@@ -1392,10 +1454,12 @@ void CRender::LoadBuffers(CStreamReader* base_fs, xr_vector<VertexDeclarator>& d
 
 	// Index buffers
 	{
+        PROF_EVENT("LoadGame.IndexBuffers");
 		CStreamReader* fs = base_fs->open_chunk(fsL_IB);
 		u32 count = fs->r_u32();
 		_IB.resize(count);
 		index_data.resize(count);
+        index_source.resize(count);
 		for (u32 i = 0; i < count; i++)
 		{
 			u32 iCount = fs->r_u32();
@@ -1413,6 +1477,8 @@ void CRender::LoadBuffers(CStreamReader* base_fs, xr_vector<VertexDeclarator>& d
 			//	Check if buffer is less then 2048 kb
 			index_data[i].resize(iCount * 2);
 			fs->r(index_data[i].data(), index_data[i].size());
+            const u16* indices = reinterpret_cast<const u16*>(index_data[i].data());
+            index_source[i].assign(indices, indices + iCount);
 
 			//			fs().advance		(iCount*2);
 		}
@@ -1563,6 +1629,7 @@ void CRender::DiscardPreparedVisuals()
 
 void CRender::LoadLights(IReader* fs)
 {
+    PROF_EVENT("LoadGame.Lights");
 	// lights
 	Lights.Load(fs);
 	Lights.LoadHemi();

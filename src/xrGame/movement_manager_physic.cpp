@@ -95,7 +95,7 @@ bool CMovementManager::move_along_path() const
 	if (!enabled())
 		return (false);
 
-	if (!actual())
+	if (!actual() && !m_allow_rebuild_smoothing)
 		return (false);
 
 	//	if (path_completed())

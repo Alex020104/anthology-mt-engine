@@ -11,6 +11,7 @@
 #include "r_constants.h"
 
 #include "../xrRender/dxRenderDeviceRender.h"
+#include "../../xrEngine/shader_bus.h"
 
 // pool
 //.static	poolSS<R_constant,512>			g_constant_allocator;
@@ -25,9 +26,9 @@ R_constant_table::~R_constant_table()
 }
 
 
-void R_constant_table::fatal(LPCSTR S)
+void R_constant_table::fatal(LPCSTR S, LPCSTR name)
 {
-	FATAL(S);
+	Debug.fatal(DEBUG_INFO, "%s (constant '%s')", S, name);
 }
 
 void R_constant_table::_copy(const R_constant_table& Other)
@@ -36,7 +37,21 @@ void R_constant_table::_copy(const R_constant_table& Other)
 #if defined(USE_DX10) || defined(USE_DX11)
 	m_CBTable = Other.m_CBTable;
 #endif
+    prepare_lookup();
 }
+void R_constant_table::prepare_lookup()
+{
+    // OGSR/OpenXRay's lexical lookup avoids interning a name on every draw.
+    // Retain Monolith's pointer-sorted table for its shared_str callers.
+    lexical_table.clear();
+    lexical_table.reserve(table.size());
+    for (const auto& constant : table) lexical_table.push_back(constant._get());
+    std::sort(lexical_table.begin(), lexical_table.end(), [](const R_constant* a, const R_constant* b)
+    {
+        return xr_strcmp(a->name.c_str(), b->name.c_str()) < 0;
+    });
+}
+
 
 
 // predicates
@@ -48,6 +63,13 @@ IC bool p_sort_constants(const ref_constant& C1, const ref_constant& C2) noexcep
 R_constant* R_constant_table::get(LPCSTR S)
 {
 	PROF_EVENT("R_constant_table::get LPCSTR");
+    if (!S) return nullptr;
+    if (lexical_table.size() == table.size())
+    {
+        const auto found = std::lower_bound(lexical_table.begin(), lexical_table.end(), S,
+            [](const R_constant* constant, LPCSTR name) { return xr_strcmp(constant->name.c_str(), name) < 0; });
+        return found != lexical_table.end() && !xr_strcmp((*found)->name.c_str(), S) ? *found : nullptr;
+    }
 
     // demonized: make shared_str and use override, str most likely already exists, faster
     shared_str s(S);
@@ -110,7 +132,7 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 							break;
 						default:
 							Msg("Invalid matrix dimension:%dx%d in constant %s", it->RegisterCount, T->Columns, name);
-							fatal("MATRIX_ROWS: unsupported number of RegisterCount");
+							fatal("MATRIX_ROWS: unsupported number of RegisterCount", name);
 							break;
 						}
 						break;
@@ -118,21 +140,21 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 						VERIFY(4 == it->RegisterCount);
 						break;
 					default:
-						fatal("MATRIX_ROWS: unsupported number of Rows");
+						fatal("MATRIX_ROWS: unsupported number of Rows", name);
 						break;
 					}
 					break;
 				default:
-					fatal("MATRIX_ROWS: unsupported number of Columns");
+					fatal("MATRIX_ROWS: unsupported number of Columns", name);
 					break;
 				}
 			}
 			break;
 		case D3DXPC_MATRIX_COLUMNS:
-			fatal("Pclass MATRIX_COLUMNS unsupported");
+			fatal("Pclass MATRIX_COLUMNS unsupported", name);
 			break;
 		case D3DXPC_STRUCT:
-			fatal("Pclass D3DXPC_STRUCT unsupported");
+			fatal("Pclass D3DXPC_STRUCT unsupported", name);
 			break;
 		case D3DXPC_OBJECT:
 			{
@@ -169,7 +191,7 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 					}
 					break;
 				default:
-					fatal("Pclass D3DXPC_OBJECT - object isn't of 'sampler' type");
+					fatal("Pclass D3DXPC_OBJECT - object isn't of 'sampler' type", name);
 					break;
 				}
 			}
@@ -192,6 +214,7 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 			R_constant_load& L = (destination & 1) ? C->ps : C->vs;
 			L.index = r_index;
 			L.cls = r_type;
+			L.size = it->RegisterCount * 16;
 			table.push_back(C);
 		}
 		else
@@ -201,6 +224,7 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 			R_constant_load& L = (destination & 1) ? C->ps : C->vs;
 			L.index = r_index;
 			L.cls = r_type;
+			L.size = it->RegisterCount * 16;
 		}
 	}
 	std::sort(table.begin(), table.end(), p_sort_constants);
@@ -244,12 +268,19 @@ void R_constant_table::merge(R_constant_table* T)
 		{
 			VERIFY2(!(C->destination&src->destination&RC_dest_sampler),
 			        "Can't have samplers or textures with the same name for PS, VS and GS.");
+			// a bus lane keeps the type of the stage merged first and skips a stage that disagrees
+			if (C->type != src->type && 0 == strncmp(C->name.c_str(), "bus_", 4))
+			{
+				ShaderBus::refuse(C->name.c_str(), "has a different type in another shader stage, stages that differ from the first one read are skipped");
+				continue;
+			}
 			C->destination |= src->destination;
 			VERIFY(C->type == src->type);
 			R_constant_load& sL = src->get_load(src->destination);
 			R_constant_load& dL = C->get_load(src->destination);
 			dL.index = sL.index;
 			dL.cls = sL.cls;
+			dL.size = sL.size;
 		}
 	}
 
@@ -272,6 +303,7 @@ void R_constant_table::merge(R_constant_table* T)
 
 void R_constant_table::clear()
 {
+    lexical_table.clear();
 	//.
 	for (u32 it = 0; it < table.size(); it++)
 		table[it] = 0; //.g_constant_allocator.destroy(table[it]);

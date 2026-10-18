@@ -80,6 +80,7 @@ void CDetailManager::SSwingValue::lerp(const SSwingValue& A, const SSwingValue& 
 
 CDetailManager::CDetailManager()
 {
+    m_visible_bounds.invalidate();
 	dtFS = 0;
 	dtSlots = 0;
 	soft_Geom = 0;
@@ -391,10 +392,11 @@ extern float ps_r__ssaDISCARD_exp;
 extern float ps_r__ssaDISCARD_fade_k;
 void CDetailManager::UpdateVisibleM()
 {
+    m_visible_bounds.invalidate();
 	Fvector EYE = RDEVICE.vCameraPosition_saved;
 
 	CFrustum View;
-	View.CreateFromMatrix(RDEVICE.mFullTransform_saved, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
+	View.CreateFromCamera(RDEVICE.mFullTransform_saved);
 
 	CFrustum View_old;
 	Fmatrix Viewm_old = RDEVICE.mFullTransform;
@@ -581,17 +583,22 @@ void CDetailManager::UpdateVisibleM()
 		if (!publish_slots[slot_index])
 			continue;
 		Slot& S = *visible_slots[slot_index];
+        bool slot_visible = false;
 		for (int sp_id = 0; sp_id < dm_obj_in_slot; ++sp_id)
 		{
 			SlotPart& sp = S.G[sp_id];
 			if (sp.id == DetailSlot::ID_Empty)
 				continue;
 			for (u32 visible = 0; visible < 3; ++visible)
-				if (!sp.r_items[visible].empty())
-					m_visibles[visible][sp.id].push_back(&sp.r_items[visible]);
-		}
-	}
-	RDEVICE.Statistic->RenderDUMP_DT_VIS.End();
+                if (!sp.r_items[visible].empty())
+                {
+                    m_visibles[visible][sp.id].push_back(&sp.r_items[visible]);
+                    slot_visible = true;
+                }
+        }
+        if (slot_visible) m_visible_bounds.merge(S.vis.box);
+    }
+    RDEVICE.Statistic->RenderDUMP_DT_VIS.End();
 }
 
 void CDetailManager::Render()
@@ -687,3 +694,36 @@ void CDetailManager::details_clear()
 		}
 	}
 }
+
+bool CDetailManager::GetVisibleBounds(Fbox& bounds)
+{
+    xrCriticalSectionGuard guard(m_mt_calc_guard);
+    if (m_frame_calc != RDEVICE.dwFrame || !m_visible_bounds.is_valid()) return false;
+    bounds = m_visible_bounds;
+    return true;
+}
+
+bool CDetailManager::TryGetVisibleBounds(Fbox& bounds)
+{
+    xrCriticalSectionTryGuard guard(m_mt_calc_guard);
+    if (!guard.owns_lock() || m_frame_calc != RDEVICE.dwFrame || !m_visible_bounds.is_valid()) return false;
+    bounds = m_visible_bounds;
+    return true;
+}
+
+
+#if RENDER == R_R4
+bool CDetailManager::CanRecordShadow() const { return false; }
+bool CDetailManager::PrimeShadow(class RenderContext&) { return false; }
+void CDetailManager::RenderShadow(float fade, light* source)
+{
+    R_ASSERT(!RenderContextId()); // The native instance stream has one upload owner.
+    const float previous_fade = fade_distance;
+    const Fvector previous_position = light_position;
+    fade_distance = fade;
+    if (source) light_position.set(source->position);
+    hw_Render(source);
+    fade_distance = previous_fade;
+    light_position = previous_position;
+}
+#endif

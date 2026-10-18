@@ -28,6 +28,9 @@ struct lua_State;
 
 namespace luabind { namespace detail
 {
+	using entry_callback = void (*)(lua_State*);
+	LUABIND_API void set_entry_callback(entry_callback callback);
+	LUABIND_API void prepare_lua_call(lua_State* state);
 	LUABIND_API int pcall(lua_State *L, int nargs, int nresults);
 	LUABIND_API int resume_impl(lua_State *L, int nargs, int nresults);
 }}

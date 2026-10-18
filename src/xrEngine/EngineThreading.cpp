@@ -131,6 +131,7 @@ SFrameTaskProfile XRay::Engine::ConsumeFrameTaskProfile()
 	result.max_vision = frame_task_max_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
 	return result;
 }
+BOOL mt_SchedulerRT = FALSE;
 
 void XRay::Engine::PreRenderThread()
 {
@@ -279,8 +280,15 @@ void XRay::Engine::GameThread()
 		{
 			CFrameTaskTimer scheduler_profile(FrameTaskGameScheduler);
 			PROF_EVENT("Sheduler Deferred");
-			::Engine.Sheduler.UpdateDeferred();
-			::Engine.Sheduler.UpdateFinalize();
+            if (mt_SchedulerRT)
+            {
+                ::Engine.Sheduler.Update();
+            }
+            else
+            {
+                ::Engine.Sheduler.UpdateDeferred();
+                ::Engine.Sheduler.UpdateFinalize();
+            }
 		}
 	}
 
@@ -310,7 +318,7 @@ void XRay::Engine::GameThread()
 	// single secondary worker touches the LuaJIT VM. The main thread can keep
 	// preparing/rendering the frame, and the frame-time/budget guards prevent
 	// ordinary propagation work from extending past that overlap window.
-	if (psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
+	if (!Device.LuaGCAlwaysActive() && psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
 	{
 		if (EnginePostLoadGCCooldownActive(static_cast<u32>(psLua_ParallelGC_PostLoadDelayMs)))
 		{

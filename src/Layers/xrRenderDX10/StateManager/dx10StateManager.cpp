@@ -1,10 +1,17 @@
 #include "stdafx.h"
+#ifdef USE_DX11
+#include "ShadowBatchStatePolicy.h"
+#endif
 #include "dx10StateManager.h"
 
 #include "../dx10StateUtils.h"
 #include "dx10StateCache.h"
 
+#undef StateManager
 dx10StateManager StateManager;
+#if defined(USE_DX11) && RENDER == R_R4
+#define StateManager ActiveStateManager()
+#endif
 
 //	DX10: TODO: Implement alpha referense control
 
@@ -161,6 +168,15 @@ void dx10StateManager::ValidateBDesc()
 }
 
 //	Sends states to DX10 runtime, creates new state objects if nessessary
+#ifdef USE_DX11
+bool dx10StateManager::ShadowBatchStateSafe()
+{
+    ValidateDSDesc();
+    ValidateBDesc();
+    return m_pDepthStencilState && m_pBlendState && aoe_render::shadow_batch_state_safe(m_DSDesc, m_BDesc);
+}
+#endif
+
 void dx10StateManager::Apply()
 {
 	//	Apply rasterizer state
@@ -172,7 +188,7 @@ void dx10StateManager::Apply()
 			m_bRSChanged = false;
 		}
 
-		HW.pContext->RSSetState(m_pRState);
+		RenderDeviceContext()->RSSetState(m_pRState);
 		m_bRSNeedApply = false;
 	}
 
@@ -185,7 +201,7 @@ void dx10StateManager::Apply()
 			m_bDSSChanged = false;
 		}
 
-		HW.pContext->OMSetDepthStencilState(m_pDepthStencilState, m_uiStencilRef);
+		RenderDeviceContext()->OMSetDepthStencilState(m_pDepthStencilState, m_uiStencilRef);
 		m_bDSSNeedApply = false;
 	}
 
@@ -200,7 +216,7 @@ void dx10StateManager::Apply()
 
 		static const FLOAT BlendFactor[4] = {0.000f, 0.000f, 0.000f, 0.000f};
 
-		HW.pContext->OMSetBlendState(m_pBlendState, BlendFactor, m_uiSampleMask);
+		RenderDeviceContext()->OMSetBlendState(m_pBlendState, BlendFactor, m_uiSampleMask);
 		m_bBSNeedApply = false;
 	}
 }

@@ -41,7 +41,8 @@ float hclip(float v, float dim) { return 2.f * v / dim - 1.f; }
 
 void CRenderTarget::phase_combine()
 {
-	PIX_EVENT(phase_combine);
+	PIX_EVENT_C(phase_combine, dx10_marker_combine);
+    PROF_EVENT("phase_combine");
 	
 	bool ssfx_PrevPos_Requiered = false;
 	//	TODO: DX10: Remove half poxel offset
@@ -185,7 +186,7 @@ void CRenderTarget::phase_combine()
 	// Draw full-screen quad textured with our scene image
 	if (!_menu_pp)
 	{
-		PIX_EVENT(combine_1);
+		PIX_EVENT_C(combine_1, dx10_marker_combine);
 		// Compute params
 		CEnvDescriptorMixer& envdesc = *g_pGamePersistent->Environment().CurrentEnv;
 		const float minamb = 0.001f;
@@ -528,11 +529,13 @@ void CRenderTarget::phase_combine()
 
 	if (pip_quality < 2 && RImplementation.o.ssfx_fog && ps_ssfx_fog_scattering > 0)
 	{
+		PIX_EVENT(phase_ssfx_fog_scattering);
 		phase_ssfx_fog_scattering();
 	}
 
 	if (RImplementation.o.ssfx_motionblur && ps_ssfx_motionblur.y > 0 && !svp_frame && !m_upscalerActive)
 	{
+		PIX_EVENT(phase_ssfx_motion_blur);
 		phase_ssfx_motion_blur();
 	}
 
@@ -606,7 +609,10 @@ void CRenderTarget::phase_combine()
 		phase_dof();
 	}
 
-	phase_lut();	
+	{
+		PIX_EVENT(phase_lut);
+		phase_lut();
+	}
 
 	if (!m_upscalerActive && !svp_frame && ps_r2_mask_control.x > 0)
 	{
@@ -708,7 +714,7 @@ void CRenderTarget::phase_combine()
 
 	if (1)
 	{
-		PIX_EVENT(combine_2);
+		PIX_EVENT_C(combine_2, dx10_marker_combine);
 		// 
 		struct v_aa
 		{

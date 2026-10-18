@@ -34,6 +34,7 @@ public:
 		u32 forceskinw : 1; // config
 		u32 no_detail_textures : 1; // config
 		u32 no_ram_textures : 1; // don't keep textures in RAM
+		u32 defer_hud : 1; // keep HUD out of the scope scene capture
 	} o;
 
 	struct _stats
@@ -84,6 +85,11 @@ public:
 
 	CRenderTarget* Target; // Render-target
 
+    xr_vector<R_dsgraph::ScopeHeatItem> scope_heat_items;
+    bool scope_heat_only = false;
+    void AddScopeHeatItem(const R_dsgraph::DSGraphItem<u32, false>& item, ShaderElement* shader);
+    void RenderScopeHeat();
+
 	// R1-specific global constants
 	Fmatrix r1_dlight_tcgen;
 	light* r1_dlight_light;
@@ -118,6 +124,7 @@ public:
 	void apply_object(IRenderable* O);
 	IC void apply_lmaterial()
 	{
+		RCache.bus_object.apply_static();
 	};
 public:
 	// feature level
@@ -135,7 +142,7 @@ public:
 	virtual void level_Load(IReader*);
 	virtual void level_Unload();
 
-	virtual IDirect3DBaseTexture9* texture_load(LPCSTR fname, u32& msize);
+    virtual IDirect3DBaseTexture9* texture_load(LPCSTR fname, u32& msize, Fvector2* source_size = nullptr);
 	virtual HRESULT shader_compile(
 		LPCSTR name,
 		DWORD const* pSrcData,

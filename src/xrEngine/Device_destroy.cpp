@@ -24,6 +24,7 @@ void CRenderDevice::_Destroy(BOOL bKeepTextures)
 
 void CRenderDevice::Destroy(void)
 {
+    ShutdownLuaGCWorker();
 	if (!b_is_Ready) return;
 
 	Log("Destroying Direct3D...");
@@ -70,6 +71,7 @@ extern ENGINE_API u32 psCurrentVidMode[];
 void CRenderDevice::Reset(bool precache)
 {
 	PROF_EVENT("CRenderDevice::Reset");
+    JoinGameLogic(LuaGCStopReason::FrameBarrier);
 	if (use_reshade)
 		unregister_reshade();
 

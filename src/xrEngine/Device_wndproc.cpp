@@ -76,6 +76,7 @@ bool CRenderDevice::on_message(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPara
 		return false;
 
 	case WM_DISPLAYCHANGE:
+
 		InterlockedExchange(&g_monitor_list_dirty, 1);
 		return false;
 	}

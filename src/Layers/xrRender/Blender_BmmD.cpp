@@ -286,7 +286,14 @@ void CBlender_BmmD::Compile(CBlender_Compile& C)
 	const bool hasSeasonalLod = hasDeadLod || hasWinterLod;
 
 	bool z_prepass = ps_r2_ls_flags.test(R2FLAG_TERRAIN_PREPASS);
-	switch (C.iElement)
+    int element = C.iElement;
+#if RENDER == R_R4
+    // Share the detailed material bindings while keeping SSS POM near the camera.
+    const bool farTerrain = RImplementation.o.ssfx_terrain && element == SE_R2_NORMAL_LQ;
+    if (farTerrain)
+        element = SE_R2_NORMAL_HQ;
+#endif
+	switch (element)
 	{
 	case SE_R2_NORMAL_HQ: // deffer
 		if (z_prepass)
@@ -301,7 +308,15 @@ void CBlender_BmmD::Compile(CBlender_Compile& C)
 		if (RImplementation.o.ssfx_terrain)
 		{
 			C.SH->flags.isLandscape = TRUE;
-			uber_deffer(C, true, hasSeasonalTerrain ? "impl" : "terrain", hasSeasonalTerrain ? "anthology_terrain_high" : "terrain_high", false, oT2_Name[0] ? oT2_Name : 0, true, z_prepass);
+            if (farTerrain && !hasSeasonalTerrain)
+            {
+                C.r_Pass("deffer_impl_flat_d", "deffer_impl_flat_d", FALSE, TRUE, !z_prepass);
+                C.r_dx10Texture("s_base", C.L_textures[0]);
+            }
+            else
+            {
+                uber_deffer(C, true, hasSeasonalTerrain ? "impl" : "terrain", hasSeasonalTerrain ? "anthology_terrain_high" : "terrain_high", false, oT2_Name[0] ? oT2_Name : 0, true, z_prepass);
+            }
 		}
 		else
 #endif
@@ -360,7 +375,7 @@ void CBlender_BmmD::Compile(CBlender_Compile& C)
 		}
 
 #if RENDER == R_R4
-		if (RImplementation.o.ssfx_terrain)
+		if (RImplementation.o.ssfx_terrain && !farTerrain)
 		{
 			C.r_dx10Texture("s_height_r", strconcat(sizeof(mask), mask, oR_Name, "_height"));
 			C.r_dx10Texture("s_height_g", strconcat(sizeof(mask), mask, oG_Name, "_height"));

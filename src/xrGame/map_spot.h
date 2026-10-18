@@ -17,6 +17,11 @@ private:
 
 	bool m_mark_focused;
 
+	// Map pan and spot click share MOUSE_1, so the click is deferred to
+	// UP and dropped if the cursor moved past MAP_SPOT_CLICK_THRESHOLD_SQ.
+	Fvector2 m_lbtn_down_pos;
+	bool     m_lbtn_armed;
+
 public:
 	bool m_bScale;
 	Fvector2 m_scale_bounds;
@@ -32,6 +37,7 @@ public:
 	virtual LPCSTR GetHint();
 	virtual void SetWndPos(const Fvector2& pos);
 	virtual void Update();
+	virtual bool OnMouseAction(float x, float y, EUIMessages mouse_action);
 	virtual bool OnMouseDown(int mouse_btn);
 	virtual void OnFocusLost();
 
@@ -55,11 +61,15 @@ class CMiniMapSpot : public CMapSpot
 	typedef CMapSpot inherited;
 	ui_shader m_icon_above, m_icon_normal, m_icon_below;
 	Frect m_tex_rect_above, m_tex_rect_normal, m_tex_rect_below;
+	shared_str m_tex_above, m_tex_normal, m_tex_below;
 public:
 	CMiniMapSpot(CMapLocation*);
 	virtual ~CMiniMapSpot();
 	virtual void Load(CUIXml* xml, LPCSTR path);
 	virtual void Draw();
+	void SetIconShader(LPCSTR sh);
+	void SetNormalIcon(LPCSTR texture, LPCSTR sh);
+	void SetHeightIcons(LPCSTR above, LPCSTR below, LPCSTR sh);
 };
 
 // -------------------------------------------------------------------------------------------------

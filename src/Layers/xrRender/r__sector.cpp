@@ -57,22 +57,22 @@ CSector::~CSector()
 //
 extern float r_ssaDISCARD;
 extern float r_ssaLOD_A, r_ssaLOD_B;
-
 static bool IsSameFrustum(const CFrustum& left, const CFrustum& right)
 {
-	if (left.p_count != right.p_count)
-		return false;
+    if (left.p_count != right.p_count)
+        return false;
 
-	for (int i = 0; i < left.p_count; ++i)
-	{
-		const CFrustum::fplane& left_plane = left.planes[i];
-		const CFrustum::fplane& right_plane = right.planes[i];
-		if (left_plane.n.x != right_plane.n.x || left_plane.n.y != right_plane.n.y ||
-			left_plane.n.z != right_plane.n.z || left_plane.d != right_plane.d)
-			return false;
-	}
+    for (int i = 0; i < left.p_count; ++i)
+    {
+        const CFrustum::fplane& left_plane = left.planes[i];
+        const CFrustum::fplane& right_plane = right.planes[i];
+        if (left_plane.n.x != right_plane.n.x || left_plane.n.y != right_plane.n.y ||
+            left_plane.n.z != right_plane.n.z || left_plane.d != right_plane.d ||
+            ((left_plane.aabb_overlap_id ^ right_plane.aabb_overlap_id) & CFrustum::fplane::AABB_ONLY))
+            return false;
+    }
 
-	return true;
+    return true;
 }
 
 IC CFrustum CreateFrustumFromPortal(sPoly* poly, Fvector& vBase, Fmatrix& mFullXFORM)
@@ -133,12 +133,14 @@ void CSector::traverse(CFrustum &&F, CDSGraphManager& DM)
 
 	// Register traversal process
 	auto SNODE = DM.m_sector_frustums.insert(this);
-	// A sector reached through an exactly identical portal frustum would repeat
-	// the same traversal and static collection. Reject only bit-identical plane
-	// sets, so no potentially visible geometry is culled by an epsilon guess.
-	for (const CFrustum& existing : SNODE->val.first)
-		if (IsSameFrustum(existing, F))
-			return;
+    for (const CFrustum& existing : SNODE->val.first)
+    {
+        if (IsSameFrustum(existing, F))
+        {
+            PROF_TAG("Exact duplicate frustum", true);
+            return;
+        }
+    }
     SNODE->val.first.push_back(F);
 	if (dbg)
 	{
@@ -280,7 +282,9 @@ void CSector::traverse(CFrustum &&F, CDSGraphManager& DM)
 				else
 					++dbg->portals_recursed_noopt;
 			}
-			pSector->traverse(CreateFrustumFromPortal(P, DM.i_vBase, DM.i_mXFORM), DM);
+            CFrustum clipped = CreateFrustumFromPortal(P, DM.i_vBase, DM.i_mXFORM);
+            clipped.AddCameraPlane(F);
+            pSector->traverse(std::move(clipped), DM);
 		}
 	}
 }

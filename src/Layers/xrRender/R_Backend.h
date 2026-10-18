@@ -15,16 +15,19 @@
 #include "r_backend_xform.h"
 #include "r_backend_hemi.h"
 #include "r_backend_tree.h"
+#include "../../xrEngine/shader_bus.h"
 
 #ifdef USE_DX11
 #	include "..\xrRenderPC_R4\r_backend_lod.h"
 #endif
 
 #include "fvf.h"
+#include "RenderContext.h"
 
 const u32 CULL_CCW = D3DCULL_CCW;
 const u32 CULL_CW = D3DCULL_CW;
 const u32 CULL_NONE = D3DCULL_NONE;
+struct SkeletonRenderSnapshot;
 
 ///		detailed statistic
 struct R_statistics_element
@@ -51,6 +54,30 @@ struct R_statistics
 	R_statistics_element s_dynamic_2B;
 	R_statistics_element s_dynamic_3B;
 	R_statistics_element s_dynamic_4B;
+};
+
+// shader bus obj_ lanes of the current constant table, written per draw from the drawn object
+class ECORE_API R_bus_object
+{
+	R_constant* c[ShaderBus::max_object_lanes];
+	ShaderBus::lane* lanes[ShaderBus::max_object_lanes];
+	u32 count;
+	bool object_applied;
+
+	void write_object(IRenderable* O);
+	void write_defaults();
+
+public:
+	R_bus_object() { unmap(); }
+	void unmap()
+	{
+		count = 0;
+		object_applied = false;
+	}
+	// writes the lane's value and keeps the constant for the draws of this table
+	void map(R_constant* C, ShaderBus::lane* l);
+	ICF void apply(IRenderable* O) { if (count) write_object(O); }
+	ICF void apply_static() { if (count) write_defaults(); }
 };
 
 #pragma warning(push)
@@ -94,7 +121,14 @@ public:
 	ID3DIndexBuffer* CuboidIB;
 	R_xforms xforms;
 	R_hemi hemi;
+	R_bus_object bus_object;
 	R_tree tree;
+    u32 recording_phase = 0;
+    bool recording_grass = false;
+#if defined(USE_DX11) && RENDER == R_R4
+    const RenderObjectSnapshot* recording_object = nullptr;
+#endif
+    u32 RenderPhase(const u32& phase) const { return RenderContextId() ? recording_phase : phase; }
 #ifdef USE_DX11
 	R_LOD LOD;
 #endif
@@ -132,6 +166,7 @@ private:
 	// Pixel/Vertex constants
 	ALIGN(16) R_constants constants;
 	R_constant_table* ctable;
+    u64 ctable_serial = 0;
 
 	// Shaders/State
 	ID3DState* state;
@@ -201,6 +236,19 @@ public:
 	// the internal invalidation routine part of the general render API.
 	IC void InvalidateExternalState() { Invalidate(); }
 
+
+#if defined(USE_DX11) && RENDER == R_R4
+    void InvalidateAfterCommandList() { Invalidate(); }
+    CTexture* shadow_texture_source = nullptr;
+    ID3D11ShaderResourceView* shadow_texture_view = nullptr;
+    bool object_hotness_own = false;
+    float object_hemi = 0.f, object_sun = 0.f, object_hemi_cube[6] = {};
+    const SkeletonRenderSnapshot* skeleton_snapshot = nullptr;
+    ID3D11ShaderResourceView* TextureView(CTexture* source, ID3D11ShaderResourceView* view) const
+    {
+        return source == shadow_texture_source ? shadow_texture_view : view;
+    }
+#endif
 	struct _stats
 	{
 		u32 polys;
@@ -275,8 +323,10 @@ public:
 
 	IC void set_Constants(R_constant_table* C);
 	IC void set_Constants(ref_ctable& C) { set_Constants(&*C); }
+    IC u64 get_ConstantsSerial() const { return ctable_serial; }
 
 	void set_Textures(STextureList* T);
+    void BindTexture(CTexture* surface, u32 stage);
 	IC void set_Textures(ref_texture_list& T) { set_Textures(&*T); }
 
 #ifdef _EDITOR
@@ -356,6 +406,18 @@ public:
 	IC void set_Scissor(Irect* rect = NULL);
 
 	// constants
+#if defined(USE_DX11) && RENDER == R_R4
+    bool matches_native_particle_pass(const SPass& pass) const
+    {
+        return pass.vs && pass.ps && vs == pass.vs->vs && ps == pass.ps->ps && ctable == pass.constants._get() &&
+            !gs && !hs && !ds && !(pass.cs && pass.cs->sh);
+    }
+    bool matches_shadow_batch_pass(const SPass& pass) const
+    {
+        return pass.vs && pass.ps && vs == pass.vs->vs && ps == pass.ps->ps && ctable == pass.constants._get() &&
+            !gs && !hs && !ds && pass.state && state == pass.state->state;
+    }
+#endif
 	ICF R_constant* get_c(LPCSTR n)
 	{
 		if (ctable) return ctable->get(n);
@@ -372,6 +434,9 @@ public:
 	ICF void set_c(R_constant* C, const Fmatrix& A) { if (C) constants.set(C, A); }
 	ICF void set_c(R_constant* C, const Fvector4& A) { if (C) constants.set(C, A); }
 	ICF void set_c(R_constant* C, float x, float y, float z, float w) { if (C) constants.set(C, x, y, z, w); }
+#ifdef USE_DX11
+    IC bool set_vertex_array_block(R_constant* constant, const Fvector4* data, u32 count);
+#endif
 	ICF void set_ca(R_constant* C, u32 e, const Fmatrix& A) { if (C) constants.seta(C, e, A); }
 	ICF void set_ca(R_constant* C, u32 e, const Fvector4& A) { if (C) constants.seta(C, e, A); }
 	ICF void set_ca(R_constant* C, u32 e, float x, float y, float z, float w)
@@ -381,6 +446,7 @@ public:
 #if defined(USE_DX10) || defined(USE_DX11)
 	ICF void set_c(R_constant* C, float A) { if (C) constants.set(C, A); }
 	ICF void set_c(R_constant* C, int A) { if (C) constants.set(C, A); }
+	ICF void set_c_bytes(R_constant* C, const void* data, u32 bytes) { if (C) constants.set_bytes(C, data, bytes); }
 #endif	//	USE_DX10
 
 
@@ -473,7 +539,8 @@ public:
 	void dbg_DrawLINE				(Fmatrix& T, Fvector& p1, Fvector& p2, u32 C);
 	void dbg_DrawEllipse			(Fmatrix& T, u32 C);
 
-	CBackend() { Invalidate(); };
+    explicit CBackend(bool initialize = true) { if (initialize) Invalidate(); }
+    void ResetBindings() { Invalidate(); }
 
 private:
 	// Debug Draw
@@ -505,6 +572,9 @@ private:
 #pragma warning(pop)
 
 extern ECORE_API CBackend RCache;
+#if defined(USE_DX11) && RENDER == R_R4
+#define RCache ActiveRenderBackend()
+#endif
 
 #ifndef _EDITOR
 #	include "D3DUtils.h"

@@ -10,7 +10,8 @@
 
 /* Garbage collector states. Order matters. */
 enum {
-  GCSpause, GCSpropagate, GCSatomic, GCSsweepstring, GCSsweep, GCSfinalize
+  GCSpause, GCSpropagate, GCSpropagateagain, GCSseparate, GCSatomic,
+  GCSsweepstring, GCSsweep, GCSfinalize
 };
 
 /* Bitmasks for marked field of GCobj. */
@@ -71,6 +72,7 @@ LJ_FUNC void lj_gc_fullgc(lua_State *L);
 
 /* Write barriers. */
 LJ_FUNC void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v);
+LJ_FUNC void lj_gc_barriertf(global_State *g, GCobj *v);
 LJ_FUNCA void LJ_FASTCALL lj_gc_barrieruv(global_State *g, TValue *tv);
 LJ_FUNC void lj_gc_closeuv(global_State *g, GCupval *uv);
 #if LJ_HASJIT
@@ -84,19 +86,30 @@ static LJ_AINLINE void lj_gc_barrierback(global_State *g, GCtab *t)
   lua_assert(isblack(o) && !isdead(g, o));
   lua_assert(g->gc.state != GCSfinalize && g->gc.state != GCSpause);
   black2gray(o);
-  setgcrefr(t->gclist, g->gc.grayagain);
-  setgcref(g->gc.grayagain, o);
+  if (g->gc.state == GCSpropagateagain || g->gc.state == GCSseparate) {
+    /* Unknown-key/JIT stores cannot use a forward barrier. Keep their parent
+    ** in the incremental remark queue instead of deferring it to atomic. */
+    setgcrefr(t->gclist, g->gc.gray);
+    setgcref(g->gc.gray, o);
+  } else {
+    setgcrefr(t->gclist, g->gc.grayagain);
+    setgcref(g->gc.grayagain, o);
+  }
 }
 
 /* Barrier for stores to table objects. TValue and GCobj variant. */
 #define lj_gc_anybarriert(L, t)  \
   { if (LJ_UNLIKELY(isblack(obj2gco(t)))) lj_gc_barrierback(G(L), (t)); }
 #define lj_gc_barriert(L, t, tv) \
-  { if (tviswhite(tv) && isblack(obj2gco(t))) \
-      lj_gc_barrierback(G(L), (t)); }
+  { if (tviswhite(tv) && isblack(obj2gco(t))) { \
+      if (G(L)->gc.state == GCSpropagateagain || G(L)->gc.state == GCSseparate) \
+        lj_gc_barriertf(G(L), gcV(tv)); \
+      else lj_gc_barrierback(G(L), (t)); } }
 #define lj_gc_objbarriert(L, t, o)  \
-  { if (iswhite(obj2gco(o)) && isblack(obj2gco(t))) \
-      lj_gc_barrierback(G(L), (t)); }
+  { if (iswhite(obj2gco(o)) && isblack(obj2gco(t))) { \
+      if (G(L)->gc.state == GCSpropagateagain || G(L)->gc.state == GCSseparate) \
+        lj_gc_barriertf(G(L), obj2gco(o)); \
+      else lj_gc_barrierback(G(L), (t)); } }
 
 /* Barrier for stores to any other object. TValue and GCobj variant. */
 #define lj_gc_barrier(L, p, tv) \

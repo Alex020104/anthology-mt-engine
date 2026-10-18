@@ -104,9 +104,8 @@ void CRender::Render()
 	// Msg						("sstatic: %s, sun: %s",o.sunstatic?;"true":"false", bSUN?"true":"false");
 
 	// HOM
-	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
-	HOM.Enable();
-	HOM.Render(ViewBase);
+    ViewBase.CreateFromCamera(Device.mFullTransform);
+    HOM.MT_RENDER();
 
 	Target->phase_scene_prepare();
 

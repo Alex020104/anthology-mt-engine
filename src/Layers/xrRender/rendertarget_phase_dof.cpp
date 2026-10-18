@@ -1,7 +1,9 @@
 #include "stdafx.h"
+#include "RenderDimensions.h"
 
 void CRenderTarget::phase_dof()
 {
+    PROF_EVENT("RenderTarget.DepthOfField");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);

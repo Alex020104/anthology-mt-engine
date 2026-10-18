@@ -15,6 +15,10 @@ public:
 	ID3DBuffer* GetBuffer() { return m_pBuffer; }
 
 	void Flush();
+    static void ResetStats();
+    static void ProfileStats();
+    dx10ConstantBuffer(const dx10ConstantBuffer& source, bool private_copy);
+    void CopyDefaults(const dx10ConstantBuffer& source);
 
 	//	Set copy data into constant buffer
 	//	Plain buffer member
@@ -25,13 +29,23 @@ public:
 	//	Array buffer member
 	void seta(R_constant* C, R_constant_load& L, u32 e, const Fmatrix& A);
 	void seta(R_constant* C, R_constant_load& L, u32 e, const Fvector4& A);
+	//	Raw bytes over the declared size, the tail past the data is zeroed
+	void set_bytes(R_constant_load& L, const void* data, u32 bytes);
 
 	void* AccessDirect(R_constant_load& L, u32 DataSize);
+    void RequireUpload() { m_bChanged = true; }
+#ifdef USE_DX11
+    bool WriteFloat4Array(R_constant* C, R_constant_load& L, const Fvector4* data, u32 count);
+#endif
 
 private:
 	Fvector4* Access(u16 offset);
 	void Store(u16 offset, const void* value, u32 bytes);
 	void StoreMatrix(u16 offset, const Fmatrix& value, u32 rows);
+	void Write(u32 offset, const void* value, u32 size);
+    struct Stats { u32 typed = 0, skipped = 0, direct = 0, uploads = 0, bytes = 0; };
+    static thread_local Stats s_stats;
+    bool m_private_copy = false;
 
 private:
 	shared_str m_strBufferName;
@@ -41,6 +55,7 @@ private:
 	u32 m_uiMembersCRC;
 	xr_vector<D3D_SHADER_TYPE_DESC> m_MembersList;
 	xr_vector<shared_str> m_MembersNames;
+    xr_vector<u32> m_MembersOffsets;
 
 	ID3DBuffer* m_pBuffer;
 	u32 m_uiBufferSize; //	Cache buffer size for debug validation

@@ -328,6 +328,7 @@ namespace luabind
     template<typename R, typename... Args>
     decltype(auto) call_member(object const& obj, const char* name, const Args&... args)
     {
+		detail::prepare_lua_call(obj.lua_state());
         using proxy_type = std::conditional_t<
             std::is_void_v<R>,
             luabind::detail::proxy_member_void_caller<const Args*...>,

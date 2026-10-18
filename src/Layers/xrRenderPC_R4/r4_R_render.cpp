@@ -8,6 +8,7 @@
 #include "../../xrEngine/EngineThreading.h"
 #include "../xrRender/SkeletonCustom.h"
 #include "../../xrParticles/ParticlesAsyncManager.h"
+#include "LocalLightDebug.h"
 
 #include "../xrRender/QueryHelper.h"
 #include "UpscalerRuntime.h"
@@ -162,8 +163,11 @@ public:
 };
 }
 
+#include	"../xrRender/dxRenderDeviceRender.h"
+
 void CRender::render_menu()
 {
+    PROF_EVENT("Render.Menu");
 	PIX_EVENT(render_menu);
 	//	Globals
 	RCache.set_CullMode(CULL_CCW);
@@ -218,8 +222,8 @@ void CRender::render_menu()
 	Fvector2 p0, p1;
 	u32 Offset;
 	auto C = color_rgba(255, 255, 255, 255);
-	float _w = float(Device.dwWidth);
-	float _h = float(Device.dwHeight);
+	float _w = float(RenderScreenWidth());
+	float _h = float(RenderScreenHeight());
 	float d_Z = EPS_S;
 	float d_W = 1.f;
 	p0.set(.5f / _w, .5f / _h);
@@ -242,9 +246,12 @@ extern u32 g_r;
 
 void CRender::Render()
 {
+    if (view_preparation) view_preparation->BeginFrame();
+    PROF_EVENT("Render.Frame");
+	PIX_EVENT_C(CRender_Render, dx10_marker_frame);
+	dx10_annotate_frame();
     GMBase.RGraph.mapHUDNativeUi.clear();
     GMBase.RGraph.hasNativeHudAttachments = false;
-	PIX_EVENT(CRender_Render);
 	Target->m_svpSceneFrame = u32(-1);
 
 	rmNormal();
@@ -283,9 +290,22 @@ void CRender::Render()
 		g_AnthologyUpscaler.UpdateJitter(Device.dwFrame);
 
 	SvpQualityPassScope svpQualityScope(Target);
+    struct PreparationFrameScope
+    {
+        CRender* renderer;
+        ~PreparationFrameScope()
+        {
+            if (renderer->local_light_shadows) renderer->local_light_shadows->EndFrame();
+            if (renderer->sun_shadows) renderer->sun_shadows->EndFrame();
+            if (renderer->rain_shadows) renderer->rain_shadows->EndFrame();
+            if (renderer->view_preparation) renderer->view_preparation->FinishFrame();
+        }
+    } preparation_frame{this};
+
 
 	//.	VERIFY					(g_pGameLevel && g_pGameLevel->pHUD);
 
+    LocalLightDebug::BeginFrame();
 	// Configure
 	RImplementation.o.distortion = FALSE; // disable distorion
 	Fcolor sun_color = ((light*)Lights.sun_adapted._get())->color;
@@ -295,9 +315,11 @@ void CRender::Render()
 
 	const SRenderPhaseToken visibilityPhase = BeginRenderPhase(RenderPhaseVisibility);
 	// HOM
-	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
-	HOM.Enable();
-	HOM.Render(ViewBase);
+    ViewBase.CreateFromCamera(Device.mFullTransform);
+    PROF_TAG("Camera frustum planes", ViewBase.p_count);
+    if (view_preparation)
+        view_preparation->Queue(pLastSector, ViewBase, Device.mFullTransform, Device.vCameraPosition, true, Device.mView);
+    HOM.MT_RENDER();
 
 	Target->phase_scene_prepare();
 
@@ -314,11 +336,11 @@ void CRender::Render()
 		FLOAT ColorRGBA[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
 		HW.pContext->ClearRenderTargetView(Target->rt_ssfx_hud->pRT, ColorRGBA);
 
-		Target->u_setrt(Target->rt_ssfx_hud, NULL, NULL, HW.pBaseZB);
+		Target->u_setrt(Target->rt_ssfx_hud, NULL, NULL, Target->main_depth());
 		r_dsgraph_render_hud(true);
 
 		// Reset Depth
-		HW.pContext->ClearDepthStencilView(HW.pBaseZB, D3D_CLEAR_DEPTH, 1.0f, 0);
+		HW.pContext->ClearDepthStencilView(Target->main_depth(), D3D_CLEAR_DEPTH, 1.0f, 0);
 	}*/
 
     GMBase.traverse(RImplementation.pLastSector, ViewBase, Device.vCameraPosition, Device.mFullTransform);
@@ -326,9 +348,16 @@ void CRender::Render()
     GMBase.r_dsgraph_capture_dynamic();
 	EndRenderPhase(visibilityPhase);
 
+    if (bSUN && ps_r4_mt_sun_shadows)
+    {
+        if (!sun_shadows) sun_shadows = std::make_unique<SunShadows>();
+        sun_shadows->Prepare(*this);
+    }
+
 	const SRenderPhaseToken firstGBufferPhase = BeginRenderPhase(RenderPhaseGBuffer);
     if (RImplementation.o.ssfx_motionvectors)
     {
+        PROF_EVENT("Render.MotionVectors.Sky");
 		Target->u_setrt(Target->get_core_width(), Target->get_core_height(), 0, 0, Target->rt_ssfx_motion_vectors->pRT, 0);
 
         FLOAT ColorRGBA[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -351,7 +380,8 @@ void CRender::Render()
 
 	//******* Main render :: PART-0	-- first
 	{
-		PIX_EVENT(DEFER_PART0_SPLIT);
+		PIX_EVENT_C(DEFER_PART0_SPLIT, dx10_marker_gbuffer);
+        PROF_EVENT("Render.GBuffer.Part0.Split");
 		// level, SPLIT
 		Target->phase_scene_begin();
 		GMBase.r_dsgraph_render_static(0);
@@ -359,6 +389,12 @@ void CRender::Render()
 		Target->disable_aniso();
 	}
 	EndRenderPhase(firstGBufferPhase);
+
+    if (sun_shadows)
+    {
+        sun_shadows->CapturePending();
+        sun_shadows->RecordStatic();
+    }
 
 	//  Redotix99: for 3D Shader Based Scopes 	
 	if (scope_3D_fake_enabled)
@@ -374,6 +410,7 @@ void CRender::Render()
 
 	{
 		PIX_EVENT(DEFER_TEST_LIGHT_VIS);
+        PROF_EVENT("Render.Lights.Visibility");
 		const SRenderPhaseToken lightVisibilityPhase = BeginRenderPhase(RenderPhaseLightVisibility);
 		//******* Occlusion testing of volume-limited light-sources
 		Target->phase_occq();
@@ -383,10 +420,15 @@ void CRender::Render()
 		EndRenderPhase(lightVisibilityPhase);
 	}
 
+    if (!local_light_shadows && (ps_r4_mt_local_shadows || ps_r4_smapvis))
+        local_light_shadows = std::make_unique<LocalLightShadows>();
+    if (local_light_shadows) local_light_shadows->BeginFrame(LP_normal);
+
 	const SRenderPhaseToken secondGBufferPhase = BeginRenderPhase(RenderPhaseGBuffer);
 	//******* Main render :: PART-1 (second)
 	{
-		PIX_EVENT(DEFER_PART1_SPLIT);
+		PIX_EVENT_C(DEFER_PART1_SPLIT, dx10_marker_gbuffer);
+        PROF_EVENT("Render.GBuffer.Part1");
 		// level
 		Target->phase_scene_begin();
 		if (!Snow && anthology::snow::Active()) Snow = xr_new<CSnowRenderer>();
@@ -409,12 +451,25 @@ void CRender::Render()
 		Target->phase_scene_end();
 	}
 
+    if (sun_shadows)
+    {
+        sun_shadows->CapturePending(true);
+        sun_shadows->RecordStatic();
+    }
+
+    if (ps_r4_mt_rain_shadows && ps_r2_ls_flags.test(R3FLAG_DYN_WET_SURF))
+    {
+        if (!rain_shadows) rain_shadows = std::make_unique<RainShadows>();
+        rain_shadows->Prepare(*this);
+    }
+
 	// Wall marks
 	const bool reduced_svp_wallmarks = Device.m_SecondViewport.IsSVPFrame() &&
 		ScopeLenseQualityTier() >= 3;
 	if (Wallmarks && !reduced_svp_wallmarks)
 	{
 		PIX_EVENT(DEFER_WALLMARKS);
+        PROF_EVENT("Render.Wallmarks");
 		Target->phase_wallmarks();
 
 		Wallmarks->Render(); // wallmarks has priority as normal geometry
@@ -424,6 +479,7 @@ void CRender::Render()
 	if (RImplementation.o.dx10_msaa)
 	{
 		PIX_EVENT(MARK_MSAA_EDGES);
+        PROF_EVENT("Render.MSAA.MarkEdges");
 		Target->mark_msaa_edges();
 	}
 
@@ -431,6 +487,7 @@ void CRender::Render()
 	if (ps_r2_ls_flags.test(R3FLAG_DYN_WET_SURF))
 	{
 		PIX_EVENT(DEFER_RAIN);
+        PROF_EVENT("Render.Rain");
 		render_rain();
 	}
 	EndRenderPhase(secondGBufferPhase);
@@ -451,6 +508,7 @@ void CRender::Render()
 
 		if (RImplementation.o.ssfx_sss && !Device.m_SecondViewport.IsSVPFrame())
 		{
+            PROF_EVENT("Render.SSS");
 			static bool sss_rendered, sss_extended_rendered;
 
 			// SSS Shadows
@@ -502,11 +560,18 @@ void CRender::Render()
 	}
 	EndRenderPhase(sssPhase);
 
+    // A capture that finished during wallmarks/rain/SSS can still overlap the
+    // owner-side local-light preparation. This probe never waits for workers.
+    if (sun_shadows) sun_shadows->RecordStatic();
+    if (local_light_shadows) local_light_shadows->Record();
+    if (sun_shadows) sun_shadows->Record();
+
 	// Directional light - fucking sun
 	const SRenderPhaseToken sunPhase = BeginRenderPhase(RenderPhaseSun);
 	if (bSUN) //bSUN && Device.dwFrame & 1 --Delayed sun update. Worth to check it in future
 	{
-		PIX_EVENT(DEFER_SUN);
+		PIX_EVENT_C(DEFER_SUN, dx10_marker_lights);
+        PROF_EVENT("Render.Sun");
 		RImplementation.stats.l_visible ++;
 		// render_sun_cascades also performs direct-light accumulation; skipping it
 		// would leave reduced-quality PiP without direct sun even when cached shadow
@@ -522,7 +587,8 @@ void CRender::Render()
 	const SRenderPhaseToken localLightPhase = BeginRenderPhase(RenderPhaseLocalLights);
 
 	{
-		PIX_EVENT(DEFER_SELF_ILLUM);
+		PIX_EVENT_C(DEFER_SELF_ILLUM, dx10_marker_lights);
+        PROF_EVENT("Render.Emissive");
 		Target->phase_accumulator();
 		// Render emissive geometry, stencil - write 0x0 at pixel pos
 		RCache.set_xform_project(Device.mProject);
@@ -547,6 +613,7 @@ void CRender::Render()
 		ScopeLenseQualityTier() >= 2;
 	if (RImplementation.o.ssfx_bloom && !reduced_svp_bloom)
 	{
+        PROF_EVENT("Render.BloomEmissive");
 		// Render Emissive on `rt_ssfx_bloom_emissive`
 		FLOAT ColorRGBA[4] = { 0,0,0,0 };
 		HW.pContext->ClearRenderTargetView(Target->rt_ssfx_bloom_emissive->pRT, ColorRGBA);
@@ -557,14 +624,16 @@ void CRender::Render()
 
 	// Lighting, non dependant on OCCQ
 	{
-		PIX_EVENT(DEFER_LIGHT_NO_OCCQ);
+		PIX_EVENT_C(DEFER_LIGHT_NO_OCCQ, dx10_marker_lights);
+        PROF_EVENT("Render.Lights.Normal");
 		Target->phase_accumulator();
 		render_lights(LP_normal);
 	}
 
 	// Lighting, dependant on OCCQ
 	{
-		PIX_EVENT(DEFER_LIGHT_OCCQ);
+		PIX_EVENT_C(DEFER_LIGHT_OCCQ, dx10_marker_lights);
+        PROF_EVENT("Render.Lights.Pending");
 		render_lights(LP_pending);
 	}
 
@@ -582,10 +651,13 @@ void CRender::Render()
 	{
 		PIX_EVENT(DEFER_LIGHT_COMBINE);
 		const SRenderPhaseToken combinePhase = BeginRenderPhase(RenderPhaseCombine);
+        PROF_EVENT("Render.Combine");
 		Target->phase_combine();
 		EndRenderPhase(combinePhase);
 	}
 	svpQualityScope.restore();
+
+    LocalLightDebug::EndFrame();
 
 	if (Details)
 		Details->details_clear();
@@ -611,6 +683,7 @@ void CRender::Render()
 
 void CRender::render_forward()
 {
+    PROF_EVENT("Render.Forward");
 	RImplementation.o.distortion = RImplementation.o.distortion_enabled; // enable distorion
 
 	//******* Main render - second order geometry (the one, that doesn't support deffering)
@@ -1065,6 +1138,7 @@ void CRenderTarget::phase_svp_motion()
 
 void CRender::RenderToTarget(RRT target)
 {
+    PROF_EVENT("Render.CopyToTarget");
 	ref_rt* RT = nullptr;
 
 	switch (target)

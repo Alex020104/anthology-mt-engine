@@ -26,6 +26,9 @@
 
 namespace luabind { namespace detail
 {
+	static entry_callback before_entry = nullptr;
+	void set_entry_callback(entry_callback callback) { before_entry = callback; }
+	void prepare_lua_call(lua_State* state) { if (before_entry && state) before_entry(state); }
 	int pcall(lua_State *L, int nargs, int nresults)
 	{
 		pcall_callback_fun e = get_pcall_callback();

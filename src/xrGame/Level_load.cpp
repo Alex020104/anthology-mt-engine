@@ -328,6 +328,7 @@ bool CLevel::Load_GameSpecific_After()
 				rain->InvalidateState();
 
 		// loading scripts
+        PROF_EVENT("LoadGame.LevelScripts");
 		ai().script_engine().remove_script_process(ScriptEngine::eScriptProcessorLevel);
 
 		if (pLevel->section_exist("level_scripts") && pLevel->line_exist("level_scripts", "script"))

@@ -11,6 +11,11 @@
 #include "../../xrEngine/CustomHUD.h"
 
 #include "FBasicVisual.h"
+#include "FVisual.h"
+#include "FTreeVisual.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "StaticDrawPacketPolicy.h"
+#endif
 #include "CHudInitializer.h"
 
 #include "fhierrarhyvisual.h"
@@ -19,6 +24,10 @@
 #include "flod.h"
 
 #include "../../xrEngine/xr_object.h"
+#if RENDER == R_R4
+#include "../xrRenderPC_R4/Dlss/DlssNativeUi.h"
+#include "../xrRenderPC_R4/LocalLightDebug.h"
+#endif
 
 #ifdef USE_DX11
 #include "PipMotionHistory.h"
@@ -31,10 +40,81 @@ extern float r_ssaDONTSORT;
 extern float r_ssaHZBvsTEX;
 extern float r_ssaGLOD_start, r_ssaGLOD_end;
 
+#if RENDER == R_R1 || RENDER == R_R2
+extern Fvector4 ps_s3ds_param_1;
+extern Fvector4 ps_s3ds_param_3;
+
+void CRender::AddScopeHeatItem(const R_dsgraph::DSGraphItem<u32, false>& item, ShaderElement* shader)
+{
+    CTexture* texture = item.pVisual->GetTexture();
+    const float temperature = item.pObject->GetHotness();
+    if (texture && texture->m_is_hot && _valid(temperature) && temperature > EPS_S)
+    {
+        // An invisible object can also have submitted this mesh through its normal render callback.
+        if (scope_heat_only && std::any_of(scope_heat_items.begin(), scope_heat_items.end(),
+            [&](const R_dsgraph::ScopeHeatItem& heat) { return heat.visual == item.pVisual; }))
+            return;
+        scope_heat_items.push_back({item.ssa, item.pVisual, *item.pMatrix, shader, clampr(temperature, 0.f, 1.f)});
+    }
+}
+#endif
+
+ICF bool R4FullDetailRejectSpatial(ISpatial* spatial, bool normalPhase)
+{
+#if RENDER == R_R4
+	if (ps_r4_full_detail_distance_scale >= 1.f || !normalPhase || !spatial || !g_pGamePersistent ||
+		!g_pGamePersistent->Environment().CurrentEnv)
+		return false;
+
+	const float farPlane = g_pGamePersistent->Environment().CurrentEnv->far_plane;
+	const float fullDetailDistance = std::max(100.f, farPlane * ps_r4_full_detail_distance_scale);
+	if (Device.vCameraPosition.distance_to_sqr(spatial->spatial.sphere.P) <=
+		_sqr(fullDetailDistance + spatial->spatial.sphere.R))
+		return false;
+
+	if (spatial->spatial.type & STYPE_LIGHTSOURCE)
+	{
+		light* L = (light*)spatial->dcast_Light();
+		if (L && L->flags.bHudMode)
+			return false;
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
 ICF float calcLOD(float ssa/*fDistSq*/, float R)
 {
 	return _sqrt(clampr((ssa - r_ssaGLOD_end) / (r_ssaGLOD_start - r_ssaGLOD_end), 0.f, 1.f));
 }
+
+#if RENDER == R_R1 || RENDER == R_R2
+void CRender::RenderScopeHeat()
+{
+    for (const R_dsgraph::ScopeHeatItem& item : scope_heat_items)
+    {
+        ShaderElement* shader = Target->GetScopeHeatShader(item.shader);
+        if (!shader)
+            continue;
+        RCache.set_Element(shader);
+        RCache.set_xform_world(item.transform);
+        RCache.set_c("r1_heat_params", item.temperature, 0.f, 0.f, 0.f);
+        item.visual->Render(calcLOD(item.ssa, item.visual->vis.sphere.R));
+    }
+}
+
+static void render_scope_item(const R_dsgraph::DSGraphItem<float, true>& item,
+    ShaderElement* element, u32 pass = 0)
+{
+    RCache.set_Element(element, pass);
+    RCache.set_xform_world(*item.pMatrix);
+    RImplementation.apply_object(item.pObject);
+    RImplementation.apply_lmaterial();
+    item.pVisual->Render(calcLOD(item.ssa, item.pVisual->vis.sphere.R));
+}
+#endif
 
 template<typename T, bool Reverse>
 void CDSGraphManager::r_dsgraph_render_graph_sorted(R_dsgraph::mapDSGraphItems<T, Reverse>& graph, bool _clear, bool static_geometry)
@@ -68,6 +148,40 @@ void CDSGraphManager::r_dsgraph_render_graph_sorted(R_dsgraph::mapDSGraphItems<T
 	RCache.set_xform_world(Fidentity);
 }
 
+#if defined(USE_DX11) && RENDER == R_R4
+void CDSGraphManager::SetPreparedWorld(const Fmatrix* world)
+{
+    const Fmatrix& view = RCache.get_xform_view();
+    const Fmatrix& projection = RCache.get_xform_project();
+    if (prepared_frame != Device.dwFrame || memcmp(&prepared_view, &view, sizeof(Fmatrix)) ||
+        memcmp(&prepared_projection, &projection, sizeof(Fmatrix)))
+    {
+        prepared_worlds.clear();
+        prepared_frame = Device.dwFrame;
+        prepared_view = view;
+        prepared_projection = projection;
+    }
+    auto found = prepared_worlds.find(world);
+    if (found == prepared_worlds.end() || memcmp(&found->second.world, world, sizeof(Fmatrix)))
+    {
+        PROF_EVENT("Render.Graph.PrepareWorldMatrix");
+        // Bound retained scratch; a very large scene retains the native path.
+        if (prepared_worlds.size() >= 8192)
+        {
+            RCache.set_xform_world(*world);
+            return;
+        }
+        auto& result = prepared_worlds[world];
+        result.world = *world;
+        result.view.mul_43(view, result.world);
+        result.projection.mul(projection, result.view);
+        found = prepared_worlds.find(world);
+    }
+    const auto& result = found->second;
+    RCache.xforms.set_W_prepared(result.world, result.view, result.projection);
+}
+#endif
+
 void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _priority, bool _clear, bool static_geometry)
 {
 	RCache.set_xform_world(Fidentity);
@@ -78,12 +192,77 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 		if (queue.empty())
 			continue;
 
-		// 1. Sort by generated sort key to replicate previous fixed map behaviour
+#if defined(USE_DX11) && RENDER == R_R4
+        const PreparedGraphMatrices* prepared = !RenderContextId() && !static_geometry && RImplementation.view_preparation ?
+            RImplementation.view_preparation->Consume(queue) : nullptr;
+        if (!prepared && (!static_geometry || static_sorted_revision[_priority][iPass] != static_queue_revision))
+#endif
+        {
+#if defined(USE_DX11) && RENDER == R_R4
+        PROF_EVENT_DYNAMIC(static_geometry ? "Render.Graph.OwnerSort.Static" : "Render.Graph.OwnerSort.Dynamic");
+#endif
+		// Exact pipelines retain their key ordering; immutable members order by shared IB range.
+#if defined(USE_DX11) && RENDER == R_R4
+        const auto compare = [](const RenderPacket& a, const RenderPacket& b)
+        {
+            if (!(a.sortKey == b.sortKey)) return a.sortKey < b.sortKey;
+            if (a.static_batch != b.static_batch) return std::less<const void*>()(a.static_batch, b.static_batch);
+            return a.static_first_index < b.static_first_index;
+        };
+#else
+        const auto compare = [](const RenderPacket& a, const RenderPacket& b) { return a < b; };
+#endif
 		if (queue.size() < 4096)
-            std::sort(queue.begin(), queue.end());
+            std::sort(queue.begin(), queue.end(), compare);
 		else
-            xr_parallel_sort(queue.begin(), queue.end());
+            xr_parallel_sort(queue.begin(), queue.end(), compare);
+#if defined(USE_DX11) && RENDER == R_R4
+        if (static_geometry) static_sorted_revision[_priority][iPass] = static_queue_revision;
+#endif
+        }
 
+#if defined(USE_DX11) && RENDER == R_R4
+        if (static_geometry && _priority == 0 && RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_SMAP && !RImplementation.o.Tshadows)
+        {
+            PROF_EVENT("Render.Shadow.SelectStaticGroups");
+            static thread_local u32 serial = 0;
+            for (size_t first = 0; first < queue.size();)
+            {
+                const auto* pass = queue[first].source_pass;
+                const u32 type = queue[first].item.pVisual->Type;
+                size_t end = first;
+                while (end < queue.size() && queue[end].source_pass == pass && queue[end].item.pVisual->Type == type && (type == MT_NORMAL || type == MT_TREE_ST)) ++end;
+                if (end - first > 1 && pass && (type == MT_TREE_ST || Fvisual::ShadowBatchPassSafe(*pass)))
+                {
+                    if (!++serial) ++serial;
+                    for (size_t i = first; i < end; ++i)
+                    {
+                        if (!ShadowPacketEnabled(queue[i])) continue;
+                        if (type == MT_TREE_ST)
+                        {
+                            static_cast<FTreeVisual*>(queue[i].item.pVisual)->SelectShadowBatch(serial);
+                            queue[i].shadow_ticket = serial;
+                            continue;
+                        }
+                        auto& mesh = *static_cast<Fvisual*>(queue[i].item.pVisual);
+                        if (!mesh.shadow_batch || !mesh.ShadowBatchMemberValid()) continue;
+                        auto& batch = *mesh.shadow_batch;
+                        auto& selection = batch.selection[RenderContextId()];
+                        auto& binding_valid = batch.binding_valid[RenderContextId()];
+                        if (selection.begin(Device.dwFrame, serial))
+                            binding_valid = batch.pass._get() == pass && batch.vertex_revision == pass->vs->shadow_shader_revision &&
+                                batch.pixel_revision == pass->ps->shadow_shader_revision;
+                        if (binding_valid)
+                        {
+                            selection.add(mesh.shadow_batch_member, u32(batch.members.size()));
+                            queue[i].shadow_ticket = serial;
+                        }
+                    }
+                }
+                first = end > first ? end : first + 1;
+            }
+        }
+#endif
 		// 2. Render
 		vs_type pVS = nullptr;
 
@@ -104,8 +283,40 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 
         u64 high = 0;
 
+        #if defined(USE_DX11) && RENDER == R_R4
+        std::shared_ptr<Fvisual::StaticBatch> batch;
+        const SPass* batch_pass = nullptr;
+        u32 batch_first = 0, batch_count = 0, batch_vertices = 0, combined_draws = 0, combined_members = 0;
+        float batch_lod = 0.f;
+        auto flush_static = [&]()
+        {
+            if (!batch) return;
+            RCache.LOD.set_LOD(batch_lod);
+            RCache.set_Geometry(batch->geometry);
+            RCache.Render(D3DPT_TRIANGLELIST, batch->base_vertex, 0, batch->vertex_count, batch_first, batch_count / 3);
+            RCache.stat.r.s_static.add(batch_vertices);
+            batch.reset();
+            batch_count = batch_vertices = 0;
+            ++combined_draws;
+        };
+#endif
+        u32 prepared_index = 0;
         for (auto& packet : queue)
         {
+            #if defined(USE_DX11) && RENDER == R_R4
+            if (_priority == 0 && !ShadowPacketEnabled(packet))
+                continue;
+            const float packet_lod = calcLOD(packet.item.ssa, packet.item.pVisual->vis.sphere.R);
+            auto* mesh = packet.item.pVisual->Type == MT_NORMAL ? static_cast<Fvisual*>(packet.item.pVisual) : nullptr;
+            const auto* pass = packet.source_pass;
+            const bool eligible = static_geometry && RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_NORMAL && _priority == 0 && mesh &&
+                mesh->StaticBatchValid() && mesh->static_batch.get() == packet.static_batch &&
+                mesh->static_batch_first_index == packet.static_first_index && pass && Fvisual::StaticPassSafe(*pass) &&
+                pass->vs._get() == packet.pVS && pass->ps->ps == packet.pPS && pass->constants._get() == packet.pCS &&
+                pass->state->state == packet.pState && pass->T._get() == packet.pTextures;
+            if (batch && (!eligible || batch != mesh->static_batch || batch_pass != pass || batch_lod != packet_lod ||
+                !aoe_render::adjacent_static_range(batch_first, batch_count, mesh->static_batch_first_index))) flush_static();
+#endif
             auto& currentKey = packet.sortKey;
             if (currentKey.high != high)
             {
@@ -168,8 +379,26 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 			auto& item = packet.item;
 			if (!static_geometry)
 			{
-				RCache.set_xform_world(*item.pMatrix);
+				#if defined(USE_DX11) && RENDER == R_R4
+                if (prepared && prepared_index < prepared->matrices.size() && prepared->matrices[prepared_index].valid &&
+                    !memcmp(&prepared->view, &RCache.xforms.m_v, sizeof(Fmatrix)) &&
+                    !memcmp(&prepared->projection, &RCache.xforms.m_p, sizeof(Fmatrix)) &&
+                    !memcmp(item.pMatrix, &prepared->matrices[prepared_index].world, sizeof(Fmatrix)))
+                {
+                    const auto& matrix = prepared->matrices[prepared_index];
+                    RCache.xforms.set_W_prepared(matrix.world, matrix.view, matrix.projection);
+                }
+                else SetPreparedWorld(item.pMatrix);
+#else
+                RCache.set_xform_world(*item.pMatrix);
+#endif
+#if defined(USE_DX11) && RENDER == R_R4
+                RCache.recording_object = RenderContextId() ? &packet.shadow_object : nullptr;
+#endif
 				RImplementation.apply_object(item.pObject);
+#if defined(USE_DX11) && RENDER == R_R4
+                RCache.recording_object = nullptr;
+#endif
 				RImplementation.apply_lmaterial();
 			}
 
@@ -179,9 +408,46 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 			// Write even when the constant table was reused by the previous packet.
 			const PipMotionHistoryScope motion_scope(item.pObject, static_geometry);
 #endif
-			item.pVisual->Render(LOD);
+			#if defined(USE_DX11) && RENDER == R_R4
+            if (eligible)
+            {
+                if (!batch)
+                {
+                    batch = mesh->static_batch;
+                    batch_pass = pass;
+                    batch_lod = LOD;
+                    batch_first = mesh->static_batch_first_index;
+                }
+                batch_count += mesh->iCount;
+                batch_vertices += mesh->vCount;
+                ++combined_members;
+                continue;
+            }
+#endif
+#if defined(USE_DX11) && RENDER == R_R4
+            if (static_geometry && item.pVisual->Type == MT_TREE_ST && !RCache.is_TessEnabled() &&
+                static_cast<FTreeVisual*>(item.pVisual)->DrawShadowBatch(LOD, packet.shadow_ticket)) continue;
+            if (static_geometry && mesh && !RCache.is_TessEnabled() &&
+                !memcmp(&RCache.xforms.m_w, &Fidentity, sizeof(Fmatrix)) && mesh->DrawShadowBatch(packet.shadow_ticket)) continue;
+#endif
+#if defined(USE_DX11) && RENDER == R_R4
+            RCache.skeleton_snapshot = packet.shadow_pose.get();
+#endif
+            item.pVisual->Render(LOD);
+#if defined(USE_DX11) && RENDER == R_R4
+            RCache.skeleton_snapshot = nullptr;
+#endif
+            ++prepared_index;
 		}
 
+#if defined(USE_DX11) && RENDER == R_R4
+        flush_static();
+        {
+            PROF_EVENT("Render.Static.BatchStats");
+            PROF_TAG("Draws", combined_draws);
+            PROF_TAG("Members", combined_members);
+        }
+#endif
 		if (_clear)
 			queue.clear();
 	}
@@ -262,6 +528,13 @@ void CDSGraphManager::r_dsgraph_render_sorted(bool render_hud)
 		r_dsgraph_render_graph_sorted(RGraph.mapDynamicSorted.Sorted, true);
 	}
 
+#if RENDER == R_R1
+    if (RImplementation.o.defer_hud)
+        return;
+#elif RENDER == R_R2
+    if (RImplementation.scope_capture_active)
+        return;
+#endif
 	if (render_hud)
 		r_dsgraph_render_sorted_hud();
 
@@ -287,7 +560,7 @@ void CDSGraphManager::r_dsgraph_capture_hud()
 	}
 }
 
-#if defined(USE_DX11)
+#if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 //////////////////////////////////////////////////////////////////////////
 // strict-sorted render
 void CDSGraphManager::r_dsgraph_render_ScopeSorted()  //  Redotix99: for 3D Shader Based Scopes 	
@@ -329,7 +602,36 @@ void CDSGraphManager::r_dsgraph_render_ScopeSorted()  //  Redotix99: for 3D Shad
 
 	// Rendering
 	RImplementation.rmNear();
+#if RENDER == R_R1 || RENDER == R_R2
+    std::sort(RGraph.mapScopeHUDSorted.begin(), RGraph.mapScopeHUDSorted.end());
+    for (const auto& item : RGraph.mapScopeHUDSorted)
+    {
+        ShaderElement* element = item.pSE;
+        const int type = int(ps_s3ds_param_3.y);
+        const int slot = type == 9 ? 2 : (type == 5 ? 3 : -1);
+        if (slot >= 0)
+        {
+            ShaderElement* variant = item.pVisual->shader->E[slot]._get();
+            if (variant && variant->flags.iScopeLense == 3)
+                element = variant;
+        }
+        ShaderElement* image = item.pVisual->shader->E[4]._get();
+        ShaderElement* surface = item.pVisual->shader->E[5]._get();
+        if (RImplementation.Target->IsScopeThermalActive() && surface && surface->passes.size() > 1)
+            render_scope_item(item, surface, 1);
+        else if (image && image->flags.iScopeLense == 3)
+            render_scope_item(item, image);
+        render_scope_item(item, element);
+        const bool inside = type != 3 && type != 4 && type != 6 && type != 8 && !int(ps_s3ds_param_1.w);
+        if ((inside || ps_s3ds_param_3.z > 0.f) && surface && surface->flags.iScopeLense == 3)
+            render_scope_item(item, surface);
+        if (image && image->flags.iScopeLense == 3 && image->passes.size() > 1)
+            render_scope_item(item, image, 1);
+    }
+    RGraph.mapScopeHUDSorted.clear();
+#else
 	r_dsgraph_render_graph_sorted(RGraph.mapScopeHUDSorted, true);
+#endif
 	RImplementation.rmNormal();
 }
 #endif
@@ -415,6 +717,11 @@ void CDSGraphManager::r_dsgraph_render_emissive(bool clear, bool renderHUD)
 	r_dsgraph_render_graph_sorted(RGraph.mapStaticSorted.Emissive, clear, true);
 	r_dsgraph_render_graph_sorted(RGraph.mapDynamicSorted.Emissive, clear);
 	
+#if RENDER == R_R2
+    if (RImplementation.scope_capture_active)
+        return;
+#endif
+
 	//	HACK: Calculate this only once
 	CHudInitializer initializer(true);
 
@@ -526,7 +833,10 @@ void CDSGraphManager::r_dsgraph_render_distort()
 #include"LightTrack.h"
 void CDSGraphManager::r_dsgraph_capture_static()
 {
-	PROF_EVENT("r_dsgraph_capture_static")
+    PROF_EVENT("Render.Static.UnionFrustumCapture");
+#if defined(USE_DX11) && RENDER == R_R4
+    ++static_queue_revision;
+#endif
 	const bool dbg_enabled = PortalTraverseDbg_Enabled();
 	PortalTraverseDebugStats* dbg = dbg_enabled ? &PortalTraverseDbg_Get() : nullptr;
 	const bool opt_bucket = PortalTraverseDbg_IsOptions(i_options);
@@ -570,6 +880,10 @@ void CDSGraphManager::r_dsgraph_capture_static()
 							++dbg->static_add_root_calls_noopt;
 						}
 					}
+#if defined(USE_DX11) && RENDER == R_R4
+                    if (!RenderContextId() && RImplementation.view_preparation && RImplementation.view_preparation->RenderStatic(
+                        *this, pair.key->root(), frustums.front(), i_mask[fl_normal])) continue;
+#endif
 					add_Static((IRenderVisual*)pair.key->root(), frustums.front(), frustums.front().getMask());
 					continue;
 				}
@@ -623,7 +937,9 @@ void CDSGraphManager::r_dsgraph_capture_lights()
 
 	for (ISpatialShared spatial : lstLights)
 	{
-		if (0 == spatial) continue; spatial->spatial_updatesector();
+		if (0 == spatial) continue;
+		if (R4FullDetailRejectSpatial(spatial.get(), i_mask[CDSGraphManager::fl_normal])) continue;
+		spatial->spatial_updatesector();
 		CSector* sector = (CSector*)spatial->spatial.sector;
 		if (0 == sector) continue;
 
@@ -639,6 +955,9 @@ void CDSGraphManager::r_dsgraph_capture_lights()
 #else
 				if (L->get_LOD() > ps_r2_shadow_lod_min && L->has_light_visible_from_sectors(*this))
 				{
+#if defined(USE_DX11) && RENDER == R_R4
+                    if (LocalLightDebug::active) LocalLightDebug::ParentPassed(*L);
+#endif
 					RImplementation.Lights.add_light(L);
 				}
 #endif
@@ -647,7 +966,7 @@ void CDSGraphManager::r_dsgraph_capture_lights()
 	}
 }
 
-void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
+void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O, const xr_vector<ISpatialShared>* prepared, u64 revision)
 {
 	PROF_EVENT("r_dsgraph_capture_dynamic")
 	const bool dbg_enabled = PortalTraverseDbg_Enabled();
@@ -659,13 +978,40 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 		if (psDeviceFlags.test(rsDrawDynamic))
 		{
 			// Traverse object database
+            u32 queryOptions = i_doptions;
+#if RENDER == R_R1 || RENDER == R_R2
+            const bool thermalCapture = this == &RImplementation.GMBase &&
+                i_mask[CDSGraphManager::fl_normal] &&
+#if RENDER == R_R2
+                RImplementation.scope_heat_collect &&
+#endif
+                RImplementation.Target->IsScopeThermalActive(false);
+            if (thermalCapture)
+                queryOptions |= STYPE_COLLIDEABLE;
+#endif
+
+            bool used_prepared = false;
+            if (prepared)
+            {
+                xrSRWLockGuard guard(&g_SpatialSpace->db_lock, true);
+                if (revision == g_SpatialSpace->query_revision.load(std::memory_order_acquire))
+                {
+                    lstRenderables = *prepared;
+                    used_prepared = true;
+                }
+            }
+            if (!used_prepared)
+            {
 			g_SpatialSpace->q_frustum
 			(
 				lstRenderables,
 				ISpatial_DB::O_ORDERED,
-				i_doptions,
+				queryOptions,
 				i_frustum
 			);
+            }
+            PROF_TAG("Prepared spatial candidates", used_prepared);
+
 			if (dbg)
 			{
 				const u32 spatial_count = u32(lstRenderables.size());
@@ -727,6 +1073,7 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 			{
 				ISpatialShared spatial = lstRenderables[o_it];
 				if (0 == spatial) continue;
+				if (R4FullDetailRejectSpatial(spatial.get(), i_mask[CDSGraphManager::fl_normal])) continue;
 				CSector* sector = (CSector*)spatial->spatial.sector;
 				if (0 == sector) continue;
 
@@ -762,7 +1109,13 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 //					continue;
 //				}
 
-				if(!(spatial->spatial.type & STYPE_RENDERABLE) && !(spatial->spatial.type & STYPE_PARTICLE) && !(spatial->spatial.type & STYPE_RENDERABLESHADOW))
+#if RENDER == R_R1 || RENDER == R_R2
+                IRenderable* thermal = thermalCapture ? spatial->dcast_Renderable() : nullptr;
+                const bool thermalHidden = thermal && thermal->renderable.visual && thermal->GetTransparency() > 0.f;
+#else
+                const bool thermalHidden = false;
+#endif
+				if(!thermalHidden && !(spatial->spatial.type & STYPE_RENDERABLE) && !(spatial->spatial.type & STYPE_PARTICLE) && !(spatial->spatial.type & STYPE_RENDERABLESHADOW))
 					continue;
 				if (!is_sector_visible(sector))
 					continue;
@@ -818,7 +1171,16 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 						if (i_mask[CDSGraphManager::fl_normal] && !(spatial->spatial.type & STYPE_PARTICLE))
 							set_Object(renderable);
 
-						renderable->renderable_Render(dcast_IPortalTraverser());
+                        if (!thermalHidden || (spatial->spatial.type & STYPE_RENDERABLE))
+						    renderable->renderable_Render(dcast_IPortalTraverser());
+#if RENDER == R_R1 || RENDER == R_R2
+                        if (thermalHidden)
+                        {
+                            RImplementation.scope_heat_only = true;
+                            add_Dynamic(renderable->renderable.visual, &renderable->renderable.xform);
+                            RImplementation.scope_heat_only = false;
+                        }
+#endif
 						if (dbg)
 						{
 							++dbg->dynamic_rendered;
@@ -836,6 +1198,10 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 			}
 		}
 	}
+#if defined(USE_DX11) && RENDER == R_R4
+    if (i_mask[fl_normal] && RImplementation.view_preparation)
+        RImplementation.view_preparation->QueueGraph(*this, Device.mView, Device.mProject);
+#endif
 }
 
 void CDSGraphManager::r_dsgraph_capture(bool lights, bool dynamic, CObject* O)

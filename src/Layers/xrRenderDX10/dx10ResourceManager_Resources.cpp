@@ -177,6 +177,7 @@ void CResourceManager::_DeleteState(const SState* state)
 //--------------------------------------------------------------------------------------------------------------
 SPass* CResourceManager::_CreatePass(const SPass& proto, ref_pass* keep_alive)
 {
+	PROF_EVENT("Resources.CreatePass");
 	xrCriticalSectionGuard guard(creationGuard);
 	const u64 hash = pass_hash(proto);
 	auto& candidates = m_pass_index[hash];
@@ -622,6 +623,7 @@ void CResourceManager::_DeleteDecl(const SDeclaration* dcl)
 //--------------------------------------------------------------------------------------------------------------
 R_constant_table* CResourceManager::_CreateConstantTable(R_constant_table& C, ref_ctable* keep_alive)
 {
+	PROF_EVENT("Resources.CreateConstantTable");
 	if (C.empty())		return NULL;
 
 	xrCriticalSectionGuard guard(creationGuard);
@@ -636,7 +638,7 @@ R_constant_table* CResourceManager::_CreateConstantTable(R_constant_table& C, re
 		}
 
 	auto NewElem = xr_new<R_constant_table>(C);
-	//NewElem->_copy(C);
+    NewElem->prepare_lookup();
 	NewElem->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 	v_constant_tables.push_back(NewElem);
 	candidates.push_back(NewElem);
@@ -972,12 +974,17 @@ ref_texture CResourceManager::_CreateTexture(LPCSTR _Name, bool prefetch, LPCSTR
 	{
 		xrCriticalSectionGuard guard(creationGuard);
 		map_TextureIt I = m_textures.find(registryName.c_str());
-		if (I != m_textures.end())
-		{
-			texture = ref_texture(I->second);
-		}
-		else
-		{
+        if (I != m_textures.end())
+        {
+            texture = AcquireTexture(I->second);
+            if (!texture)
+            {
+                I->second->dwFlags &= ~xr_resource_flagged::RF_REGISTERED;
+                m_textures.erase(I);
+            }
+        }
+        if (!texture)
+        {
 			CTexture* T = xr_new<CTexture>();
 			T->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 			m_textures.insert(mk_pair(T->set_name(registryName.c_str()), T));
@@ -1010,16 +1017,30 @@ void CResourceManager::_DeleteTexture(const CTexture* T)
 {
 	// DBG_VerifyTextures	();
 
-	if (0 == (T->dwFlags & xr_resource_flagged::RF_REGISTERED)) return;
 	xrCriticalSectionGuard guard(creationGuard);
+    if (0 == (T->dwFlags & xr_resource_flagged::RF_REGISTERED)) return;
 	LPSTR N = LPSTR(*T->cName);
 	map_Texture::iterator I = m_textures.find(N);
-	if (I != m_textures.end())
+	if (I != m_textures.end() && I->second == T)
 	{
 		m_textures.erase(I);
 		return;
 	}
 	Msg("! ERROR: Failed to find texture surface '%s'", *T->cName);
+}
+
+CTexture* CResourceManager::_FindTexture(LPCSTR _Name)
+{
+	if (!_Name || !_Name[0]) return 0;
+	if (0 == xr_strcmp(_Name, "null")) return 0;
+
+	string_path Name;
+	xr_strcpy(Name, _Name);
+	fix_texture_name(Name);
+
+	xrCriticalSectionGuard guard(creationGuard);
+	map_TextureIt I = m_textures.find(LPSTR(Name));
+	return I != m_textures.end() ? I->second : 0;
 }
 
 #ifdef DEBUG
@@ -1113,6 +1134,7 @@ bool cmp_tl(const std::pair<u32, ref_texture>& _1, const std::pair<u32, ref_text
 
 STextureList* CResourceManager::_CreateTextureList(STextureList& L, ref_texture_list* keep_alive)
 {
+	PROF_EVENT("Resources.CreateTextureList");
 	xrCriticalSectionGuard guard(creationGuard);
 	std::sort(L.begin(), L.end(), cmp_tl);
 	const u64 hash = texture_list_hash(L);

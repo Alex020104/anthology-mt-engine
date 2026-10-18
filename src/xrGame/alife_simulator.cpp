@@ -120,10 +120,12 @@ CALifeSimulator::CALifeSimulator(xrServer* server, shared_str* command_line) :
 	ai().script_engine().LogSourcePrefetchStats();
 	ai().script_engine().ResetLoadProfile();
 	load_part_timer.Start();
+    START_PROFILE("LoadGame.StartGameCallback");
 	functor();
 	const u32 start_game_callback_ms = load_part_timer.GetElapsed_ms();
 	Msg("* [load-session/lua] start_game_callback=%u ms", start_game_callback_ms);
 	ai().script_engine().LogLoadProfile(start_game_callback_ms);
+    STOP_PROFILE;
 
 	load(p.m_game_or_spawn, !xr_strcmp(p.m_new_or_load, "load") ? false : true, !xr_strcmp(p.m_new_or_load, "new"));
 }

@@ -156,6 +156,17 @@ extern ENGINE_API bool EngineShouldSuppressExplicitLuaJITFlush();
 extern ENGINE_API void EngineRecordDeferredFullLuaGC();
 extern ENGINE_API void EngineRecordSuppressedLuaJITFlush();
 
+#if XRCORE_PROFILER == PROFILER_OPTICK
+void ENGINE_API OptickStartupBegin(s64 entryTime, s64 earlyInitFinish);
+void ENGINE_API OptickStartupMenuRendered();
+void ENGINE_API OptickStartupFramePresented();
+void ENGINE_API OptickLoadGameBegin(LPCSTR saveName);
+void ENGINE_API OptickLoadGameStagesFinished();
+void ENGINE_API OptickLoadGameLevelRendered();
+void ENGINE_API OptickLoadGameFramePresented();
+void ENGINE_API OptickLoadGameCancel(LPCSTR reason);
+#endif
+
 //Discord
 struct rpc_info
 {

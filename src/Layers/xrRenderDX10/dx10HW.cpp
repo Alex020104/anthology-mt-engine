@@ -14,6 +14,7 @@
 #pragma warning(default:4995)
 #include "../xrRender/HW.h"
 #include "../../xrEngine/XR_IOConsole.h"
+#include "../../xrEngine/renderdoc_integration.h"
 #include "../../Include/xrAPI/xrAPI.h"
 #include "../xrRender/xrRender_console.h"
 
@@ -568,8 +569,8 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
     }
 
     // create device
-    ID3D11Device* device;
-    ID3D11DeviceContext* context;
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
     R = D3D11CreateDevice(
         nullptr,
         D3D_DRIVER_TYPE_HARDWARE,
@@ -602,6 +603,7 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
             &context);
     }
     R_CHK(R);
+    Msg("[DX11] Device feature level: %s", FeatureLevel >= D3D_FEATURE_LEVEL_11_1 ? "11.1" : "11.0");
 
     R_CHK(device->QueryInterface(&pDevice));
     R_CHK(context->QueryInterface(&pContext));
@@ -641,6 +643,8 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
 
     R_CHK(pContext->QueryInterface(__uuidof(ID3DUserDefinedAnnotation), (void**)&pAnnotation));
     const u32 setupMs = startupTimer.GetElapsed_ms() - factoryMs - deviceMs - swapchainMs;
+
+    renderdoc_set_active_window(pDevice, m_hWnd);
 
 #else
 	R = D3DX10CreateDeviceAndSwapChain(m_pAdapter,

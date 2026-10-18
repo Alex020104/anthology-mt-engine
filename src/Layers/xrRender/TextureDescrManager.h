@@ -51,6 +51,7 @@ private:
 	mutable xrSRWLock m_data_lock;
 
 	static void LoadTHM(LPCSTR initial, map_TD& s_texture_details, map_CS& s_detail_scalers);
+	static void LoadLTX(LPCSTR initial, map_TD& s_texture_details);
 
 public:
 	~CTextureDescrMngr();

@@ -58,7 +58,7 @@ _G.convert_class_name = function(obj)
 	end
 end
 
--- èñïîëüçóåòñÿ äëÿ âûÿâëåíèÿ ñèãíàòóð ôóíêöèé êîòîðûå çàëîæåíû â xr_conditions
+-- Ð¸ÑÐ¿Ð¾Ð»ÑŒÐ·ÑƒÐµÑ‚ÑÑ Ð´Ð»Ñ Ð²Ñ‹ÑÐ²Ð»ÐµÐ½Ð¸Ñ ÑÐ¸Ð³Ð½Ð°Ñ‚ÑƒÑ€ Ñ„ÑƒÐ½ÐºÑ†Ð¸Ð¹ ÐºÐ¾Ñ‚Ð¾Ñ€Ñ‹Ðµ Ð·Ð°Ð»Ð¾Ð¶ÐµÐ½Ñ‹ Ð² xr_conditions
 _G.printf_xrscript = function(fmt, ...)
 	log(debug.traceback(1))
 	printf(fmt, ...)
@@ -263,6 +263,17 @@ _G.throttle = function(func, tg_throttle)
     end
 end
 
+-- Do function once
+_G.doOnce = function(func)
+	local canDo = true
+	return function(...)
+		if canDo then
+			func(...)
+			canDo = false
+		end
+	end
+end
+
 _G.print_tip = function(text, ...)
     local text = tostring(text)
     printf(text, ...)
@@ -410,6 +421,21 @@ _G.sort_func_values_length_ascend = function(t, a, b)
 end
 _G.sort_func_values_length_descend = function(t, a, b)
 	return #t[a] > #t[b]
+end
+
+-- Send additional arguments to axr_main.callback_set
+_G.RegisterScriptCallback = function(name, func_or_userdata, ...)
+	axr_main.callback_set(name, func_or_userdata, ...)
+end
+
+_G.CALLBACKS_PRE = 0
+_G.CALLBACKS_NORMAL = 1
+_G.CALLBACKS_POST = 2
+_G.RegisterScriptCallbackPre = function(name, func_or_userdata, before_funcs, after_funcs, ...)
+	axr_main.callback_set(name, func_or_userdata, before_funcs, after_funcs, CALLBACKS_PRE, ...)
+end
+_G.RegisterScriptCallbackPost = function(name, func_or_userdata, before_funcs, after_funcs, ...)
+	axr_main.callback_set(name, func_or_userdata, before_funcs, after_funcs, CALLBACKS_POST, ...)
 end
 
 -- Additional params for callbacks
@@ -1404,13 +1430,20 @@ _G.MinHeap = function(order, copyFrom)
 	end
 
 	self.rebuild = function(self)
-		empty_table(self.__indices)
-		local n = #self.__data
+		local heap = self.__data
+		local indices = self.__indices
+		empty_table(indices)
+		local n = #heap
 	    
 	    -- Floyd's Build-Heap algorithm:
 	    -- We start from the last non-leaf node (n/2) and sift down to the root.
 	    for i = math_floor(n / 2), 1, -1 do
 	        self:sift_down_index(i)
+	    end
+
+	    -- Ensure every node has an index, including leaves that never moved during heapify.
+	    for i = 1, n do
+            indices[heap[i]] = i
 	    end
 
 	    return self

@@ -1,7 +1,9 @@
 #include "stdafx.h"
+#include "RenderDimensions.h"
 
 void CRenderTarget::phase_nightvision()
 {
+    PROF_EVENT("RenderTarget.NightVision");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -68,6 +70,7 @@ void CRenderTarget::phase_nightvision()
 //crookr
 void CRenderTarget::phase_fakescope()
 {
+    PROF_EVENT("RenderTarget.FakeScope");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -171,6 +174,7 @@ void CRenderTarget::phase_fakescope()
 //--DSR-- HeatVision_start
 void CRenderTarget::phase_heatvision()
 {
+    PROF_EVENT("RenderTarget.HeatVision");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);

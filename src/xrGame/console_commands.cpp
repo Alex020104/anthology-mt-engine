@@ -10,6 +10,7 @@
 #include "script_debugger.h"
 #include "ai_debug.h"
 #include "alife_simulator.h"
+#include "alife_spawn_registry.h"
 #include "game_cl_base.h"
 #include "game_cl_single.h"
 #include "game_sv_single.h"
@@ -34,12 +35,14 @@
 #include "ui/UIOptConCom.h"
 #include "UIGameSP.h"
 #include "ui/UIActorMenu.h"
+#include "../xrSound/Sound.h"
 #include "ui/UIStatic.h"
 #include "zone_effector.h"
 #include "GameTask.h"
 #include "MainMenu.h"
 #include "saved_game_wrapper.h"
 #include "level_graph.h"
+#include "game_graph.h"
 //#include "../xrEngine/resourcemanager.h"
 //#include "../xrEngine/doug_lea_memory_allocator.h"
 #include "cameralook.h"
@@ -79,6 +82,8 @@ extern u64 g_qwEStartGameTime;
 ENGINE_API
 extern float psHUD_FOV_def;
 extern float psSqueezeVelocity;
+extern float g_step_sound_distance;
+extern float g_step_particle_distance;
 
 // Lua
 extern int psLUA_GCSTEP;
@@ -92,6 +97,7 @@ extern int psLua_ParallelGCPause;
 extern int psLua_ParallelGCStepMul;
 extern BOOL psLua_ParallelGC_debug;
 extern BOOL psLua_ParallelGC;
+extern BOOL psLuaGCAlways;
 extern BOOL lua_debug;
 BOOL lua_busy_hands_debug = TRUE;
 
@@ -106,6 +112,7 @@ extern int g_dwInputUpdateDelta;
 extern	BOOL	g_ShowAnimationInfo;
 #endif // DEBUG
 extern BOOL g_bShowHitSectors;
+extern int g_npc_relaxed_idle_mode;
 //extern	BOOL	g_bDebugDumpPhysicsStep	;
 extern ESingleGameDifficulty g_SingleGameDifficulty;
 extern BOOL g_show_wnd_rect2;
@@ -142,6 +149,11 @@ extern BOOL g_allow_silencer_hide_tracer;
 extern int showActorBody; //leer
 extern BOOL disableActorBodyRotationDelay; //leer
 
+extern BOOL pseudogiantDodgeWhileFalling; // Verdatim
+extern BOOL AllowAccelDuringLookOut; // Verdatim
+extern BOOL scale_hud_motion_marks_by_speed; // Verdatim
+extern BOOL npc_dont_drop_weapons_on_death; // Verdatim
+
 //demonized: new console vars
 extern BOOL firstPersonDeath;
 extern BOOL pseudogiantCanDamageObjects;
@@ -152,6 +164,7 @@ namespace crash_saving {
 }
 extern BOOL pda_map_zoom_in_to_mouse;
 extern BOOL pda_map_zoom_out_to_mouse;
+extern BOOL pda_show_map_labels;
 extern BOOL mouseWheelChangeWeapon;
 extern BOOL mouseWheelInvertZoom;
 extern BOOL mouseWheelInvertChangeWeapons;
@@ -181,6 +194,7 @@ extern BOOL mt_UpdateWeaponSounds;
 extern BOOL mt_Scheduler;
 extern BOOL mt_FrameProfile;
 extern BOOL mt_FrameProfileDetailed;
+extern BOOL mt_SchedulerRT;
 extern BOOL mt_calc_bones;
 extern BOOL mt_ph_commander;
 extern BOOL mt_TaskManager;
@@ -217,6 +231,24 @@ extern BOOL legs_render_attachments_shadow;
 extern BOOL r__actor_shadow_in_demo_record;
 
 extern int enemy_manager_useful_cache_time;
+
+extern u32 ENEMY_INERTIA_TIME_TO_SOMEBODY;
+extern u32 ENEMY_INERTIA_TIME_TO_ACTOR;
+extern u32 ENEMY_INERTIA_TIME_FROM_ACTOR;
+extern u32 ENEMY_INERTIA_TIME_SEARCH;
+
+extern float g_ai_vision_speed_boost;
+extern float g_ai_reload_threshold;
+extern float g_ai_aim_fire_angle;
+int g_ai_hold_position_inertia_base = 1000;
+int g_ai_hold_position_inertia_random = 2000;
+int g_ai_grenade_throw_delay_base = 1000;
+int g_ai_grenade_throw_delay_step = 500;
+extern u32 g_ai_aim_inertia_time;
+extern u32 g_ai_aim_queue_inertia_time;
+extern float g_ai_danger_ricochet_mult;
+BOOL g_ai_move_to_cover_run = FALSE;
+BOOL g_ai_enhanced_vision = FALSE;
 
 extern CrosshairSettings g_crosshair_camera_near;
 extern CrosshairSettings g_crosshair_camera_far;
@@ -286,7 +318,10 @@ extern float movement_manager_move_along_path_query_pos_threshold_sqr;
 ENGINE_API extern float g_console_sensitive;
 
 extern BOOL g_auto_reload;
+BOOL g_launcher_dynamic_range_zoom = TRUE;
 u32 g_dead_body_collision = 1;
+
+extern int RESTRICTION_REBUILD_SMOOTH_FRAMES;
 
 xr_token dead_body_collision_tokens[] =
 {
@@ -404,6 +439,21 @@ static void full_memory_stats(bool assert = true)
 	dump_file_mappings();
 #endif // DEBUG
 }
+
+class CCC_LuaGCAlways : public CCC_Integer
+{
+public:
+    CCC_LuaGCAlways(LPCSTR name, int* value, int minimum, int maximum)
+        : CCC_Integer(name, value, minimum, maximum) {}
+    void Execute(LPCSTR args) override
+    {
+        Device.WaitForGameLogic();
+        CCC_Integer::Execute(args);
+        // Main owns the VM here. Re-enable automatic GC immediately on disable.
+        if (!psLuaGCAlways)
+            Device.ResetLuaGCState();
+    }
+};
 
 class CCC_MemStats : public IConsole_Command
 {
@@ -946,6 +996,7 @@ extern float offsetZ;
 extern float viewportNearOffset;
 extern int firstPersonDeathPositionSmoothing;
 extern int firstPersonDeathDirectionSmoothing;
+extern float firstPersonDeathHeadScale;
 
 class CCC_FPDDirectionOffset : public CCC_Vector3
 {
@@ -1004,9 +1055,33 @@ bool valid_saved_game_name(LPCSTR file_name)
 	return (true);
 }
 
-void get_files_list(xr_vector<shared_str>& files, LPCSTR dir, LPCSTR file_ext)
+void get_files_list(xr_vector<shared_str>& files, LPCSTR dir, LPCSTR file_ext, bool force_rescan = false)
 {
 	VERIFY(dir && file_ext);
+
+	struct SFilesListCache
+	{
+		shared_str dir;
+		shared_str ext;
+		xr_vector<shared_str> files;
+		u32 updated_at = 0;
+	};
+
+	static SFilesListCache cache;
+
+	// Tooltips call this every frame while typing. Avoid forcing a full file-system
+	// rescan each frame by caching results for a short period.
+	constexpr u32 kCacheLifetimeMs = 10000;
+
+	const bool same_request = (cache.dir == dir) && (cache.ext == file_ext);
+	const bool cache_valid = !force_rescan && same_request && (Device.dwTimeGlobal >= cache.updated_at) &&
+		(Device.dwTimeGlobal - cache.updated_at < kCacheLifetimeMs);
+	if (cache_valid)
+	{
+		files = cache.files;
+		return;
+	}
+
 	files.clear_not_free();
 
 	FS_Path* P = FS.get_path(dir);
@@ -1033,9 +1108,49 @@ void get_files_list(xr_vector<shared_str>& files, LPCSTR dir, LPCSTR file_ext)
 		files.push_back(fn);
 	}
 	FS.m_Flags.set(CLocatorAPI::flNeedCheck, FALSE);
+
+	cache.dir = dir;
+	cache.ext = file_ext;
+	cache.files = files;
+	cache.updated_at = Device.dwTimeGlobal;
 }
 
 #include "UIGameCustom.h"
+
+// Writes the loaded spawn registry (overlays and level packs applied) as an all.spawn file into $app_data_root$.
+class CCC_SpawnOverlaysDump : public IConsole_Command
+{
+public:
+	CCC_SpawnOverlaysDump(LPCSTR N) : IConsole_Command(N)
+	{
+	}
+
+	virtual void Execute(LPCSTR args)
+	{
+		if (!ai().get_alife())
+		{
+			Msg("! alife is not loaded");
+			return;
+		}
+		if (!*args)
+		{
+			Msg("! usage: spawn_overlays_dump <file name>");
+			return;
+		}
+
+		string_path file_name;
+		FS.update_path(file_name, "$app_data_root$", args);
+		IWriter* writer = FS.w_open(file_name);
+		if (!writer)
+		{
+			Msg("! cannot open %s for writing", file_name);
+			return;
+		}
+		const_cast<CALifeSpawnRegistry&>(ai().alife().spawns()).save_spawn(*writer);
+		FS.w_close(writer);
+		Msg("* spawn written to %s", file_name);
+	}
+};
 
 class CCC_ALifeSave : public IConsole_Command
 {
@@ -1113,6 +1228,9 @@ public:
 #ifdef DEBUG
 		Msg("Screenshot overhead : %f milliseconds", timer.GetElapsed_sec()*1000.f);
 #endif
+		// Keep "save"/"load" autocomplete current right after saving.
+		xr_vector<shared_str> refreshed_saves;
+		get_files_list(refreshed_saves, "$game_saves$", SAVE_EXTENSION, true);
 	} //virtual void Execute
 
 	virtual void fill_tips(vecTips& tips, u32 mode)
@@ -1161,6 +1279,10 @@ public:
 			return;
 		}
 
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickLoadGameBegin(saved_game);
+#endif
+        PROF_EVENT("LoadGame.SendLoadRequest");
 		/*     moved to level_network_messages.cpp
 		CSavedGameWrapper			wrapper(args);
 		if (wrapper.level_id() == ai().level_graph().level_id()) {
@@ -2585,6 +2707,7 @@ void CCC_RegisterCommands()
 #endif // DEBUG
 
 	CMD1(CCC_ALifeSave, "save"); // save game
+	CMD1(CCC_SpawnOverlaysDump, "spawn_overlays_dump");
 	CMD1(CCC_ALifeLoadFrom, "load"); // load game from ...
 	CMD1(CCC_LoadLastSave, "load_last_save"); // load last saved game from ...
 
@@ -2617,6 +2740,10 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Float, "hud_fov", &psHUD_FOV_def, 0.1f, 1.0f);
 	CMD4(CCC_Float, "fov", &g_fov, 5.0f, 180.0f);
 	CMD4(CCC_Float, "viewport_near", &Device.ViewportNear, 0.0f, 1.0f);
+    CMD4(CCC_Float, "step_sound_distance", &g_step_sound_distance, 10.0f, 100.0f);
+	CMD4(CCC_Float, "step_particle_distance", &g_step_particle_distance, 10.0f, 100.0f);
+    CMD4(CCC_Float, "snd_max_distance_multiplier", &psSoundMaxDistanceMultiplier, 0.2f, 2.0f);
+	CMD4(CCC_Float, "snd_max_ai_distance_multiplier", &psSoundMaxAIDistanceMultiplier, 0.2f, 2.0f);
 	//#endif // DEBUG
 
 	// Demo
@@ -2670,6 +2797,7 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "lua_parallel_gc_debug", &psLua_ParallelGC_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_parallel_gc", &psLua_ParallelGC, 0, 1);
 	CMD4(CCC_Integer, "load_defer_full_lua_gc", &g_load_defer_full_lua_gc, 0, 1);
+    CMD4(CCC_LuaGCAlways, "lua_gc_always", &psLuaGCAlways, 0, 1);
 
 	CMD4(CCC_Integer, "lua_debug", &lua_debug, 0, 1);
 	CMD4(CCC_Integer, "lua_use_functor_cache", &lua_use_functor_cache, 0, 1);
@@ -2816,6 +2944,97 @@ void CCC_RegisterCommands()
 
     CMD4(CCC_Integer, "g_enemy_manager_useful_cache_time", &enemy_manager_useful_cache_time, -1, 500);
 
+    CMD4(CCC_Integer, "ai_enemy_inertia_time_to_somebody", (int*)&ENEMY_INERTIA_TIME_TO_SOMEBODY, 0, 120000);
+    CMD4(CCC_Integer, "ai_enemy_inertia_time_to_actor", (int*)&ENEMY_INERTIA_TIME_TO_ACTOR, 0, 120000);
+    CMD4(CCC_Integer, "ai_enemy_inertia_time_from_actor", (int*)&ENEMY_INERTIA_TIME_FROM_ACTOR, 0, 120000);
+    CMD4(CCC_Integer, "ai_search_inertia_time", (int*)&ENEMY_INERTIA_TIME_SEARCH, 0, 120000);
+
+    CMD4(CCC_Integer, "ai_hold_position_inertia_base", &g_ai_hold_position_inertia_base, 0, 120000);
+    CMD4(CCC_Integer, "ai_hold_position_inertia_random", &g_ai_hold_position_inertia_random, 0, 120000);
+    CMD4(CCC_Integer, "ai_grenade_throw_delay_base", &g_ai_grenade_throw_delay_base, 0, 10000);
+    CMD4(CCC_Integer, "ai_grenade_throw_delay_step", &g_ai_grenade_throw_delay_step, 0, 10000);
+
+    CMD4(CCC_Integer, "ai_aim_inertia_time", (int*)&g_ai_aim_inertia_time, 0, 10000);
+    CMD4(CCC_Integer, "ai_aim_queue_inertia_time", (int*)&g_ai_aim_queue_inertia_time, 0, 10000);
+    // Danger perception multipliers: 1.0 = original engine behaviour, 0.0 = disabled, 5.0 = 5x urgency
+    extern float g_ai_danger_ricochet_mult;
+    extern float g_ai_danger_attack_sound_mult;
+    extern float g_ai_danger_entity_attacked_mult;
+    extern float g_ai_danger_entity_death_mult;
+    extern float g_ai_danger_corpse_mult;
+    extern float g_ai_danger_attacked_mult;
+    extern float g_ai_danger_grenade_mult;
+    extern float g_ai_danger_enemy_sound_mult;
+    CMD4(CCC_Float, "ai_danger_ricochet_mult",         &g_ai_danger_ricochet_mult,         0.f, 5.f);
+    CMD4(CCC_Float, "ai_danger_attack_sound_mult",     &g_ai_danger_attack_sound_mult,     0.f, 5.f);
+    CMD4(CCC_Float, "ai_danger_entity_attacked_mult",  &g_ai_danger_entity_attacked_mult,  0.f, 5.f);
+    CMD4(CCC_Float, "ai_danger_entity_death_mult",     &g_ai_danger_entity_death_mult,     0.f, 5.f);
+    CMD4(CCC_Float, "ai_danger_corpse_mult",           &g_ai_danger_corpse_mult,           0.f, 5.f);
+    CMD4(CCC_Float, "ai_danger_attacked_mult",         &g_ai_danger_attacked_mult,         0.f, 5.f);
+    CMD4(CCC_Float, "ai_danger_grenade_mult",          &g_ai_danger_grenade_mult,          0.f, 5.f);
+    CMD4(CCC_Float, "ai_danger_enemy_sound_mult",      &g_ai_danger_enemy_sound_mult,      0.f, 5.f);
+
+    CMD4(CCC_Integer, "ai_move_to_cover_run", &g_ai_move_to_cover_run, 0, 1);
+    CMD4(CCC_Integer, "ai_enhanced_vision", &g_ai_enhanced_vision, 0, 1);
+
+    CMD4(CCC_Float, "ai_vision_speed_boost", &g_ai_vision_speed_boost, 0.1f, 10.0f);
+    CMD4(CCC_Float, "ai_reload_threshold", &g_ai_reload_threshold, 0.01f, 1.0f);
+    CMD4(CCC_Float, "ai_aim_fire_angle", &g_ai_aim_fire_angle, 0.0f, PI);
+
+    extern u32   g_ai_fire_make_sense_interval;
+    extern float g_ai_fire_range_extension;
+    extern float g_ai_fire_max_height_diff;
+    extern float g_ai_fire_min_dist;
+    extern float g_ai_cover_danger_radius;
+    extern u32   g_ai_cover_danger_time;
+    extern float g_ai_cover_detour_radius;
+    extern u32   g_ai_cover_detour_time;
+    extern float g_ai_cover_unknown_radius;
+    extern u32   g_ai_cover_unknown_time;
+    // 0 = fire only while enemy visible; default 10000ms; max 20000ms (20s is already extreme)
+    CMD4(CCC_Integer, "ai_fire_make_sense_interval", (int*)&g_ai_fire_make_sense_interval, 0, 20000);
+    // extra metres past pick_distance where suppression fire still makes sense; default 2.5m
+    CMD4(CCC_Float,   "ai_fire_range_extension",     &g_ai_fire_range_extension,           0.f, 10.f);
+    // max vertical gap between NPC and enemy for fire to make sense; default 2.0m (~2 floors max)
+    CMD4(CCC_Float,   "ai_fire_max_height_diff",     &g_ai_fire_max_height_diff,           0.f, 8.f);
+    // minimum pick_distance required for fire to make sense; default 2.5m
+    CMD4(CCC_Float,   "ai_fire_min_dist",            &g_ai_fire_min_dist,                  0.f, 20.f);
+    // cover danger zone radius/duration when NPC is shot in cover; default 3.0m / 120s
+    CMD4(CCC_Float,   "ai_cover_danger_radius",      &g_ai_cover_danger_radius,            0.f, 15.f);
+    CMD4(CCC_Integer, "ai_cover_danger_time",        (int*)&g_ai_cover_danger_time,        0, 300000);
+    // cover danger zone when NPC abandons cover to flank; default 5.0m / 120s
+    CMD4(CCC_Float,   "ai_cover_detour_radius",      &g_ai_cover_detour_radius,            0.f, 15.f);
+    CMD4(CCC_Integer, "ai_cover_detour_time",        (int*)&g_ai_cover_detour_time,        0, 300000);
+    // cover danger zone on unknown threat (grenade, sound); default 5.0m / 120s
+    CMD4(CCC_Float,   "ai_cover_unknown_radius",     &g_ai_cover_unknown_radius,           0.f, 15.f);
+    CMD4(CCC_Integer, "ai_cover_unknown_time",       (int*)&g_ai_cover_unknown_time,       0, 300000);
+
+    extern float g_ai_close_move_distance;
+    extern u32   g_ai_crouch_look_out_delta;
+    extern u32   g_ai_wait_in_smart_cover_time;
+    // 0 = always in-place movement; default 1.5m
+    CMD4(CCC_Float,   "ai_close_move_distance",      &g_ai_close_move_distance,            0.f,  6.f);
+
+    extern float g_ai_cover_search_near_radius;
+    extern float g_ai_cover_search_far_radius;
+    extern float g_ai_cover_pistol_max_dist;
+    extern float g_ai_cover_shotgun_max_dist;
+    extern float g_ai_cover_sniper_min_dist;
+    extern float g_ai_cover_default_max_dist;
+    // min 1.0 ensures search radius is never degenerate; default 10m / 30m
+    CMD4(CCC_Float, "ai_cover_search_near_radius", &g_ai_cover_search_near_radius, 1.f,  30.f);
+    CMD4(CCC_Float, "ai_cover_search_far_radius",  &g_ai_cover_search_far_radius,  1.f,  80.f);
+    // min 3.0 = MIN_SUITABLE_ENEMY_DISTANCE; below that the cover evaluator gets degenerate inputs
+    CMD4(CCC_Float, "ai_cover_pistol_max_dist",    &g_ai_cover_pistol_max_dist,    3.f,  50.f);
+    CMD4(CCC_Float, "ai_cover_shotgun_max_dist",   &g_ai_cover_shotgun_max_dist,   3.f,  20.f);
+    // 0.0 = use engine default min (3m); max 80m covers any realistic sniper scenario
+    CMD4(CCC_Float, "ai_cover_sniper_min_dist",    &g_ai_cover_sniper_min_dist,    0.f,  80.f);
+    CMD4(CCC_Float, "ai_cover_default_max_dist",   &g_ai_cover_default_max_dist,   3.f,  50.f);
+    // 0 = randomize every LookOut init; default 5000ms; max 12000ms (~12s is very cautious)
+    CMD4(CCC_Integer, "ai_crouch_look_out_delta",    (int*)&g_ai_crouch_look_out_delta,    0,    12000);
+    // 0 = leave immediately; default 30000ms (30s); max 120000ms (2min)
+    CMD4(CCC_Integer, "ai_wait_in_smart_cover_time", (int*)&g_ai_wait_in_smart_cover_time, 0,    120000);
+
 	CMD3(CCC_Mask, "g_firepos", &psActorFlags, AF_FIREPOS);
 	CMD3(CCC_Mask, "g_firepos_zoom", &psActorFlags, AF_FIREPOS_ZOOM);
 	CMD3(CCC_Mask, "g_firedir_third_person", &psActorFlags, AF_FIREDIR_THIRD_PERSON);
@@ -2836,6 +3055,7 @@ void CCC_RegisterCommands()
 	CrosshairFarCommands(g_crosshair_device_far, "device_far");
 
 	CMD4(CCC_Integer, "g_decouple_horz_recoil", &g_decouple_horz_recoil, 0, 1);
+	CMD4(CCC_Integer, "g_launcher_dynamic_range_zoom", &g_launcher_dynamic_range_zoom, 0, 1);
 	CMD4(CCC_Integer, "g_use_non_linear_inertia", &g_use_non_linear_inertia, 0, 1);
 
     extern XRPHYSICS_API BOOL g_clamp_actor_camera_collision;
@@ -3072,7 +3292,17 @@ void CCC_RegisterCommands()
 
 	CMD4(CCC_Integer, "pseudogiant_can_damage_objects_on_stomp", &pseudogiantCanDamageObjects, 0, 1);
 
+    CMD4(CCC_Integer, "pseudogiant_dodge_stomp_while_falling", &pseudogiantDodgeWhileFalling, 0, 1); // Verdatim
+
+    CMD4(CCC_Integer, "allow_accel_during_lookout", &AllowAccelDuringLookOut, 0, 1); // Verdatim
+
+    CMD4(CCC_Integer, "scale_hud_motion_marks_by_speed", &scale_hud_motion_marks_by_speed, 0, 1); // Verdatim
+
+
+    CMD4(CCC_Integer, "npc_dont_drop_weapons_on_death", &npc_dont_drop_weapons_on_death, 0, 1); // Verdatim
+
 	CMD4(CCC_Integer, "telekinetic_objects_include_corpses", &g_telekinetic_objects_include_corpses, 0, 1); // Tosox
+	CMD4(CCC_Integer, "npc_relaxed_idle_mode", &g_npc_relaxed_idle_mode, 0, 2);
 
 	CMD4(CCC_Integer, "allow_weapon_control_inertion_factor", &g_allow_weapon_control_inertion_factor, 0, 1); // momopate
 	CMD4(CCC_Integer, "allow_outfit_control_inertion_factor", &g_allow_outfit_control_inertion_factor, 0, 1);
@@ -3091,7 +3321,8 @@ void CCC_RegisterCommands()
 	CMD3(CCC_Mask, "blend_move_anims", &psDeviceFlags2, rsBlendMoveAnims);
 
 	CMD4(CCC_Integer, "mt_update_weapon_sounds", &mt_UpdateWeaponSounds, 0, 1);
-	CMD4(CCC_Integer, "mt_scheduler", &mt_Scheduler, 0, 1);
+    CMD4(CCC_Integer, "mt_scheduler", &mt_Scheduler, 0, 1);
+    CMD4(CCC_Integer, "mt_schedulerRT", &mt_SchedulerRT, 0, 1);
 	CMD4(CCC_Integer, "mt_level_call", &mt_ph_commander, 0, 1);
     CMD4(CCC_Integer, "mt_calc_bones", &mt_calc_bones, 0, 1);
     CMD4(CCC_Integer, "mt_task_manager", &mt_TaskManager, 0, 1);
@@ -3119,6 +3350,8 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "g_npcs_look_at_actor", &NPCsLookAtActor, 0, 1);
 	CMD4(CCC_Float, "g_npcs_look_at_actor_min_distance", &NPCsLookAtActorMinDistance, 1.f, 8.f);
 	CMD4(CCC_Integer, "g_interrupt_fire_on_aim_toggle", &interruptFireOnAimToggle, 0, 1);
+
+    CMD4(CCC_Integer, "g_restriction_rebuild_frames", &RESTRICTION_REBUILD_SMOOTH_FRAMES, 5, 60);
 
 	// demonized: Restores fun physics bugs like lift
 	CMD4(CCC_Integer, "fun_allowed", &fun_allowed, 0, 1);
@@ -3186,7 +3419,8 @@ void CCC_RegisterCommands()
 	CMD1(CCC_FPDPositionOffset, "first_person_death_position_offset");
 	CMD4(CCC_Integer, "first_person_death_position_smoothing", &firstPersonDeathPositionSmoothing, 1, 30);
 	CMD4(CCC_Integer, "first_person_death_direction_smoothing", &firstPersonDeathDirectionSmoothing, 1, 60);
-	CMD4(CCC_Float, "first_person_death_near_plane_offset", &viewportNearOffset, -.1f, .5f);
+    CMD4(CCC_Float, "first_person_death_near_plane_offset", &viewportNearOffset, -.1f, .5f);
+    CMD4(CCC_Float, "first_person_death_head_scale", &firstPersonDeathHeadScale, 1.f, 10.f);
 
 	//legs 
 
@@ -3195,6 +3429,7 @@ void CCC_RegisterCommands()
 	// PDA commands
 	CMD4(CCC_Integer, "pda_map_zoom_in_to_mouse", &pda_map_zoom_in_to_mouse, 0, 1);
 	CMD4(CCC_Integer, "pda_map_zoom_out_to_mouse", &pda_map_zoom_out_to_mouse, 0, 1);
+	CMD4(CCC_Integer, "pda_show_map_labels", &pda_show_map_labels, 0, 1);
 
 	// Mouse Wheel
 	CMD4(CCC_Integer, "mouse_wheel_change_weapon", &mouseWheelChangeWeapon, 0, 1);

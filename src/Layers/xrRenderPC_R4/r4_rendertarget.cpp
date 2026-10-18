@@ -1647,6 +1647,12 @@ CRenderTarget::CRenderTarget()
 
 CRenderTarget::~CRenderTarget()
 {
+    native_quad_geometry.destroy();
+    if (native_quad_vertices) HW.stats_manager.decrement_stats_vb(native_quad_vertices);
+    if (native_quad_indices) HW.stats_manager.decrement_stats_ib(native_quad_indices);
+    _RELEASE(native_quad_vertices);
+    _RELEASE(native_quad_indices);
+
 	g_main_temporal_upscaler_active = false;
 	g_main_taa_render_size.set(float(Device.dwWidth), float(Device.dwHeight));
 	g_AnthologyUpscaler.Shutdown();
@@ -1796,7 +1802,12 @@ CRenderTarget::~CRenderTarget()
 
 void CRenderTarget::reset_light_marker(bool bResetStencil)
 {
-	dwLightMarkerID = 5;
+    reset_light_marker(dwLightMarkerID, bResetStencil);
+}
+
+void CRenderTarget::reset_light_marker(u32& marker, bool bResetStencil)
+{
+    marker = 5;
 	if (bResetStencil)
 	{
 		u32 Offset;
@@ -1818,19 +1829,25 @@ void CRenderTarget::reset_light_marker(bool bResetStencil)
 		RCache.Vertex.Unlock(4, g_combine->vb_stride);
 		RCache.set_Element(s_occq->E[2]);
 		RCache.set_Geometry(g_combine);
+        if (RenderContextId()) RCache.set_Vertices(RCache.Vertex.Buffer(), g_combine->vb_stride);
 		RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 	}
 }
 
 void CRenderTarget::increment_light_marker()
 {
-	dwLightMarkerID += 2;
+    increment_light_marker(dwLightMarkerID);
+}
+
+void CRenderTarget::increment_light_marker(u32& marker)
+{
+    marker += 2;
 
 	//if (dwLightMarkerID>10)
 	const u32 iMaxMarkerValue = RImplementation.o.dx10_msaa ? 127 : 255;
 
-	if (dwLightMarkerID > iMaxMarkerValue)
-		reset_light_marker(true);
+	if (marker > iMaxMarkerValue)
+        reset_light_marker(marker, true);
 }
 
 bool CRenderTarget::need_to_render_sunshafts()
@@ -1871,4 +1888,47 @@ bool CRenderTarget::use_minmax_sm_this_frame()
 	default:
 		return false;
 	}
+}
+
+bool CRenderTarget::DrawNativeScreenQuad(const ref_selement& element, float width, float height)
+{
+    PROF_EVENT("Render.Fullscreen.NativeQuad");
+    if (!element || !_valid(width) || !_valid(height) || width <= 0.f || height <= 0.f)
+        return false;
+    if (!native_quad_geometry || native_quad_width != width || native_quad_height != height)
+    {
+        PROF_EVENT("Render.Fullscreen.CreateQuad");
+        native_quad_geometry.destroy();
+        if (native_quad_vertices) HW.stats_manager.decrement_stats_vb(native_quad_vertices);
+        if (native_quad_indices) HW.stats_manager.decrement_stats_ib(native_quad_indices);
+        _RELEASE(native_quad_vertices);
+        _RELEASE(native_quad_indices);
+        FVF::TL vertices[4];
+        const u32 color = color_rgba(0, 0, 0, 255);
+        vertices[0].set(0.f, height, EPS_S, 1.f, color, 0.f, 1.f);
+        vertices[1].set(0.f, 0.f, EPS_S, 1.f, color, 0.f, 0.f);
+        vertices[2].set(width, height, EPS_S, 1.f, color, 1.f, 1.f);
+        vertices[3].set(width, 0.f, EPS_S, 1.f, color, 1.f, 0.f);
+        const u16 indices[6] = {0, 1, 2, 2, 1, 3};
+        D3D11_BUFFER_DESC desc{};
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.ByteWidth = sizeof(vertices);
+        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA data{};
+        data.pSysMem = vertices;
+        if (FAILED(HW.pDevice->CreateBuffer(&desc, &data, &native_quad_vertices))) return false;
+        HW.stats_manager.increment_stats_vb(native_quad_vertices);
+        desc.ByteWidth = sizeof(indices);
+        desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        data.pSysMem = indices;
+        if (FAILED(HW.pDevice->CreateBuffer(&desc, &data, &native_quad_indices))) return false;
+        HW.stats_manager.increment_stats_ib(native_quad_indices);
+        native_quad_geometry.create(FVF::F_TL, native_quad_vertices, native_quad_indices);
+        native_quad_width = width;
+        native_quad_height = height;
+    }
+    RCache.set_Element(element._get());
+    RCache.set_Geometry(native_quad_geometry);
+    RCache.Render(D3DPT_TRIANGLELIST, 0, 0, 4, 0, 2);
+    return true;
 }

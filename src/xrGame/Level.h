@@ -353,6 +353,9 @@ public:
 	void __stdcall script_gc(); // GC-cycle
     static int LuaGC(); // GC that will called from Device via Device.LuaGC
     static void LuaGCFull(); // owner-thread full GC used to finish a load session
+    static void LuaGCPrepare(bool always);
+    static LuaGCInfo LuaGCReadInfo();
+    bool RestoreLuaGCBindings() override;
     static void LuaGCDebug(); // GC that will called from Device via Device.LuaGCDebug
 	IC CPHCommander& ph_commander();
 	IC CPHCommander& ph_commander_scripts();

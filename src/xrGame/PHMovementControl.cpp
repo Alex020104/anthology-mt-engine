@@ -66,6 +66,7 @@ CPHMovementControl::CPHMovementControl(CObject* parent)
 	fActualVelocity = 0;
 	m_fGroundDelayFactor = 1.f;
 	gcontact_HealthLost = 0;
+    gcontact_Initiator = nullptr;
 
 	fContactSpeed = 0.f;
 	fAirControlParam = 0.f;
@@ -80,10 +81,7 @@ CPHMovementControl::CPHMovementControl(CObject* parent)
 CPHMovementControl::~CPHMovementControl(void)
 {
 	if (m_character)
-	{
 		m_character->Destroy();
-        m_character->SetPhysicsRefObject(NULL);
-	}
 	DeleteCharacterObject();
 	phcapture_destroy(m_capture);
 }
@@ -168,8 +166,9 @@ void CPHMovementControl::Calculate(Fvector& vAccel, const Fvector& camDir, float
 	UpdateCollisionDamage();
 
 	ICollisionDamageInfo* cdi = CollisionDamageInfo();
-	if (cdi && cdi->HitCallback() && m_character->PhysicsRefObject())
-		cdi->HitCallback()->call(m_character->PhysicsRefObject(), fMinCrashSpeed, fMaxCrashSpeed, fContactSpeed, gcontact_HealthLost, cdi);
+	ICollisionHitCallback* hit_callback = cdi ? cdi->HitCallback() : nullptr;
+	if (hit_callback)
+		hit_callback->call(gcontact_Initiator, fMinCrashSpeed, fMaxCrashSpeed, fContactSpeed, gcontact_HealthLost, cdi);
 
 	TraceBorder(previous_position);
 	CheckEnvironment(vPosition);
@@ -182,6 +181,7 @@ void CPHMovementControl::UpdateCollisionDamage()
 	fContactSpeed = 0.f;
 	gcontact_HealthLost = 0;
 	gcontact_Power = 0;
+    gcontact_Initiator = nullptr;
 	const ICollisionDamageInfo* di = m_character->CollisionDamageInfo();
 	fContactSpeed = di->ContactVelocity();
 
