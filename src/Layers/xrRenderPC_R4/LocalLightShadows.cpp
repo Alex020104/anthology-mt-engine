@@ -686,6 +686,8 @@ void LocalLightShadows::Record()
     for (bool point : {true, false})
         for (auto* item : point ? state->package->v_point : state->package->v_spot)
         {
+            // Resolve on owner before freezing visibility for the recording lane.
+            item->vis_update();
             if (!item->vis.visible) continue;
             state->unshadowed.push_back({item, {}, point});
             if (!RImplementation.Target->prepare_light_accumulation(state->unshadowed.back().illumination, *item, point))
