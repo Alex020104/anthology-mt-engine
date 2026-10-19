@@ -125,9 +125,8 @@ void light::vis_update()
     if (hr != S_OK)
     {
         vis.frame2test = frame + 1;
-        if (hr == S_FALSE)
-            vis.visible = true; // Anthology keeps an unfinished query conservative.
-        else
+        // An unfinished query keeps the last confirmed visibility result.
+        if (hr != S_FALSE)
         {
             // Fail-open on timeout/device/query errors to avoid popping.
             vis.visible = true;

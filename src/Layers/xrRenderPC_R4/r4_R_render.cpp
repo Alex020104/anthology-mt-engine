@@ -420,7 +420,7 @@ void CRender::Render()
 		EndRenderPhase(lightVisibilityPhase);
 	}
 
-    if (!local_light_shadows && (ps_r4_mt_local_shadows || ps_r4_smapvis))
+    if (!local_light_shadows && (ps_r4_mt_local_shadows || ps_r4_smapvis || ps_r4_static_light_cache))
         local_light_shadows = std::make_unique<LocalLightShadows>();
     if (local_light_shadows) local_light_shadows->BeginFrame(LP_normal);
 
@@ -450,6 +450,8 @@ void CRender::Render()
 			Details->Render();
 		Target->phase_scene_end();
 	}
+
+    if (local_light_shadows) local_light_shadows->TestReceivers();
 
     if (sun_shadows)
     {
