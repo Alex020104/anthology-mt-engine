@@ -142,6 +142,7 @@ namespace PAPI
 		float age; // 4       
 		u16 frame; // 2
 		Flags16 flags; // 2
+		u64 render_id;
 		ParticleRenderHistory renderHistory;
 	}; // = 116
 

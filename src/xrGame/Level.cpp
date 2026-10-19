@@ -78,12 +78,23 @@ void XRayReportLuaGCAtomicProfile(lua_State* lua)
 	lua_XRayGCAtomicProfile profile{};
 	if (!lua_xray_gc_atomic_profile_snapshot(lua, &profile))
 		return;
-	if (!mt_FrameProfile || !CPU::qpc_freq)
+	if (!CPU::qpc_freq)
 		return;
 
 	const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
 	const double total_ms = profile.total_ticks * ticks_to_ms;
-	if (total_ms < 10.0)
+	{
+		PROF_EVENT("LuaGC.Atomic.Breakdown");
+		PROF_TAG("Atomic total ms", float(total_ms));
+		PROF_TAG("Atomic roots ms", float(profile.roots_ticks * ticks_to_ms));
+		PROF_TAG("Atomic grayagain ms", float(profile.grayagain_ticks * ticks_to_ms));
+		PROF_TAG("Atomic separate userdata ms", float(profile.separateudata_ticks * ticks_to_ms));
+		PROF_TAG("Atomic mark userdata ms", float(profile.mmudata_ticks * ticks_to_ms));
+		PROF_TAG("Atomic weak sweep ms", float(profile.weak_sweep_ticks * ticks_to_ms));
+		PROF_TAG("Atomic marked leaf userdata", u64(profile.leaf_udata_marked));
+		PROF_TAG("Atomic unmarked leaf userdata", u64(profile.leaf_udata_unmarked));
+	}
+	if (!mt_FrameProfile || total_ms < 10.0)
 		return;
 
 	Msg("* [Lua GC/xray-atomic] sequence=%llu total=%.2f ms "

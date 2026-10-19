@@ -64,6 +64,7 @@ public:
 	float fTimeStarted; // time of "Start"
 	float fTimeToStop; // time to "Stop"
 	float fTimeToPropagade;
+	float pending_ai_range = 0.f; // Value-only completion; never a gameplay pointer on the audio owner.
 
 	u32 marker;
 	void i_stop();
@@ -93,7 +94,7 @@ public:
 			p_source.freq *= (1.f + p_source.pitch_variation);
 
 		if (fTimeToStop != 0.f)
-			fTimeToStop = SoundRender->fTimer_Value + ((get_length_sec() - (SoundRender->fTimer_Value - fTimeStarted)) / (scale * psSpeedOfSound));
+			fTimeToStop = SoundRender->fTimer_Value + ((get_length_sec() - (SoundRender->fTimer_Value - fTimeStarted)) / (scale * SoundRender->runtime.psSpeedOfSound));
 	}
 
 	virtual void set_range(float min, float max)

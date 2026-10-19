@@ -164,6 +164,7 @@ struct _SoundProcessor : public pureFrame
 	{
 		//Msg ("------------- sound: %d [%3.2f,%3.2f,%3.2f]",u32(Device.dwFrame),VPUSH(Device.vCameraPosition));
 		Device.Statistic->Sound.Begin();
+		::Sound->set_async(psDeviceFlags.test(mtSound));
 		::Sound->update(Device.vCameraPosition, Device.vCameraDirection, Device.vCameraTop);
 		Device.Statistic->Sound.End();
 	}

@@ -32,7 +32,7 @@ void CSoundRender_Emitter::refresh_season_source(bool force)
     p_source.base_volume = next->m_fBaseVolume;
     bRewind = FALSE;
     fTimeStarted = SoundRender->fTimer_Value;
-    fTimeToStop = fTimeStarted + get_length_sec() / psSpeedOfSound;
+    fTimeToStop = fTimeStarted + get_length_sec() / SoundRender->runtime.psSpeedOfSound;
 
     // Preserve owner, position, user volume/range, pause and 2D/3D flags.
     // Loops restart through the normal FSM, which opens the new decoder.
@@ -55,11 +55,11 @@ void CSoundRender_Emitter::start(ref_sound* _owner, BOOL _loop, float delay)
 	p_source.position.set(0, 0, 0);
 	const CSoundRender_Source* authored = source()->anthology_original ? source()->anthology_original : source();
 	p_source.min_distance = authored->m_fMinDist; // DS3D_DEFAULTMINDISTANCE;
-	p_source.max_distance = authored->m_fMaxDist * psSoundMaxDistanceMultiplier; // 300.f;
+	p_source.max_distance = authored->m_fMaxDist * SoundRender->runtime.maxDistanceMultiplier; // 300.f;
 	p_source.base_volume = source()->m_fBaseVolume; // 1.f
 	p_source.volume = 1.f; // 1.f
 	set_frequency(1.f);
-	p_source.max_ai_distance = authored->m_fMaxAIDist * psSoundMaxAIDistanceMultiplier; // 300.f;
+	p_source.max_ai_distance = authored->m_fMaxAIDist * SoundRender->runtime.maxAIDistanceMultiplier; // 300.f;
 
 	if (fis_zero(delay, EPS_L))
 	{

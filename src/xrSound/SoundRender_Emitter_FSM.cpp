@@ -82,13 +82,13 @@ void CSoundRender_Emitter::update(float dt)
 			float speedOfSound = 343.f;
 			float oldDelay = starting_delay;
 			auto oldState = m_current_state;
-			auto delay = CalculateSmoothSoundDelay(p_source.position.distance_to(SoundRender->listener_position()), speedOfSound, soundSmoothingParams::distanceBasedDelayMinDistance, 60);
+			auto delay = CalculateSmoothSoundDelay(p_source.position.distance_to(SoundRender->listener_position()), speedOfSound, SoundRender->runtime.delayMinDistance, 60);
 
 			// clamp delay in case of strange result
 			delay = std::clamp(delay, 0.f, 3.5f);
 
 			// apply cvar power
-			delay *= soundSmoothingParams::distanceBasedDelayPower;
+			delay *= SoundRender->runtime.delayPower;
 			if (delay > 0.f)
 			{
 				if (m_current_state == stStarting || m_current_state == stStartingLooped)
@@ -134,13 +134,13 @@ void CSoundRender_Emitter::update(float dt)
 	case stStarting:
 		if (iPaused) break;
 		fTimeStarted = fTime;
-		fTimeToStop = fTime + (get_length_sec() / psSpeedOfSound); 
+		fTimeToStop = fTime + (get_length_sec() / SoundRender->runtime.psSpeedOfSound);
 		fTimeToPropagade = fTime;
 		fade_volume = 1.f;
 		occluder_volume = SoundRender->get_occlusion(p_source.position, .2f, occluder);
 		smooth_volume = p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect
-			                                                          ? psSoundVEffects * psSoundVFactor
-			                                                          : psSoundVMusic * psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
+			                                                          ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor
+			                                                          : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
 		if (update_culling(dt))
 		{
 			m_current_state = stPlaying;
@@ -167,8 +167,8 @@ void CSoundRender_Emitter::update(float dt)
 		fade_volume = 1.f;
 		occluder_volume = SoundRender->get_occlusion(p_source.position, .2f, occluder);
 		smooth_volume = p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect
-			                                                          ? psSoundVEffects * psSoundVFactor
-			                                                          : psSoundVMusic * psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
+			                                                          ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor
+			                                                          : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
 		if (update_culling(dt))
 		{
 			m_current_state = stPlayingLooped;
@@ -374,7 +374,7 @@ BOOL CSoundRender_Emitter::update_culling(float dt)
 		volume_att = (p_source.max_distance - dist) / min_max;
 		clamp(volume_att, 0.f, p_source.volume);
 
-		float fade_scale = bStopping || (p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect ? psSoundVEffects * psSoundVFactor : psSoundVMusic * psSoundVMusicFactor) < psSoundCull) ? -1.f : 1.f;
+		float fade_scale = bStopping || (p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) < SoundRender->runtime.psSoundCull) ? -1.f : 1.f;
 		fade_volume += dt * 10.f * fade_scale;
 		//LostAlphaRus out
 
@@ -392,10 +392,10 @@ BOOL CSoundRender_Emitter::update_culling(float dt)
 
 	// Update smoothing
 	//LostAlphaRus in
-	smooth_volume = (p_source.base_volume * volume_att * (owner_data->s_type == st_Effect ? psSoundVEffects * psSoundVFactor : psSoundVMusic * psSoundVMusicFactor) * occluder_volume * fade_volume);
+	smooth_volume = (p_source.base_volume * volume_att * (owner_data->s_type == st_Effect ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) * occluder_volume * fade_volume);
 	//LostAlphaRus out
 
-	if (smooth_volume < psSoundCull)
+	if (smooth_volume < SoundRender->runtime.psSoundCull)
 		return FALSE;	// allow volume to go up
 
 	// Here we has enought "PRIORITY" to be soundable
@@ -415,7 +415,7 @@ float CSoundRender_Emitter::priority()
 
 	if (b2D)
 	{
-		volume_att = p_source.min_distance / (psSoundRolloff * dist);
+		volume_att = p_source.min_distance / (SoundRender->runtime.psSoundRolloff * dist);
 		clamp(volume_att, 0.f, 1.f);
 	}
 	else
@@ -431,6 +431,6 @@ float CSoundRender_Emitter::priority()
 void CSoundRender_Emitter::update_environment(float dt)
 {
 	if (bMoved) {
-		p_source.update_velocity(dt);
+		p_source.update_velocity_snapshot(_max(dt, EPS_S), SoundRender->runtime.velocityAlpha, SoundRender->runtime.velocityPower);
 	}
 }

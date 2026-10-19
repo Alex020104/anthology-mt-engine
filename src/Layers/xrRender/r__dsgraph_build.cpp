@@ -514,13 +514,10 @@ void CDSGraphManager::add_Dynamic(IRenderVisual* piVisual, Fmatrix* xform)
 	{
 		// Add all children, doesn't perform any tests
 		PS::CParticleGroup* pG = (PS::CParticleGroup*)pVisual->dcast_ParticleCustom();
-		xrCriticalSectionGuard guard(&pG->onframe_lock);
-		for (PS::CParticleGroup::SItem& I_ : pG->items)
-		{
-			add_Dynamic(I_._effect, xform);
-			add_leafs_Dynamic(I_._children_related, xform);
-			add_leafs_Dynamic(I_._children_free, xform);
-		}
+        const auto frame = pG->PublishedFrame();
+        if (frame)
+            for (const auto& child : frame->children)
+                add_Dynamic(static_cast<dxRender_Visual*>(child.visual.get()), xform);
 	}return;
 
 	case MT_HIERRARHY:
@@ -584,13 +581,10 @@ void CDSGraphManager::add_Dynamic(dxRender_Visual* pVisual, Fmatrix* xform)
 	{
 		// Add all children, doesn't perform any tests
 		PS::CParticleGroup* pG = (PS::CParticleGroup*)pVisual->dcast_ParticleCustom();
-		xrCriticalSectionGuard guard(&pG->onframe_lock);
-		for (PS::CParticleGroup::SItem& I_ : pG->items)
-		{
-			add_Dynamic(I_._effect, xform);
-			add_leafs_Dynamic(I_._children_related, xform);
-			add_leafs_Dynamic(I_._children_free, xform);
-		}
+        const auto frame = pG->PublishedFrame();
+        if (frame)
+            for (const auto& child : frame->children)
+                add_Dynamic(static_cast<dxRender_Visual*>(child.visual.get()), xform);
 	}break;
 
 	case MT_HIERRARHY:
