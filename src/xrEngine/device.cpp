@@ -21,7 +21,6 @@
 #include "render.h"
 #include "irenderable.h"
 #include "renderdoc_integration.h"
-#include <chrono>
 
 // must be defined before include of FS_impl.h
 #define INCLUDE_FROM_ENGINE
@@ -316,6 +315,7 @@ BOOL CRenderDevice::Begin()
 		break;
 
 	case IRenderDeviceRender::dsLost:
+        ResetFramePacing();
             // If the device was lost, do not render until we get it back
 		Sleep(33);
 		return FALSE;
@@ -537,23 +537,6 @@ void GetMonitorPosition(int& x, int& y)
 	}
 }
 
-float GetMonitorRefresh()
-{
-	DEVMODE lpDevMode;
-	memset(&lpDevMode, 0, sizeof(DEVMODE));
-	lpDevMode.dmSize = sizeof(DEVMODE);
-	lpDevMode.dmDriverExtra = 0;
-
-	if (EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &lpDevMode) == 0)
-	{
-		return 1.f / 60.f;
-	}
-	else
-		return 1.f / lpDevMode.dmDisplayFrequency;
-}
-
-extern int ps_framelimiter;
-extern int ps_menu_framelimiter;
 extern u32 g_screenmode;
 
 #if XRCORE_PROFILER == PROFILER_OPTICK
@@ -813,9 +796,11 @@ void CRenderDevice::on_idle()
 {
 
 	FreezeTimer.Start();
+    frame_pacer_in_frame = false; // FrameMove may present a loading screen.
 
 	if (!b_is_Ready)
 	{
+        ResetFramePacing();
             Sleep(100);
 		return;
 	}
@@ -936,6 +921,11 @@ void CRenderDevice::on_idle()
 	u64 end_ticks = 0;
 	u64 mt_seq_render_ticks = 0;
     BeginLuaGCFrame();
+    if (dwPrecacheFrame || !g_loading_events.empty() || load_screen_renderer.IsActive() ||
+        (pApp && pApp->LoadSessionActive()))
+        ResetFramePacing();
+    else
+        BeginFramePacing();
 
     if (!svp_render_only_frame && g_pGamePersistent != nullptr)
     {
@@ -1126,68 +1116,7 @@ void CRenderDevice::on_idle()
     Device.LuaGCCount = 0;
     if (!svp_render_only_frame) StartGameLogic();
 	
-#ifdef ECO_RENDER // ECO_RENDER START
-	{
-		PROF_EVENT("Eco Render");
-		using limiter_clock = std::chrono::steady_clock;
-		static limiter_clock::time_point previous_frame = limiter_clock::now();
-		static bool limiter_armed = false;
 
-		const bool loading = Device.dwPrecacheFrame || !g_loading_events.empty() ||
-			load_screen_renderer.IsActive() || (pApp && pApp->LoadSessionActive());
-		const bool menu_limit_active = !loading && IsMainMenuActive() && ps_menu_framelimiter > 0;
-		const int target_fps = ps_framelimiter > 0 ? ps_framelimiter :
-			(menu_limit_active ? ps_menu_framelimiter : 0);
-		float target_seconds = target_fps > 0 ? 1.f / float(target_fps) : 0.f;
-
-		// Preserve the old paused-game eco behaviour without throttling an active
-		// load. Menu limiting is explicit and defaults to 60 FPS.
-		if (!loading && target_seconds <= 0.f && Device.Paused())
-		{
-			if (refresh_rate == 0)
-				refresh_rate = GetMonitorRefresh();
-			target_seconds = refresh_rate;
-		}
-
-		// A lens capture is not presented. Rate-limit only main frames, otherwise
-		// a 60 FPS limit becomes 30 displayed FPS at the native PiP cadence.
-		if (target_seconds > 0.f && !svp_frame)
-		{
-			const auto now = limiter_clock::now();
-			if (!limiter_armed)
-			{
-				previous_frame = now;
-				limiter_armed = true;
-			}
-			else
-			{
-				const auto target = previous_frame +
-					std::chrono::duration_cast<limiter_clock::duration>(std::chrono::duration<float>(target_seconds));
-				auto current = now;
-				auto remaining = target - current;
-				const auto one_ms = std::chrono::milliseconds(1);
-
-				// Give the CPU to the OS for the coarse part, then yield only for
-				// the short remainder. This avoids the old full-frame busy spin.
-				if (remaining > std::chrono::milliseconds(2))
-				{
-					const auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(remaining) - one_ms;
-					Sleep(static_cast<DWORD>(sleep_ms.count()));
-				}
-				while ((current = limiter_clock::now()) < target)
-					SwitchToThread();
-
-				// Do not accumulate a catch-up burst after a long external stall.
-				const auto frame_period = target - previous_frame;
-				previous_frame = current - target > frame_period ? current : target;
-			}
-		}
-		else if (target_seconds <= 0.f)
-		{
-			limiter_armed = false;
-		}
-	}
-#endif // ECO_RENDER END
 
 #ifndef DEDICATED_SERVER
 	Statistic->RenderTOTAL_Real.FrameStart();

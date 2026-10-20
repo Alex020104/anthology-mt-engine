@@ -200,6 +200,9 @@ void CRenderTarget::phase_heatvision()
 	//Set MSAA/NonMSAA rendertarget
 #if defined(USE_DX10) || defined(USE_DX11)
 	#ifdef USE_DX11
+    // Heat was an MRT in the scene/forward pass. Release its output binding
+    // before the thermal shader binds it for reading, including the first frame.
+    unbind_svp_resources();
     ref_rt& dest_rt = PostprocessColor();
 #else
     ref_rt& dest_rt = RImplementation.o.dx10_msaa ? rt_Generic : rt_Color;

@@ -13,6 +13,7 @@
 #include "../xrcore/ftimer.h"
 #include "stats.h"
 #include "LuaGCController.h"
+#include "FramePacer.h"
 //#include "shader.h"
 //#include "R_Backend.h"
 
@@ -547,6 +548,13 @@ public:
 		seqParallelNames.push_back(name ? name : "legacy");
 	}
 
+    // AOE Present pacing, shared by all renderer backends.
+    void ResetFramePacing();
+    void BeginFramePacing();
+    bool HasPresentSlack() const;
+    void BeforePresent();
+    void AfterPresent(bool accepted);
+
     void StartGameLogic();
     void WaitForGameLogic();
     void JoinGameLogic(LuaGCStopReason reason = LuaGCStopReason::FrameBarrier);
@@ -565,6 +573,15 @@ public:
     u32 LuaGCGeneration() const { return lua_gc_generation; }
 
 private:
+    FramePacerClock frame_pacer;
+    FramePacerWait frame_pacer_wait;
+    FramePacerClock::Sample frame_pacer_sample;
+    FramePacerWait::Sample frame_pacer_wait_sample;
+    u64 frame_pacer_wait_start = 0, frame_pacer_present_start = 0, frame_pacer_target = 0;
+    unsigned frame_pacer_menu_rate = 0;
+    HMONITOR frame_pacer_menu_monitor = nullptr;
+    bool frame_pacer_in_frame = false;
+
     const DWORD frame_main_thread = GetCurrentThreadId();
     alignas(8) NativeWorkerPool native_gc_pool{1};
     alignas(8) LuaGCFrameWorker game_logic_worker;

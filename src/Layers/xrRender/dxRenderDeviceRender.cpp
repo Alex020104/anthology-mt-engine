@@ -567,8 +567,24 @@ void dxRenderDeviceRender::End()
 	}
 # endif
 
-	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady) {
-		const HRESULT result = HW.m_pSwapChain->Present(present_interval, present_flags);
+    if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady)
+    {
+        if (Device.HasPresentSlack())
+        {
+            PROF_EVENT("FramePacer.SubmitBeforeWait");
+#if defined(USE_DX11)
+            HW.pContext->Flush();
+#else
+            HW.pDevice->Flush();
+#endif
+        }
+        Device.BeforePresent();
+        HRESULT result;
+        {
+            PROF_EVENT("FramePacer.Present");
+            result = HW.m_pSwapChain->Present(present_interval, present_flags);
+        }
+        Device.AfterPresent(result == S_OK);
 #if XRCORE_PROFILER == PROFILER_OPTICK
         if (result == S_OK) { OptickStartupFramePresented(); OptickLoadGameFramePresented(); }
 #endif
@@ -581,7 +597,13 @@ void dxRenderDeviceRender::End()
 
 	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady)
 	{
-		const HRESULT result = HW.pDevice->Present(NULL, NULL, NULL, NULL);
+        Device.BeforePresent();
+        HRESULT result;
+        {
+            PROF_EVENT("FramePacer.Present");
+            result = HW.pDevice->Present(NULL, NULL, NULL, NULL);
+        }
+        Device.AfterPresent(result == S_OK);
 #if XRCORE_PROFILER == PROFILER_OPTICK
         if (result == S_OK) { OptickStartupFramePresented(); OptickLoadGameFramePresented(); }
 #endif

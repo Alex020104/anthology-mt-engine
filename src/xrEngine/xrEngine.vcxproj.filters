@@ -420,6 +420,9 @@
     <ClInclude Include="device.h">
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClInclude>
+    <ClInclude Include="FramePacer.h">
+      <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
+    </ClInclude>
 <ClInclude Include="LuaGCController.h">
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClInclude>
@@ -742,6 +745,9 @@
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClCompile>
     <ClCompile Include="Device_frame.cpp">
+      <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
+    </ClCompile>
+    <ClCompile Include="FramePacer.cpp">
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClCompile>
 <ClCompile Include="LuaGCWorker.cpp">

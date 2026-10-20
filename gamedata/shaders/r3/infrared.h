@@ -2,6 +2,7 @@
 #define INFRARED
 
 #include "common.h"
+#include "thermal_coordinates.h"
 
 #ifdef USE_MSAA
 	#ifndef SM_5

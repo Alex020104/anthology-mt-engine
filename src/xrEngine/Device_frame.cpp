@@ -7,6 +7,8 @@
 #include "x_ray.h"
 #include "../xrCore/profiler.h"
 
+extern int ps_framelimiter;
+extern int ps_menu_framelimiter;
 extern BOOL psLuaGCAlways;
 extern bool IsMainMenuActive();
 
@@ -20,12 +22,96 @@ namespace
         ~GameLogicScope() { --game_logic_depth; }
     };
 
+    unsigned MonitorRate(HMONITOR monitor)
+    {
+        MONITORINFOEX info{};
+        info.cbSize = sizeof(info);
+        DEVMODE mode{};
+        mode.dmSize = sizeof(mode);
+        return GetMonitorInfo(monitor, &info) &&
+            EnumDisplaySettings(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1
+            ? mode.dmDisplayFrequency : 60;
+    }
+
     const char* GCPhaseName(int phase)
     {
         static const char* names[] = {"GC.Step.Pause", "GC.Step.Mark", "GC.Step.Remark",
             "GC.Step.Separate", "GC.Step.Atomic", "GC.Step.SweepStrings", "GC.Step.Sweep", "GC.Step.Finalize"};
         return phase >= 0 && phase < 8 ? names[phase] : "GC.Step.Unknown";
     }
+}
+
+void CRenderDevice::ResetFramePacing()
+{
+    frame_pacer.Reset();
+    frame_pacer_in_frame = false;
+    frame_pacer_menu_rate = 0;
+}
+
+void CRenderDevice::BeginFramePacing()
+{
+    const bool menu = IsMainMenuActive();
+    const bool paused = Paused();
+    if (menu || paused)
+    {
+        const HMONITOR monitor = MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST);
+        if (!frame_pacer_menu_rate || frame_pacer_menu_monitor != monitor)
+        {
+            frame_pacer_menu_monitor = monitor;
+            frame_pacer_menu_rate = MonitorRate(monitor);
+        }
+    }
+    else
+        frame_pacer_menu_rate = 0;
+    const unsigned context = (menu ? 1u : 0u) | (paused ? 2u : 0u) |
+        (b_is_Active ? 4u : 0u) | (psDeviceFlags.test(rsVSync) ? 8u : 0u) |
+        (m_SecondViewport.IsSVPActive() ? 16u : 0u);
+    frame_pacer.Configure(CPU::QPC(), CPU::qpc_freq,
+        FramePacerClock::EffectiveRate(menu ? ps_menu_framelimiter : ps_framelimiter,
+            !menu && paused, frame_pacer_menu_rate), context);
+    frame_pacer_in_frame = true;
+}
+
+bool CRenderDevice::HasPresentSlack() const
+{
+    if (!frame_pacer_in_frame || !frame_pacer.Deadline())
+        return false;
+    const u64 now = CPU::QPC();
+    return frame_pacer.Deadline() > now && frame_pacer.Deadline() - now > CPU::qpc_freq / 5000;
+}
+
+void CRenderDevice::BeforePresent()
+{
+    if (!frame_pacer_in_frame)
+        return;
+    frame_pacer_wait_start = CPU::QPC();
+    frame_pacer_wait_sample = {};
+    frame_pacer_target = frame_pacer.Period();
+    if (frame_pacer.Deadline())
+    {
+        PROF_EVENT("FramePacer.Wait");
+        frame_pacer_wait_sample = frame_pacer_wait.Until(frame_pacer.Deadline(), CPU::qpc_freq);
+    }
+    frame_pacer_present_start = CPU::QPC();
+    frame_pacer_sample = frame_pacer.Presented(frame_pacer_present_start);
+}
+
+void CRenderDevice::AfterPresent(bool accepted)
+{
+    if (!frame_pacer_in_frame)
+        return;
+    const u64 end = CPU::QPC();
+    const double ms = 1000.0 / double(CPU::qpc_freq);
+    PROF_TAG("FramePacer target ms", float(frame_pacer_target * ms));
+    PROF_TAG("FramePacer interval ms", float(frame_pacer_sample.interval * ms));
+    PROF_TAG("FramePacer wait ms", float((frame_pacer_present_start - frame_pacer_wait_start) * ms));
+    PROF_TAG("FramePacer sleep ms", float(frame_pacer_wait_sample.slept * ms));
+    PROF_TAG("FramePacer spin ms", float(frame_pacer_wait_sample.spun * ms));
+    PROF_TAG("FramePacer late ms", float(frame_pacer_sample.late * ms));
+    PROF_TAG("FramePacer present ms", float((end - frame_pacer_present_start) * ms));
+    PROF_TAG("FramePacer missed", frame_pacer_sample.rebased ? 1u : 0u);
+    if (!accepted)
+        ResetFramePacing();
 }
 
 bool CRenderDevice::IsGameLogicThread() const

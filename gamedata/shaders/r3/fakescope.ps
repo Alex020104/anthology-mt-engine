@@ -1,5 +1,6 @@
 #include "common.h"
 #include "infrared.h"
+#include "dlss_contract.h"
 
 Texture2D s_scope;
 uniform float4 m_hud_params;
@@ -41,7 +42,9 @@ float3 apply_scope_nightvision(float3 image, float2 tc)
 
 float3 apply_scope_thermal(float2 tc, float monochrome)
 {
-	float2 hpos = tc * screen_res.xy;
+    float2 thermal_size = thermal_position_size();
+    tc = clamp(dlss_raster_uv(tc), 0.5 / thermal_size, 1.0 - 0.5 / thermal_size);
+    float2 hpos = tc * thermal_size;
 	gbuffer_data gbd = gbuffer_load_data(tc, hpos, 0);
 	float3 thermal = infrared(gbd, hpos, tc);
 	if (monochrome > 0.5f)

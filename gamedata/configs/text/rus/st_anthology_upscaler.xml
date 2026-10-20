@@ -13,6 +13,7 @@
   <string id="ui_mcm_lst_anthology_upscaler_fsr3"><text>FSR 3.1</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_dlss"><text>DLSS</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_native"><text>Сглаживание в родном разрешении</text></string>
+  <string id="ui_mcm_lst_anthology_upscaler_ultra_quality"><text>Ультракачество</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_quality"><text>Качество</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_balanced"><text>Баланс</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_performance"><text>Производительность</text></string>

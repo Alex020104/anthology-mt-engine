@@ -13,6 +13,7 @@
   <string id="ui_mcm_lst_anthology_upscaler_fsr3"><text>FSR 3.1</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_dlss"><text>DLSS</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_native"><text>Native resolution AA</text></string>
+  <string id="ui_mcm_lst_anthology_upscaler_ultra_quality"><text>Ultra quality</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_quality"><text>Quality</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_balanced"><text>Balanced</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_performance"><text>Performance</text></string>

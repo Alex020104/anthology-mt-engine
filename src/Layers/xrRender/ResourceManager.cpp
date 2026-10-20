@@ -679,9 +679,10 @@ void CResourceManager::QueueTextureLoad(const ref_texture& texture, bool streami
 			return;
 	}
 
-	// Streaming binds use the same lifetime-owned DDS queue as load sessions.
-    // The render owner binds a null SRV until the resource is published.
-	const bool async = (streaming || generation || !g_appLoaded) && texture->CanLoadAsync();
+    // Late DDS requests must also enter the worker queue. The owner queue has
+    // no gameplay drain, and Bind cannot resubmit an already queued texture.
+    // Video/sequence/GIF decoders retain their existing owner-thread path.
+    const bool async = texture->CanLoadAsync();
 	const DWORD originThread = GetCurrentThreadId();
 	xrCriticalSectionGuard guard(textureLoadGuard);
 	if (resourceLoadGenerationStarting)

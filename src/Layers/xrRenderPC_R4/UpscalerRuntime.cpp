@@ -18,7 +18,8 @@ u32 ResolveEffectiveQuality(u32 mode)
 	// Direct NGX has no arbitrary custom-ratio quality mode. Snap Custom to the
 	// nearest supported preset and use that preset's render size, so a low-res
 	// input can never be paired with DLAA.
-	static const float presetScales[] = {1.0f, 2.0f / 3.0f, 0.5882353f, 0.5f, 1.0f / 3.0f};
+	static const float presetScales[] = {1.0f, 2.0f / 3.0f, 0.5882353f, 0.5f, 1.0f / 3.0f, 5.0f / 6.0f};
+    static const u32 presetQualities[] = {0, 1, 2, 3, 4, 6};
 	const float customScale = clampr(ps_r4_upscaler_custom_scale, 0.33f, 1.0f);
 	u32 nearest = 0;
 	float nearestDistance = fabsf(customScale - presetScales[0]);
@@ -31,7 +32,7 @@ u32 ResolveEffectiveQuality(u32 mode)
 			nearestDistance = distance;
 		}
 	}
-	return nearest;
+	return presetQualities[nearest];
 }
 
 LPCSTR QualityName(u32 quality)

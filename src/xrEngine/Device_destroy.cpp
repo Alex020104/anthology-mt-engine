@@ -25,6 +25,8 @@ void CRenderDevice::_Destroy(BOOL bKeepTextures)
 void CRenderDevice::Destroy(void)
 {
     ShutdownLuaGCWorker();
+    ResetFramePacing();
+    frame_pacer_wait.Close();
 	if (!b_is_Ready) return;
 
 	Log("Destroying Direct3D...");
@@ -72,6 +74,7 @@ void CRenderDevice::Reset(bool precache)
 {
 	PROF_EVENT("CRenderDevice::Reset");
     JoinGameLogic(LuaGCStopReason::FrameBarrier);
+    ResetFramePacing();
 	if (use_reshade)
 		unregister_reshade();
 

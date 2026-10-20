@@ -382,6 +382,9 @@ void CRenderTarget::unbind_svp_resources()
 	RCache.set_RT(nullptr, 2);
 	RCache.set_RT(nullptr, 3);
 	RCache.set_ZB(nullptr);
+    // RT binding is otherwise deferred until Draw, after SRV binding. Detach
+    // outputs now so D3D11 does not replace reads of those resources with null.
+    HW.pContext->OMSetRenderTargets(0, nullptr, nullptr);
 	RCache.set_Textures(nullptr);
 	SRVSManager.Apply();
 	ID3D11ShaderResourceView* nullSrvs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
