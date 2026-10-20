@@ -84,6 +84,8 @@ typedef struct lua_XRayGCAtomicProfile {
   unsigned long long leaf_udata_marked;
   unsigned long long leaf_udata_unmarked;
   unsigned long long leaf_udata_finalized;
+  unsigned long long userdata_scanned;
+  unsigned long long userdata_candidates;
 } lua_XRayGCAtomicProfile;
 
 

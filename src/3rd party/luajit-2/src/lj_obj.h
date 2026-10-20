@@ -245,7 +245,7 @@ typedef struct GCudata {
   GCRef env;		/* Should be at same offset in GCfunc. */
   MSize len;		/* Size of payload. */
   GCRef metatable;	/* Must be at same offset in GCtab. */
-  uint32_t align1;	/* To force 8 byte alignment of the payload. */
+  GCRef scanprev;	/* Prepass predecessor; occupies the old alignment word. */
 } GCudata;
 
 /* Userdata types. */
@@ -502,6 +502,12 @@ typedef struct GCState {
   GCRef grayagain;	/* List of objects for atomic traversal. */
   GCRef weak;		/* List of weak tables (to be cleared). */
   GCRef mmudata;	/* List of userdata (to be finalized). */
+  GCRef udscanprev;	/* Last retained userdata in the native finalizer suffix. */
+  GCRef udscananchor, udheadgap;  /* Logical order across detached candidates. */
+  GCRef udcandidate, udcandidate_tail;  /* Oldest prepared candidates first. */
+  GCRef udbatch, udbatch_tail;  /* Candidates from the current scan batch. */
+  uint32_t udscanned_count, udcandidate_count;
+  uint8_t udscanmode;	/* No scan, full suffix, new prefix, or ready. */
   MSize stepmul;	/* Incremental GC step granularity. */
   MSize debt;		/* Debt (how much GC is behind schedule). */
   MSize estimate;	/* Estimate of memory actually in use. */

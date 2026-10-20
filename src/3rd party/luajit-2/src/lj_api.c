@@ -718,14 +718,20 @@ LUA_API int lua_xray_userdata_mark_leaf(lua_State *L, int idx,
     return 0;
   ud = udataV(tv);
   o = obj2gco(ud);
-  if (ud->udtype != UDTYPE_USERDATA || ud->unused2 != 0 ||
+  if (ud->udtype != UDTYPE_USERDATA ||
+      (ud->unused2 != 0 && ud->unused2 != LJ_XRAY_SCANNED_UDATA) ||
       gcref(mainthread(g)->nextgc) != o)
     return 0;
+  if (gcref(g->gc.udheadgap) && lj_gc_udata_head_gap(g))
+    return 0;  /* Detached candidates still precede this physical suffix head. */
   if (GG->xray_leaf_udata_finalizer != NULL &&
       GG->xray_leaf_udata_finalizer != finalizer)
     return 0;
 
   GG->xray_leaf_udata_finalizer = finalizer;
+  setgcref(ud->scanprev, obj2gco(mainthread(g)));
+  if (gcref(g->gc.udscanprev) == o)
+    setgcref(g->gc.udscanprev, obj2gco(mainthread(g)));
   setgcrefr(mainthread(g)->nextgc, o->gch.nextgc);
   setgcrefr(o->gch.nextgc, g->gc.root);
   setgcref(g->gc.root, o);
@@ -764,6 +770,8 @@ LUA_API int lua_xray_userdata_unmark_leaf(lua_State *L, int idx)
   setgcrefr(o->gch.nextgc, mainthread(g)->nextgc);
   setgcref(mainthread(g)->nextgc, o);
   ud->unused2 = 0;
+  setgcref(ud->scanprev, obj2gco(mainthread(g)));
+  if (g->gc.udscanmode) lj_gc_udata_link(g, o);
   G2GG(g)->xray_leaf_udata_unmarked++;
   return 1;
 }

@@ -93,6 +93,8 @@ void XRayReportLuaGCAtomicProfile(lua_State* lua)
 		PROF_TAG("Atomic weak sweep ms", float(profile.weak_sweep_ticks * ticks_to_ms));
 		PROF_TAG("Atomic marked leaf userdata", u64(profile.leaf_udata_marked));
 		PROF_TAG("Atomic unmarked leaf userdata", u64(profile.leaf_udata_unmarked));
+		PROF_TAG("Atomic scanned userdata", u64(profile.userdata_scanned));
+		PROF_TAG("Atomic candidate userdata", u64(profile.userdata_candidates));
 	}
 	if (!mt_FrameProfile || total_ms < 10.0)
 		return;
