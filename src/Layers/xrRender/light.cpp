@@ -160,6 +160,9 @@ void light::reset_for_cache()
 	vis.frame2test = 0;
 	vis.visible = true;
 	vis.pending = false;
+#if defined(USE_DX11) && RENDER == R_R4
+    vis.query_view_valid = false;
+#endif
 	vis.smap_ID = 0;
 	vis.distance = 0.f;
 	m_xform_frame = 0;
