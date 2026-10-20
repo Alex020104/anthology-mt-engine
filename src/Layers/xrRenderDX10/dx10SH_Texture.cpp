@@ -26,6 +26,43 @@
 // ready. apply_load() below reuses the same queue for evicted textures instead of
 // calling Load() inline.
 
+static void BindPendingTexture(u32 stage)
+{
+    if (stage < CTexture::rstVertex) SRVSManager.SetPSResource(stage, nullptr);
+    else if (stage < CTexture::rstGeometry) SRVSManager.SetVSResource(stage - CTexture::rstVertex, nullptr);
+    else if (stage < CTexture::rstHull) SRVSManager.SetGSResource(stage - CTexture::rstGeometry, nullptr);
+#ifdef USE_DX11
+    else if (stage < CTexture::rstDomain) SRVSManager.SetHSResource(stage - CTexture::rstHull, nullptr);
+    else if (stage < CTexture::rstCompute) SRVSManager.SetDSResource(stage - CTexture::rstDomain, nullptr);
+    else if (stage < CTexture::rstInvalid) SRVSManager.SetCSResource(stage - CTexture::rstCompute, nullptr);
+#endif
+}
+
+void CTexture::Bind(u32 stage)
+{
+    Touch();
+#ifdef USE_DX11
+    extern ENGINE_API BOOL g_appLoaded;
+    if (g_appLoaded && !Device.dwPrecacheFrame && cName.size() && cName.c_str()[0] != '$' &&
+        loadKind.load(std::memory_order_acquire) == LoadKindDds && !is_loaded())
+    {
+        ref_texture self(this);
+        DEV->QueueTextureLoad(self, true);
+        PROF_EVENT("Texture.Bind.Pending");
+        BindPendingTexture(stage);
+        return;
+    }
+#endif
+    wait_for_loading();
+    bind(stage);
+}
+
+ID3DShaderResourceView* CTexture::RenderView() const
+{
+    // Only the render owner unloads resident textures; a pending loader publishes atomically.
+    return is_loaded() ? m_pSRView : nullptr;
+}
+
 void resptrcode_texture::create(LPCSTR _name)
 {
 	PROF_EVENT("resptrcode_texture::create");
@@ -536,6 +573,8 @@ bool CTexture::CanLoadAsync() const
 			kind = LoadKindAvi;
 		else if (FS.exist(path, "$game_textures$", name.c_str(), ".seq"))
 			kind = LoadKindSequence;
+        else if (FS.exist(path, "$game_textures$", name.c_str(), ".gif"))
+            kind = LoadKindGif;
 		else
 			kind = LoadKindDds;
 		loadKind.store(kind, std::memory_order_release);

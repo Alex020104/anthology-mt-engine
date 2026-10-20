@@ -412,6 +412,9 @@ void LJ_FASTCALL lj_dispatch_ins(lua_State *L, const BCIns *pc)
   L->top = L->base + slots;  /* Fix top. */
 #if LJ_HASPROFILE
   if (g->hookmask & HOOK_PROFILE) {
+    /* The sample skips recording this instruction. Abort an active recording,
+    ** as for ordinary hooks, before resuming at the next bytecode. */
+    lj_trace_abort(g);
     lj_profile_interpreter(L);
     L->top = L->base + slots;
     ERRNO_RESTORE

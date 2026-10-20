@@ -44,6 +44,7 @@ void CSoundRender_Emitter::refresh_season_source(bool force)
 
 void CSoundRender_Emitter::start(ref_sound* _owner, BOOL _loop, float delay)
 {
+	resource_wait = 0.f;
 	PROF_EVENT("CSoundRender_Emitter::start");
 	starting_delay = delay;
 
@@ -96,6 +97,7 @@ void CSoundRender_Emitter::stop(BOOL bDeffered)
 
 void CSoundRender_Emitter::rewind()
 {
+	resource_wait = 0.f;
     refresh_season_source(true);
 	bStopping = FALSE;
 

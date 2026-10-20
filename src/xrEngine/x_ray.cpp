@@ -1861,6 +1861,11 @@ void CApplication::LoadSessionEnsureResourceGeneration()
 
 void CApplication::LoadSessionBegin(LPCSTR scenario)
 {
+	const bool suspend_background_gc = Device.LuaGCAlwaysActive();
+	if (suspend_background_gc)
+		Device.WaitForGameLogic();
+	const bool restore_native_gc = suspend_background_gc && Device.LuaGCAutomaticAllowed();
+
 	if (m_load_session.active)
 		LoadSessionCancel("superseded");
 
@@ -1893,6 +1898,10 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 		throw;
 	}
 	m_load_session.active = true;
+	// Native loading defers full collections and skips most world renders.
+	// Restore its automatic collector on the admitted Lua owner before callbacks.
+	if (restore_native_gc && Device.LuaGCPrepare)
+		Device.LuaGCPrepare(false);
 	Msg("* [load-session] begin scenario=%s", m_load_session.scenario);
 	Msg("* [load-session] optimization native=%s save-prefetch=%s spawn-prefetch=%s level-cache=%s precache=%s",
 		NativeLoadExecutor::Instance().Enabled() ? "parallel" : "serial",
@@ -2507,6 +2516,7 @@ void gen_logo_name(string_path& dest, LPCSTR level_name, int num)
 
 void CApplication::Level_Set(u32 L)
 {
+	if (::Sound) ::Sound->wait_for_streaming();
 	PROF_EVENT();
 
 	//SECUROM_MARKER_PERFORMANCE_ON(9)

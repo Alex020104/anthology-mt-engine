@@ -3337,6 +3337,9 @@ void CCC_RegisterCommands()
 	CMD4(CCC_Integer, "mt_load_spawn_decode", &mt_load_spawn_decode, 0, 1);
 	CMD4(CCC_Integer, "mt_frame_profile", &mt_FrameProfile, 0, 1);
 	CMD4(CCC_Integer, "mt_frame_profile_detail", &mt_FrameProfileDetailed, 0, 1);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+	CMD4(CCC_Integer, "lua_profile_optick", &CScriptEngine::optick_sampling, 0, 1);
+#endif
 
 	CMD4(CCC_Float, "ik_calc_dist", &IK_CALC_DIST, 50, 150);
 	CMD4(CCC_Float, "ik_calc_ssa", &IK_CALC_SSA, 0.001f, 0.02f);

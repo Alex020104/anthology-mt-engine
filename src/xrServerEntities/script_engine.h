@@ -143,6 +143,7 @@ public:
 
 public:
 	CScriptEngine();
+	static int optick_sampling;
 	virtual ~CScriptEngine();
 	void init();
 	virtual void unload();

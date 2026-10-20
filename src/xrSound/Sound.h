@@ -153,7 +153,7 @@ public:
 	ref_sound_data();
 	ref_sound_data(LPCSTR fName, esound_type sound_type, int game_type);
 	virtual ~ref_sound_data();
-	float get_length_sec() const { return fTimeTotal; };
+	float get_length_sec() const;
 };
 
 typedef resptr_core<ref_sound_data, resptr_base<ref_sound_data>> ref_sound_data_ptr;
@@ -445,8 +445,9 @@ public:
 	virtual void object_relcase(CObject* obj) = 0;
 	virtual const Fvector& listener_position() = 0;
 	virtual void set_async(bool) {}
-	virtual void publish_device_state() {}
+	virtual void publish_device_state(bool allowStreaming = false) {}
 	virtual void wait_for_streaming() {}
+    virtual float get_length_sec(const ref_sound_data& data) { return data.fTimeTotal; }
 	virtual int request_pause_emitters(bool value) { return pause_emitters(value); }
 	virtual void source_prefetch_start() = 0;
 	virtual void source_prefetch_pause() = 0;
@@ -465,6 +466,14 @@ public:
 };
 
 extern XRSOUND_API CSound_manager_interface* Sound;
+
+IC float ref_sound_data::get_length_sec() const
+{
+    // Private audio copies already own complete metadata. Never acquire the
+    // frontend lock or wait for asset work from the audio owner.
+    return !async_voice && ::Sound ? ::Sound->get_length_sec(*this) : fTimeTotal;
+}
+
 
 /// ********* Sound ********* (utils, accessors, helpers)
 IC ref_sound_data::ref_sound_data()

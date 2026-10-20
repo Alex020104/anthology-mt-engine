@@ -24,9 +24,20 @@ void CALifeScheduleRegistry::reset_profile()
 void CALifeScheduleRegistry::update_object(CSE_ALifeSchedulable* object)
 {
 	const bool profile = mt_FrameProfile && mt_FrameProfileDetailed && CPU::qpc_freq;
-	const CSE_Abstract* base = profile ? object->base() : nullptr;
+#if XRCORE_PROFILER == PROFILER_OPTICK
+	const bool capture = Optick::IsActive();
+#else
+	const bool capture = false;
+#endif
+	const CSE_Abstract* base = profile || capture ? object->base() : nullptr;
 	const u64 started_at = profile ? CPU::QPC() : 0;
 	START_PROFILE("ALife/scheduled/update")
+		if (capture && base)
+		{
+			PROF_TAG("ALife object id", u32(base->ID));
+			PROF_TAG("ALife section", base->s_name.c_str());
+			PROF_TAG("ALife name", base->name_replace());
+		}
 		object->update();
 	STOP_PROFILE
 	if (!profile)

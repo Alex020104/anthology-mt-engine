@@ -39,13 +39,14 @@ public:
 	void PostLoad();
 	void Unload(void);
 	void Bind(u32 stage)
-	{
-		wait_for_loading();
-		bind(stage);
 #if defined(USE_DX10) || defined(USE_DX11)
-		Touch();
+    ;
+#else
+    {
+        wait_for_loading();
+        bind(stage);
+    }
 #endif
-	}
 	bool TryQueueLoad();
 	void CancelQueuedLoad();
 	bool CanLoadAsync() const;
@@ -59,6 +60,7 @@ public:
 		LoadKindOgm,
 		LoadKindAvi,
 		LoadKindSequence,
+        LoadKindGif,
 	};
 	void SetLoadSource(LPCSTR logical_name, LPCSTR resolved_path, ELoadKind kind);
 	bool IsDemandOnly() const { return m_demandOnly; }
@@ -107,6 +109,7 @@ public:
 
 #if defined(USE_DX10) || defined(USE_DX11)
 	ID3DShaderResourceView* get_SRView();
+    ID3DShaderResourceView* RenderView() const;
 #endif	//	USE_DX10
 
 private:

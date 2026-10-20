@@ -833,6 +833,11 @@ void CAI_Stalker::net_Destroy()
 	CInventoryOwner::net_Destroy();
 	m_pPhysics_support->in_NetDestroy();
 
+	// Loading teardown can run several UpdateCL passes before draining the queue.
+	const auto handler = xr_make_delegate(this, &CAI_Stalker::update_object_handler);
+	while (std::find(Device.seqParallel.begin(), Device.seqParallel.end(), handler) != Device.seqParallel.end())
+		Device.remove_from_seq_parallel(handler);
+
 	xr_delete(m_ce_close);
 	xr_delete(m_ce_far);
 	xr_delete(m_ce_best);

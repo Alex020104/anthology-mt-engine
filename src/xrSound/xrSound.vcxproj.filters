@@ -33,6 +33,9 @@
     <ClInclude Include="cl_intersect.h">
       <Filter>Kernel</Filter>
     </ClInclude>
+    <ClInclude Include="SoundDecodeQueue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="SoundAsync.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -82,6 +85,9 @@
   <ItemGroup>
     <ClCompile Include="guids.cpp">
       <Filter>Kernel</Filter>
+    </ClCompile>
+    <ClCompile Include="SoundDecodeQueue.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="SoundAsync.cpp">
       <Filter>Core</Filter>

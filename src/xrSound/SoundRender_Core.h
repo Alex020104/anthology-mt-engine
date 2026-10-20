@@ -74,6 +74,7 @@ protected:
 	virtual void _destroy_data(ref_sound_data& S);
 	CNotificationClient* pSysNotification = nullptr;
 public:
+	void wait_for_streaming() override;
 	std::atomic_bool bPendingDefaultDeviceSwitch{false};
 	std::atomic_bool bPendingDeviceListRefresh{false};
 protected:

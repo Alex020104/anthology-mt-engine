@@ -28,7 +28,7 @@ const int dm_max_decompress = 7;
 //const int		dm_size				= 24;								//!
 const int dm_cache1_count = 4; // 
 //const int 		dm_cache1_line		= dm_size*2/dm_cache1_count;		//! dm_size*2 must be div dm_cache1_count
-const int dm_max_objects = 256;
+const int dm_max_objects = DetailSlot::ID_Empty;
 const int dm_obj_in_slot = 4;
 //const int		dm_cache_line		= dm_size+1+dm_size;
 //const int		dm_cache_size		= dm_cache_line*dm_cache_line;
@@ -149,7 +149,7 @@ public:
 	};
 
 	typedef xr_vector<xr_vector<SlotItemVec*>> vis_list;
-	typedef svector<CDetail*, dm_max_objects> DetailVec;
+	typedef xr_vector<CDetail*> DetailVec;
 	typedef DetailVec::iterator DetailIt;
 	typedef poolSS<SlotItem, 4096> PSS;
 public:
@@ -175,7 +175,7 @@ public:
 public:
 	IReader* dtFS;
 	DetailHeader dtH;
-	DetailSlot* dtSlots; // note: pointer into VFS
+	DetailSlot* dtSlots; // Owned working slots; legacy v3 data is expanded on load.
 	DetailSlot DS_empty;
 
 public:

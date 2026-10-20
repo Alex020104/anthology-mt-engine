@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "SoundAsync.h"
+#include "SoundDecodeQueue.h"
 #include "SoundRender_CoreA.h"
 #include "SoundRender_Emitter.h"
 #include "SoundRender_Source.h"
@@ -104,6 +105,7 @@ public:
     u32 elapsed = 0;
     u32 nextTail = 0;
     bool rendered = false, stopped = false, retireNext = false;
+    bool waitingSource = false, rangeSet = false;
     const CSound_params* eventParams = nullptr;
     explicit VoiceProxy(ref_sound_data_ptr d, u64 id) : data(d)
     {
@@ -151,7 +153,7 @@ public:
         control.frequency = f;
         control.params.freq = f * (control.length < 10.f ? 1.f + control.params.pitch_variation : 1.f);
     }
-    void set_range(float a, float b) override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); control.params.min_distance = a; control.params.max_distance = b; }
+    void set_range(float a, float b) override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); rangeSet = true; control.params.min_distance = a; control.params.max_distance = b; }
     void set_volume(float v) override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); control.params.volume = _valid(v) ? v : 0.f; }
     void set_priority(float p) override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); control.priority = p; }
     void stop(BOOL deferred) override
@@ -186,7 +188,111 @@ class AsyncSound final : public CSound_manager_interface
     std::string deviceRequest;
     Fvector listener{0.f, 0.f, 0.f};
     sound_event* handler = nullptr;
-    bool asynchronous = true, initialized = false;
+    bool asynchronous = true, initialized = false, streamSources = false;
+    std::map<std::string, std::shared_ptr<SoundSourceRequest>> sourceRequests;
+    std::map<ref_sound_data*, std::shared_ptr<SoundSourceRequest>> pendingSources;
+    std::map<ref_sound_data*, std::vector<std::string>> pendingTails;
+    struct SourceLength
+    {
+        float known = 0.f;
+        std::vector<std::shared_ptr<SoundSourceRequest>> requests;
+    };
+    std::map<const ref_sound_data*, SourceLength> sourceLengths;
+
+
+    std::shared_ptr<SoundSourceRequest> RequestSource(LPCSTR name)
+    {
+        string_path id;
+        xr_strcpy(id, name);
+        xr_strlwr(id);
+        if (strext(id)) *strext(id) = 0;
+        auto found = sourceRequests.find(id);
+        if (found != sourceRequests.end()) return found->second;
+        auto request = std::make_shared<SoundSourceRequest>();
+        request->core = core;
+        request->name = id;
+        request->placeholder.fname = id;
+        sourceRequests.emplace(id, request);
+        try { SoundSourceEnqueue(request); }
+        catch (...) { sourceRequests.erase(id); throw; }
+        return request;
+    }
+    void SetSource(ref_sound_data& data, CSoundRender_Source* source)
+    {
+        data.handle = source;
+        if (data.g_type == sg_SourceType) data.g_type = source->game_type();
+        data.dwBytesTotal = source->bytes_total();
+        data.fTimeTotal = source->length_sec();
+        for (int slot = 0; slot != 2; ++slot)
+            if (data.fn_attached[slot].size())
+            {
+                // These tails were already prepared before this base was published.
+                auto tail = RequestSource(data.fn_attached[slot].c_str());
+                if (tail->published)
+                {
+                    data.dwBytesTotal += tail->source->bytes_total();
+                    data.fTimeTotal += tail->source->length_sec();
+                }
+            }
+        if (auto* proxy = static_cast<VoiceProxy*>(data.feedback))
+        {
+            proxy->control.source = source;
+            proxy->waitingSource = false;
+            const auto* authored = source;
+            authored = source->anthology_original ? source->anthology_original : source;
+            if (!proxy->rangeSet)
+            {
+                proxy->control.params.min_distance = authored->m_fMinDist;
+                proxy->control.params.max_distance = authored->m_fMaxDist * psSoundMaxDistanceMultiplier;
+            }
+            proxy->control.params.max_ai_distance = authored->m_fMaxAIDist * psSoundMaxAIDistanceMultiplier;
+            proxy->control.params.base_volume = source->m_fBaseVolume;
+            if (source->channels_num() == 2)
+            {
+                proxy->control.params.position.set(0.f, 0.f, 0.f);
+                proxy->switch_to_2D();
+            }
+            proxy->Metadata();
+            proxy->set_frequency(proxy->control.frequency);
+        }
+    }
+    void PublishSources()
+    {
+        PROF_EVENT("Sound.Source.PublishReady");
+        auto readySources = SoundSourceTakeReady();
+        PROF_TAG("Sound source ready", u32(readySources.size()));
+        for (auto& request : readySources)
+        {
+            if (request->failure) std::rethrow_exception(request->failure);
+            request->published = true;
+        }
+        for (auto it = pendingSources.begin(); it != pendingSources.end();)
+            if (it->second->published)
+            {
+                SetSource(*it->first, it->second->source);
+                it = pendingSources.erase(it);
+            }
+            else ++it;
+        for (auto it = pendingTails.begin(); it != pendingTails.end();)
+        {
+            auto& data = *it->first;
+            bool ready = pendingSources.find(&data) == pendingSources.end();
+            for (const auto& name : it->second) ready = RequestSource(name.c_str())->published && ready;
+            if (!ready) { ++it; continue; }
+            for (const auto& name : it->second)
+            {
+                const auto source = RequestSource(name.c_str())->source;
+                const u32 slot = data.fn_attached[0].size() ? 1u : 0u;
+                R_ASSERT(!data.fn_attached[slot].size());
+                data.fn_attached[slot] = name.c_str();
+                data.dwBytesTotal += source->bytes_total();
+                data.fTimeTotal += source->length_sec();
+            }
+            if (auto* proxy = static_cast<VoiceProxy*>(data.feedback)) proxy->Metadata();
+            it = pendingTails.erase(it);
+        }
+    }
+
     std::mutex mutex;
     std::condition_variable ready, idle;
     std::thread worker;
@@ -282,7 +388,6 @@ class AsyncSound final : public CSound_manager_interface
                 if (!v.metadata)
                 {
                     for (int i = 0; i != 2; ++i) d.fn_attached[i] = c.tails[i].c_str();
-                    if (!c.appendedTails.empty()) v.tailAck = c.appendedTails.back().first;
                 }
                 if (d.feedback) static_cast<CSoundRender_Emitter*>(d.feedback)->fTimeToStop += extra;
                 v.metadata = c.metadata;
@@ -290,10 +395,7 @@ class AsyncSound final : public CSound_manager_interface
             for (const auto& tail : c.appendedTails)
             {
                 if (tail.first <= v.tailAck) continue;
-                auto& d = *v.sound._p;
-                const u32 slot = d.fn_attached[0].size() ? 1u : 0u;
-                R_ASSERT(!d.fn_attached[slot].size());
-                d.fn_attached[slot] = tail.second.c_str();
+                core->attach_tail(v.sound, tail.second.c_str());
                 v.tailAck = tail.first;
             }
             if (v.restart != c.restart)
@@ -484,12 +586,29 @@ class AsyncSound final : public CSound_manager_interface
         }
         backend.clear();
         retired.clear();
+        SoundDecodeWait();
+        pendingSources.clear();
+        pendingTails.clear();
+        sourceLengths.clear();
+        sourceRequests.clear();
         core->_clear();
     }
     void _create_data(ref_sound_data& d, LPCSTR name, esound_type type, int game) override
     {
         xrCriticalSection::raii frontendGuard(&sound_frontend_lock);
-        core->_create_data(d, name, type, game);
+        if (!streamSources) { core->_create_data(d, name, type, game); return; }
+        auto request = RequestSource(name);
+        d.handle = &request->placeholder;
+        d.g_type = game;
+        d.s_type = type;
+        d.feedback = nullptr;
+        d.g_object = nullptr;
+        d.g_userdata = nullptr;
+        d.dwBytesTotal = 0;
+        d.fTimeTotal = 0.f;
+        sourceLengths.emplace(&d, SourceLength{0.f, {request}});
+        if (request->published) SetSource(d, request->source);
+        else pendingSources.emplace(&d, request);
     }
     void _destroy_data(ref_sound_data& d) override
     {
@@ -498,6 +617,9 @@ class AsyncSound final : public CSound_manager_interface
         {
             xrCriticalSection::raii frontendGuard(&sound_frontend_lock);
             if (d.feedback) d.feedback->stop(FALSE);
+            pendingSources.erase(&d);
+            pendingTails.erase(&d);
+            sourceLengths.erase(&d);
             d.handle = nullptr;
         }
     }
@@ -506,9 +628,11 @@ public:
     ~AsyncSound() override { R_ASSERT(!worker.joinable()); }
     BOOL i_locked() override { return FALSE; } // Gameplay state has its original exclusive owner.
     BOOL is_ready() override { return initialized; }
-    void publish_device_state() override
+    void publish_device_state(bool allowStreaming) override
     {
         xrCriticalSection::raii frontend(&sound_frontend_lock);
+        streamSources = allowStreaming;
+        PublishSources();
         retired.clear();
         xr_vector<xr_string> names;
         xr_string name;
@@ -529,22 +653,52 @@ public:
         asynchronous = enabled;
     }
     void create(ref_sound& s, LPCSTR n, esound_type t, int g) override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); core->create(s, n, t, g); }
-    void clone(ref_sound& s, const ref_sound& f, esound_type t, int g) override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); core->clone(s, f, t, g); }
-    void attach_tail(ref_sound& s, LPCSTR n) override
+    void clone(ref_sound& s, const ref_sound& f, esound_type type, int game) override
     {
         xrCriticalSection::raii frontendGuard(&sound_frontend_lock);
-        // Core's legacy method casts feedback to its private emitter type.
-        auto* proxy = static_cast<VoiceProxy*>(s._feedback());
-        const u32 oldBytes = s._p->dwBytesTotal;
-        s._p->feedback = nullptr;
-        core->attach_tail(s, n);
-        s._p->feedback = proxy;
-        if (proxy && s._p->dwBytesTotal != oldBytes)
+        if (!core->bPresent || !f._p) return;
+        s._p = xr_new<ref_sound_data>();
+        s._p->handle = f._p->handle;
+        s._p->dwBytesTotal = f._p->dwBytesTotal;
+        s._p->fTimeTotal = f._p->fTimeTotal;
+        s._p->fn_attached[0] = f._p->fn_attached[0];
+        s._p->fn_attached[1] = f._p->fn_attached[1];
+        s._p->s_type = type;
+        const auto pendingSource = pendingSources.find(f._p._get());
+        s._p->g_type = game == sg_SourceType && pendingSource == pendingSources.end() ? s._p->handle->game_type() : game;
+        if (pendingSource != pendingSources.end()) pendingSources.emplace(s._p._get(), pendingSource->second);
+        const auto tails = pendingTails.find(f._p._get());
+        if (tails != pendingTails.end()) pendingTails.emplace(s._p._get(), tails->second);
+        const auto length = sourceLengths.find(f._p._get());
+        if (length != sourceLengths.end()) sourceLengths.emplace(s._p._get(), length->second);
+    }
+    void attach_tail(ref_sound& s, LPCSTR name) override
+    {
+        xrCriticalSection::raii frontendGuard(&sound_frontend_lock);
+        if (!core->bPresent || !s._p) return;
+        if (!streamSources && !s._feedback() && sourceLengths.find(s._p._get()) == sourceLengths.end())
         {
-            const u32 slot = s._p->fn_attached[1].size() ? 1u : 0u;
-            proxy->control.appendedTails.emplace_back(++proxy->nextTail, s._p->fn_attached[slot].c_str());
-            proxy->Metadata();
+            core->attach_tail(s, name);
+            return;
         }
+        const size_t attached = !!s._p->fn_attached[0].size() + !!s._p->fn_attached[1].size();
+        auto* proxy = static_cast<VoiceProxy*>(s._feedback());
+        const auto pendingTail = pendingTails.find(s._p._get());
+        const size_t waiting = pendingTail == pendingTails.end() ? 0 : pendingTail->second.size();
+        if (attached + waiting + (proxy ? proxy->control.appendedTails.size() : 0) >= 2) return;
+        auto request = RequestSource(name);
+        auto length = sourceLengths.find(s._p._get());
+        if (length == sourceLengths.end())
+            length = sourceLengths.emplace(s._p._get(), SourceLength{s._p->fTimeTotal, {}}).first;
+        length->second.requests.push_back(request);
+        if (proxy && !proxy->waitingSource && pendingSources.find(s._p._get()) == pendingSources.end())
+        {
+            // Already playing: append on the audio owner. Its original path
+            // preserves the playback cursor and publishes the new totals back.
+            proxy->control.appendedTails.emplace_back(++proxy->nextTail, request->name);
+            pendingTails.erase(s._p._get());
+        }
+        else pendingTails[s._p._get()].push_back(request->name);
     }
     void destroy(ref_sound& s) override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); if (s._feedback()) s._feedback()->stop(FALSE); s._p = nullptr; }
     void destroy_deferred(ref_sound& s) override
@@ -557,7 +711,7 @@ public:
     void play(ref_sound& s, CObject* o, u32 flags, float delay) override
     {
         xrCriticalSection::raii frontendGuard(&sound_frontend_lock);
-        if (!core->bPresent || !s._handle() || !s._handle()->bytes_total()) return;
+        if (!core->bPresent || !s._handle() || (!s._handle()->bytes_total() && pendingSources.find(s._p._get()) == pendingSources.end())) return;
         s._p->g_object = o;
         auto* proxy = static_cast<VoiceProxy*>(s._feedback());
         if (!proxy)
@@ -569,6 +723,7 @@ public:
             }
             auto owned = std::make_unique<VoiceProxy>(s._p, id);
             proxy = owned.get();
+            proxy->waitingSource = pendingSources.find(s._p._get()) != pendingSources.end();
             front.emplace(id, std::move(owned));
             s._p->feedback = proxy;
             proxy->control.flags = flags;
@@ -616,23 +771,38 @@ public:
     }
     int pause_emitters(bool p) override { return request_pause_emitters(p); }
     void stop_emitters() override { xrCriticalSection::raii frontendGuard(&sound_frontend_lock); if (initialized) FlushStopped(); }
-    void wait_for_streaming() override { Wait(); }
+    void wait_for_streaming() override { xrCriticalSection::raii guard(&sound_frontend_lock); streamSources = false; Wait(); core->wait_for_streaming(); PublishSources(); }
+    float get_length_sec(const ref_sound_data& data) override
+    {
+        xrCriticalSection::raii guard(&sound_frontend_lock);
+        const auto length = sourceLengths.find(&data);
+        if (length == sourceLengths.end()) return data.fTimeTotal;
+        float seconds = length->second.known;
+        for (const auto& request : length->second.requests)
+        {
+            // Wait only for this sound's metadata, never for unrelated PCM or
+            // the backend frame. Playback publication remains at FrameMove.
+            SoundSourceWait(request);
+            seconds += request->source->length_sec();
+        }
+        return seconds;
+    }
     void set_master_volume(float v) override { masterVolume = v; }
     const Fvector& listener_position() override { return listener; }
     void object_relcase(CObject* o) override
     {
         xrCriticalSection::raii frontendGuard(&sound_frontend_lock);
-        for (auto& e : front) if (e.second->data->g_object == o) e.second->data->g_object = nullptr;
+        for (auto& e : front) if (e.second->data->g_object == o) { if (e.second->waitingSource || pendingTails.find(e.second->data._get()) != pendingTails.end()) e.second->stop(FALSE); e.second->data->g_object = nullptr; }
 #ifdef DEBUG
         std::lock_guard<std::mutex> guard(mutex);
         for (auto& e : completedDetails) if (e.game_object == o) e.game_object = nullptr;
 #endif
     }
-    void set_handler(sound_event* h) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); handler = h; }
-    void set_geometry_env(IReader* r) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->set_geometry_env(r); }
-    void set_geometry_som(IReader* r) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->set_geometry_som(r); }
-    void set_geometry_occ(CDB::MODEL* m) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->set_geometry_occ(m); }
-    void _restart() override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->_restart(); }
+    void set_handler(sound_event* h) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->wait_for_streaming(); PublishSources(); handler = h; }
+    void set_geometry_env(IReader* r) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->wait_for_streaming(); PublishSources(); core->set_geometry_env(r); }
+    void set_geometry_som(IReader* r) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->wait_for_streaming(); PublishSources(); core->set_geometry_som(r); }
+    void set_geometry_occ(CDB::MODEL* m) override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->wait_for_streaming(); PublishSources(); core->set_geometry_occ(m); }
+    void _restart() override { xrCriticalSection::raii guard(&sound_frontend_lock); Wait(); core->wait_for_streaming(); PublishSources(); core->_restart(); }
     void refresh_devices() override { core->bPendingDeviceListRefresh = true; }
     void default_device_changed() override { core->bPendingDefaultDeviceSwitch = true; }
     void switch_device(LPCSTR name) override
@@ -693,7 +863,17 @@ public:
         packet.volume = masterVolume;
         packet.settings = CaptureSettings();
         packet.voices.reserve(front.size());
-        for (const auto& entry : front) packet.voices.push_back(entry.second->control);
+        for (const auto& entry : front)
+        {
+            auto& voice = *entry.second;
+            if (voice.waitingSource || pendingTails.find(voice.data._get()) != pendingTails.end())
+            {
+                if (voice.control.stopping) voice.stop(FALSE);
+                continue;
+            }
+            if (voice.control.source->bytes_total()) packet.voices.push_back(voice.control);
+            else voice.stop(FALSE);
+        }
         if (!asynchronous) { Execute(packet); return; }
         {
             std::lock_guard<std::mutex> guard(mutex);

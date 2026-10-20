@@ -7,6 +7,7 @@
 #include "SoundRender_TargetA.h"
 #include "SoundRender_Source.h"
 #include "SoundRender_CoreA.h"
+#include "SoundDecodeQueue.h"
 
 CSoundRender_Emitter* CSoundRender_Core::i_play(ref_sound* S, BOOL _loop, float delay)
 {
@@ -25,6 +26,7 @@ void CSoundRender_Core::update(const Fvector& P, const Fvector& D, const Fvector
 	u32 it;
 
 	if (0 == bReady) return;
+	SoundDecodePublish();
     drain_deferred_destroy();
 
 

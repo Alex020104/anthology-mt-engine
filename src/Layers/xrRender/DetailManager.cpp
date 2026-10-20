@@ -165,6 +165,7 @@ CDetailManager::CDetailManager()
 
 CDetailManager::~CDetailManager()
 {
+	xr_free(dtSlots);
 	if (dtFS)
 	{
 		FS.r_close(dtFS);
@@ -245,8 +246,10 @@ void CDetailManager::Load(bool publish, bool create_shaders, LPCSTR canonical_le
 
 	// Header
 	dtFS->r_chunk_safe(0, &dtH, sizeof(dtH));
-	R_ASSERT(dtH.version == DETAIL_VERSION);
+	R_ASSERT(dtH.version == DETAIL_VERSION_3 || dtH.version == DETAIL_VERSION_4);
 	u32 m_count = dtH.object_count;
+	R_ASSERT(m_count <= u32(dm_max_objects));
+	objects.reserve(m_count);
 
 	// Models
 	IReader* m_fs = dtFS->open_chunk(1);
@@ -260,9 +263,24 @@ void CDetailManager::Load(bool publish, bool create_shaders, LPCSTR canonical_le
 	}
 	m_fs->close();
 
-	// Get pointer to database (slots)
+	// Keep the working layout independent of the on-disk slot version.
 	IReader* m_slots = dtFS->open_chunk(2);
-	dtSlots = (DetailSlot*)m_slots->pointer();
+	R_ASSERT(m_slots);
+	const u32 disk_slot_size = dtH.version == DETAIL_VERSION_3 ? sizeof(DetailSlot_v3) : sizeof(DetailSlot);
+	const u64 slot_count_wide = u64(dtH.size_x) * dtH.size_z;
+	R_ASSERT(slot_count_wide <= m_slots->length() / disk_slot_size);
+	const u32 slot_count = u32(slot_count_wide);
+	dtSlots = xr_alloc<DetailSlot>(slot_count);
+	if (dtH.version == DETAIL_VERSION_4)
+	{
+		CopyMemory(dtSlots, m_slots->pointer(), size_t(slot_count) * sizeof(DetailSlot));
+	}
+	else
+	{
+		const DetailSlot_v3* source = static_cast<const DetailSlot_v3*>(m_slots->pointer());
+		for (u32 i = 0; i < slot_count; ++i)
+			expand_v3(dtSlots[i], source[i]);
+	}
 	m_slots->close();
 
 	// Initialize 'vis' and 'cache'
@@ -330,6 +348,7 @@ void CDetailManager::Unload()
 	m_visibles[2].clear();
 	FS.r_close(dtFS);
 	dtFS = 0;
+	xr_free(dtSlots);
 }
 
 void CDetailManager::Suspend()

@@ -656,13 +656,13 @@ std::exception_ptr CResourceManager::WaitForTextureLoadGeneration(const Resource
 	}
 }
 
-void CResourceManager::QueueTextureLoad(const ref_texture& texture)
+void CResourceManager::QueueTextureLoad(const ref_texture& texture, bool streaming)
 {
 	if (!texture)
 		return;
 #if defined(USE_DX10) || defined(USE_DX11)
 	// Weather and optional UI images are demand-loaded; PDA maps preload here.
-	if (texture->IsDemandOnly())
+	if (texture->IsDemandOnly() && !streaming)
 		return;
 #endif
 
@@ -679,11 +679,9 @@ void CResourceManager::QueueTextureLoad(const ref_texture& texture)
 			return;
 	}
 
-	// Overlap immutable DDS reads during startup and explicit load sessions.
-	// Once gameplay is live, new texture work stays on the render owner so it
-	// cannot steal frame time. CanLoadAsync additionally excludes UI, video and
-	// dynamic/PiP render targets.
-	const bool async = (generation || !g_appLoaded) && texture->CanLoadAsync();
+	// Streaming binds use the same lifetime-owned DDS queue as load sessions.
+    // The render owner binds a null SRV until the resource is published.
+	const bool async = (streaming || generation || !g_appLoaded) && texture->CanLoadAsync();
 	const DWORD originThread = GetCurrentThreadId();
 	xrCriticalSectionGuard guard(textureLoadGuard);
 	if (resourceLoadGenerationStarting)

@@ -1530,7 +1530,7 @@ u32 app_inactive_time_start = 0;
 void CRenderDevice::FrameMove()
 {
 	PROF_EVENT("Render: Frame Move");
-	if (::Sound) ::Sound->publish_device_state();
+	if (::Sound) ::Sound->publish_device_state(g_pGameLevel && g_pGameLevel->bReady && !dwPrecacheFrame && !pApp->LoadSessionActive());
 
 	if (InterlockedExchange(&g_monitor_list_dirty, 0))
 		refresh_vid_monitor_list();

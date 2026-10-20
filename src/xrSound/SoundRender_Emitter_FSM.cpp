@@ -4,6 +4,7 @@
 #include "SoundRender_Emitter.h"
 #include "SoundRender_Core.h"
 #include "SoundRender_Source.h"
+#include "SoundRender_Target.h"
 
 //#define MEASURE_PROCESSING_TIME
 
@@ -116,6 +117,16 @@ void CSoundRender_Emitter::update(float dt)
 	else
 	{
 		need_preplay_update = false;
+	}
+
+	if (!iPaused && target && !target->get_Rendering() &&
+		(m_current_state == stPlaying || m_current_state == stPlayingLooped))
+	{
+		// Preserve the onset of a cold short sound instead of expiring before
+		// its first decoded buffer. AI propagation keeps the original interval.
+		fTimeStarted += fDeltaTime;
+		if (m_current_state == stPlaying) fTimeToStop += fDeltaTime;
+		resource_wait += fDeltaTime;
 	}
 
 	switch (m_current_state)
@@ -309,7 +320,8 @@ void CSoundRender_Emitter::update(float dt)
 	bMoved = FALSE;
 	if (m_current_state != stStopped)
 	{
-		if (fTime >= fTimeToPropagade)
+		if (fTime >= fTimeToPropagade &&
+			((m_current_state != stPlaying && m_current_state != stSimulating) || fTime < fTimeToStop - resource_wait))
 			Event_Propagade();
 	}
 	else if (owner_data)

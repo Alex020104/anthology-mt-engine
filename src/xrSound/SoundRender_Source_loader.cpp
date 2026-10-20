@@ -5,6 +5,7 @@
 
 #include "SoundRender_Core.h"
 #include "SoundRender_Source.h"
+#include "SoundDecodeQueue.h"
 
 namespace
 {
@@ -430,6 +431,7 @@ void CSoundRender_Source::load(LPCSTR name)
 
 void CSoundRender_Source::unload()
 {
+	SoundDecodeForget(this);
 	SoundRender->cache.cat_destroy(CAT);
 	fTimeTotal = 0.0f;
 	dwBytesTotal = 0;

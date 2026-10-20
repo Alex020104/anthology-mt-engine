@@ -64,6 +64,7 @@ public:
 	float fTimeStarted; // time of "Start"
 	float fTimeToStop; // time to "Stop"
 	float fTimeToPropagade;
+	float resource_wait = 0.f; // PCM readiness does not extend AI hearing.
 	float pending_ai_range = 0.f; // Value-only completion; never a gameplay pointer on the audio owner.
 
 	u32 marker;
@@ -115,6 +116,7 @@ public:
 
 	void fill_block(void* ptr, u32 size);
 	void fill_data(u8* ptr, u32 offset, u32 size);
+	bool prepare_data(u32 size);
 
 	float priority();
 	void start(ref_sound* _owner, BOOL _loop, float delay);

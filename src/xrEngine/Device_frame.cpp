@@ -4,6 +4,7 @@
 #include "IGame_Level.h"
 #include "IGame_Persistent.h"
 #include "CustomHUD.h"
+#include "x_ray.h"
 #include "../xrCore/profiler.h"
 
 extern BOOL psLuaGCAlways;
@@ -32,11 +33,16 @@ bool CRenderDevice::IsGameLogicThread() const
     return game_logic_depth != 0;
 }
 
+bool CRenderDevice::LuaGCAlwaysActive() const
+{
+    return lua_gc_always_frame && (!pApp || !pApp->LoadSessionActive());
+}
+
 bool CRenderDevice::LuaGCAutomaticAllowed() const
 {
     if (!IsGameLogicThread() && (!IsMainThread() || game_logic_pending.load(std::memory_order_acquire)))
         return false;
-    return lua_gc_always_frame && !lua_gc_working.load(std::memory_order_acquire);
+    return LuaGCAlwaysActive() && !lua_gc_working.load(std::memory_order_acquire);
 }
 
 void CRenderDevice::WaitForGameLogic()
@@ -86,7 +92,7 @@ void CRenderDevice::RunGameLogicWork(void* context)
     FPU::m24r();
     if (!device.game_logic_gc_only)
         XRay::Engine::GameThread();
-    if (device.lua_gc_always_frame)
+    if (device.LuaGCAlwaysActive())
     {
         device.JoinLuaGCReaders();
         PROF_EVENT_DYNAMIC(device.game_logic_gc_only ? "GC.RenderContinuation" : "GC.Frame.Initial");
@@ -96,7 +102,10 @@ void CRenderDevice::RunGameLogicWork(void* context)
 
 void CRenderDevice::StartGameLogic()
 {
-    if (!lua_gc_always_frame)
+    // Keep the exclusive Lua owner while loading, but let native automatic GC
+    // run without depending on sparse precache render windows.
+    const bool loading_owner = psLuaGCAlways && !g_dedicated_server && pApp && pApp->LoadSessionActive();
+    if (!LuaGCAlwaysActive() && !loading_owner)
     {
         secondary_tasks.run(&XRay::Engine::GameThread);
         return;
@@ -121,7 +130,8 @@ void CRenderDevice::BeginLuaGCFrame()
     R_ASSERT(!game_logic_pending.load(std::memory_order_acquire));
     lua_gc_render_resumed = false;
     LuaGCUsec = 0;
-    const bool expected = psLuaGCAlways && !g_dedicated_server && g_pGameLevel && g_pGameLevel->bReady;
+    const bool expected = psLuaGCAlways && !g_dedicated_server && g_pGameLevel && g_pGameLevel->bReady &&
+        (!pApp || !pApp->LoadSessionActive());
     const unsigned missing = (!LuaGC ? 1u : 0u) | (!LuaGCReadInfo ? 2u : 0u) | (!LuaGCPrepare ? 4u : 0u);
     if (lua_gc_health.BindingRepairDue(expected, missing))
     {
@@ -148,7 +158,7 @@ void CRenderDevice::BeginLuaGCFrame()
 
 void CRenderDevice::ResumeLuaGCForRender()
 {
-    if (GetCurrentThreadId() != frame_main_thread || !lua_gc_always_frame ||
+    if (GetCurrentThreadId() != frame_main_thread || !LuaGCAlwaysActive() ||
         lua_gc_render_resumed || !isRendering || game_logic_pending.load(std::memory_order_acquire) ||
         !g_pGameLevel || !g_pGameLevel->bReady ||
         lua_gc_window.Reason() != LuaGCStopReason::LuaRequest)
@@ -186,6 +196,8 @@ void CRenderDevice::JoinLuaGCReaders()
 void CRenderDevice::RunLuaGCSteps()
 {
     R_ASSERT(GetCurrentThreadId() != frame_main_thread);
+    if (!LuaGCAlwaysActive())
+        return;
     PROF_EVENT("GC.Always.Window");
     unsigned steps = 0;
     const bool require_first_step = !game_logic_gc_only && LuaGCCount == 0;
@@ -195,6 +207,8 @@ void CRenderDevice::RunLuaGCSteps()
     {
         for (;;)
         {
+            if (!LuaGCAlwaysActive())
+                break;
             const auto reason = lua_gc_window.Reason();
             if (!LuaGCStepAllowed(reason, steps, require_first_step, lua_gc_emergency_work))
                 break;
@@ -231,7 +245,7 @@ void CRenderDevice::RunLuaGCSteps()
 
 void CRenderDevice::LuaGCAllocationSafePoint(u64 callback_ticks)
 {
-    if (!lua_gc_always_frame || !IsGameLogicThread() || LuaGCDone ||
+    if (!LuaGCAlwaysActive() || !IsGameLogicThread() || LuaGCDone ||
         lua_gc_working.load(std::memory_order_acquire) || !lua_gc_window.IsOpen())
         return;
     if (!lua_gc_pressure_policy.Offer(LuaGCReadInfo(), callback_ticks))
@@ -251,7 +265,7 @@ void CRenderDevice::LuaGCAllocationSafePoint(u64 callback_ticks)
 void CRenderDevice::FinishLuaGCFrame()
 {
     R_ASSERT(!game_logic_pending.load(std::memory_order_acquire));
-    if (!lua_gc_always_frame || !g_pGameLevel || !g_pGameLevel->bReady || !LuaGCReadInfo)
+    if (!LuaGCAlwaysActive() || !g_pGameLevel || !g_pGameLevel->bReady || !LuaGCReadInfo)
         return;
     const LuaGCInfo info = LuaGCReadInfo();
     const unsigned warning = lua_gc_health.ObserveProgress(info, u32(LuaGCCount));

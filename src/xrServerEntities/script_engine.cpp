@@ -16,16 +16,113 @@
 #include <unordered_map>
 #include <set>
 #include <luabind/class_info.hpp>
+#include "../xrEngine/IGame_Level.h"
+#include "../xrEngine/x_ray.h"
 
 extern ENGINE_API bool EngineShouldDeferFullLuaGC();
 extern ENGINE_API bool EngineShouldSuppressExplicitLuaJITFlush();
 extern ENGINE_API void EngineRecordDeferredFullLuaGC();
 extern ENGINE_API void EngineRecordSuppressedLuaJITFlush();
 
+int CScriptEngine::optick_sampling = 0;
+
 namespace
 {
+lua_State* game_lua_main = nullptr;
+
+#if XRCORE_PROFILER == PROFILER_OPTICK
+lua_State* optick_sampler_vm = nullptr;
+
+void optick_lua_sample(void*, lua_State* state, int samples, int vmstate)
+{
+    if (!Optick::IsActive() || (vmstate != 'I' && vmstate != 'N'))
+        return;
+    size_t length = 0;
+    const char* stack = luaJIT_profile_dumpstack(state, "pF;", 8, &length);
+    if (!length)
+        return;
+    // Samples identify stacks, not elapsed scopes. This 2.0 backport resolves
+    // pending samples at an interpreted instruction/trace exit, not inside a trace.
+    PROF_EVENT("Lua.StackSample");
+    // Optick string values are limited to 31 bytes; shared event names retain the stack.
+    PROF_EVENT_DYNAMIC(stack);
+    PROF_TAG("Lua pending ticks", u32(samples));
+    PROF_TAG("Lua VM state", u32(vmstate));
+}
+
+void stop_optick_lua_sampler()
+{
+    if (optick_sampler_vm)
+    {
+        luaJIT_profile_stop(optick_sampler_vm);
+        optick_sampler_vm = nullptr;
+    }
+}
+
+void update_optick_lua_sampler(lua_State* state)
+{
+    const bool wanted = state && CScriptEngine::optick_sampling && Optick::IsActive() &&
+        g_pGameLevel && g_pGameLevel->bReady && !Device.dwPrecacheFrame &&
+        (!pApp || !pApp->LoadSessionActive());
+    if (!wanted)
+    {
+        stop_optick_lua_sampler();
+        return;
+    }
+    if (optick_sampler_vm)
+        return;
+    if (lua_gethook(state) || lua_gethookmask(state))
+    {
+        Msg("! [Lua Optick] Existing Lua hooks are active; sampling skipped.");
+        CScriptEngine::optick_sampling = 0;
+        return;
+    }
+    luaJIT_profile_start(state, "fi1", &optick_lua_sample, nullptr);
+    optick_sampler_vm = state;
+}
+#else
+void stop_optick_lua_sampler() {}
+#endif
+
 constexpr LPCSTR original_collectgarbage_registry_key = "xray.original_collectgarbage";
 constexpr LPCSTR original_jit_flush_registry_key = "xray.original_jit_flush";
+
+void report_lua_memory_error(lua_State* L)
+{
+    if (!L || lua_type(L, -1) != LUA_TSTRING)
+        return;
+    const char* error = lua_tostring(L, -1);
+    if (!error || !strstr(error, "not enough memory"))
+        return;
+
+    lua_XRayMemoryError info = {};
+    const bool recorded = lua_xray_memory_error_snapshot(L, &info) != 0;
+    size_t heap = 0, threshold = 0, debt = 0;
+    int phase = -1;
+    lua_gcmetrics(L, &heap, &threshold, &debt, &phase);
+    Msg("! [LuaOOM] units=bytes vm=%p thread=%lu frame=%u stack=%d allocator_failure_recorded=%u sequence=%llu",
+        lua_vmidentity(L), GetCurrentThreadId(), Device.dwFrame, lua_gettop(L), unsigned(recorded), info.sequence);
+    Msg("! [LuaOOM] allocation kind=%u (1=realloc,2=new-object) requested=%llu previous=%llu heap_at_failure=%llu threshold_at_failure=%llu debt_at_failure=%llu phase_at_failure=%u incremental=%u hookmask=0x%X",
+        info.kind, (unsigned long long)info.requested, (unsigned long long)info.previous,
+        (unsigned long long)info.heap, (unsigned long long)info.threshold,
+        (unsigned long long)info.debt, info.phase, info.incremental, info.hookmask);
+    Msg("! [LuaOOM] current heap=%llu threshold=%llu debt=%llu phase=%d (0=pause,1=mark,2=remark,3=separate,4=atomic,5=sweepstrings,6=sweep,7=finalize)",
+        (unsigned long long)heap, (unsigned long long)threshold, (unsigned long long)debt, phase);
+    Msg("! [LuaOOM] low-address-pool base=%p reserved=%llu used=%llu largest_free_block=%llu invalid_map_chunks=%u reserve_status=0x%08X",
+        info.pool_base, (unsigned long long)info.pool_reserved, (unsigned long long)info.pool_used,
+        (unsigned long long)info.pool_largest_free, info.pool_invalid_chunks, info.pool_reserve_status);
+    Msg("! [LuaOOM] owner main=%u game_logic=%u always_active=%u automatic_gc_allowed=%u generation=%u frame_steps=%d cycle_done=%u load_session=%u full_gc_deferred=%u level_ready=%u precache=%u",
+        unsigned(Device.IsMainThread()), unsigned(Device.IsGameLogicThread()), unsigned(Device.LuaGCAlwaysActive()),
+        unsigned(Device.LuaGCAutomaticAllowed()), Device.LuaGCGeneration(), Device.LuaGCCount, unsigned(Device.LuaGCDone),
+        unsigned(pApp && pApp->LoadSessionActive()), unsigned(EngineShouldDeferFullLuaGC()),
+        unsigned(g_pGameLevel && g_pGameLevel->bReady), Device.dwPrecacheFrame);
+    MEMORYSTATUSEX memory = {};
+    memory.dwLength = sizeof(memory);
+    if (GlobalMemoryStatusEx(&memory))
+        Msg("! [LuaOOM] system free_physical=%llu free_commit=%llu free_virtual=%llu memory_load=%lu%%",
+            memory.ullAvailPhys, memory.ullAvailPageFile, memory.ullAvailVirtual, memory.dwMemoryLoad);
+    xrLogger::FlushLog();
+}
 
 int load_aware_collectgarbage(lua_State* L)
 {
@@ -241,6 +338,8 @@ CScriptEngine::CScriptEngine()
 CScriptEngine::~CScriptEngine()
 {
     Device.ResetLuaGCState();
+    stop_optick_lua_sampler();
+    game_lua_main = nullptr;
     luabind::detail::set_entry_callback(nullptr);
 
 #ifdef USE_LUA_FUNCTOR_CACHE
@@ -266,13 +365,16 @@ CScriptEngine::~CScriptEngine()
 void CScriptEngine::unload()
 {
     Device.WaitForGameLogic();
-	lua_settop(lua(), m_stack_level);
+    lua_State* const state = lua();
+    stop_optick_lua_sampler();
+	lua_settop(state, m_stack_level);
 	m_last_no_file_length = 0;
 	*m_last_no_file = 0;
 }
 
 int CScriptEngine::lua_panic(lua_State* L)
 {
+	report_lua_memory_error(L);
 	ai().script_engine().print_stack();
 	print_output(L, "PANIC", LUA_ERRRUN);
 	return (0);
@@ -305,6 +407,7 @@ xr_vector<xr_string> get_lua_stack(lua_State* L)
 
 void CScriptEngine::lua_error(lua_State* L)
 {
+	report_lua_memory_error(L);
 	ai().script_engine().print_stack();
 	print_output(L, "", LUA_ERRRUN);
 	ai().script_engine().on_error(L);
@@ -363,6 +466,7 @@ void printLuaStack()
 
 int CScriptEngine::lua_pcall_failed(lua_State* L)
 {
+	report_lua_memory_error(L);
 	ai().script_engine().print_stack();
 	print_output(L, "", LUA_ERRRUN);
 	ai().script_engine().on_error(L);
@@ -401,6 +505,11 @@ static void before_game_lua_entry(lua_State* state)
     if (lua_vmidentity(state) == game_lua_identity)
     {
         Device.WaitForGameLogic();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        // lua() itself calls prepare_lua_call; the admitted callback must use
+        // the cached main state, including when entry came from a coroutine.
+        update_optick_lua_sampler(game_lua_main);
+#endif
         // Long Lua owners may allocate before the background window can resume.
         // Permit allocation-triggered GC without restarting the current cycle.
         if (Device.LuaGCAutomaticAllowed() && lua_gc_resume_automatic(state))
@@ -412,7 +521,8 @@ static void before_game_lua_entry(lua_State* state)
 
 void CScriptEngine::setup_callbacks()
 {
-    game_lua_identity = lua_vmidentity(lua());
+    game_lua_main = lua();
+    game_lua_identity = lua_vmidentity(game_lua_main);
     luabind::detail::set_entry_callback(&before_game_lua_entry);
 #ifdef USE_DEBUGGER
 #	ifndef USE_LUA_STUDIO
@@ -486,6 +596,8 @@ extern bool unlocalizerPassed;
 void CScriptEngine::init()
 {
     Device.ResetLuaGCState();
+    stop_optick_lua_sampler();
+    game_lua_main = nullptr;
     PROF_EVENT("Lua.Initialize");
 #ifdef USE_LUA_STUDIO
     bool lua_studio_connected = !!m_lua_studio_world;
