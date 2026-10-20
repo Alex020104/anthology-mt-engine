@@ -11,6 +11,7 @@
 IC CALifeScheduleRegistry::CALifeScheduleRegistry()
 {
 	m_objects_per_update = 1;
+	m_objects_remaining = 0;
 	m_profile_first_frame = 0;
 	m_profile_update_count = 0;
 	m_profile_total_ticks = 0;
@@ -28,6 +29,8 @@ IC const u32& CALifeScheduleRegistry::objects_per_update() const
 IC void CALifeScheduleRegistry::objects_per_update(const u32& objects_per_update)
 {
 	m_objects_per_update = objects_per_update;
+	m_objects_remaining = 0;
+	m_update_in_progress = false;
 }
 
 IC CSE_ALifeSchedulable* CALifeScheduleRegistry::object(const ALife::_OBJECT_ID& id, bool no_assert) const

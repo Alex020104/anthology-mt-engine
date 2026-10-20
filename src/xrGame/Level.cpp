@@ -373,6 +373,7 @@ extern CAI_Space* g_ai_space;
 CLevel::~CLevel()
 {
     Device.ResetLuaGCState();
+    Device.remove_from_seq_parallel(xr_make_delegate(this, &CLevel::update_script_calls));
     Device.LuaGC.clear();
     Device.LuaGCFull.clear();
     Device.LuaGCDebug.clear();
@@ -1302,7 +1303,6 @@ void CLevel::MakeReconnect()
 	}
 }
 
-BOOL mt_ph_commander = FALSE;
 BOOL mt_TaskManager = FALSE;
 void CLevel::OnFrame()
 {
@@ -1545,18 +1545,10 @@ void CLevel::OnFrame()
 		post_ticks = now - phase_started_at;
 		phase_started_at = now;
 	}
-	if (!mt_ph_commander)
-	{
-		PROF_EVENT("m_ph_commander");
-		const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
-		const u64 script_started_at = measure_precache ? CPU::QPC() : 0;
-		ai().script_engine().script_process(ScriptEngine::eScriptProcessorLevel)->update();
-
-		m_ph_commander->update();
-		m_ph_commander_scripts->update();
-		if (measure_precache)
-			pApp->LoadSessionRecordPrecacheUpdate(0, 0, CPU::QPC() - script_started_at);
-	}
+	if (bReady && !Device.dwPrecacheFrame && (!pApp || !pApp->LoadSessionActive()))
+		Device.add_to_seq_parallel(xr_make_delegate(this, &CLevel::update_script_calls), "level.script_calls");
+	else
+		update_script_calls();
 	if (measure_detail)
 	{
 		const u64 now = CPU::QPC();
@@ -1676,16 +1668,20 @@ extern int psLua_ParallelGC_PostLoadDelayMs;
 int psLua_ParallelGCPause = 200;
 int psLua_ParallelGCStepMul = 200;
 
+void CLevel::update_script_calls()
+{
+	PROF_EVENT("m_ph_commander");
+	const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
+	const u64 script_started_at = measure_precache ? CPU::QPC() : 0;
+	ai().script_engine().script_process(ScriptEngine::eScriptProcessorLevel)->update();
+	m_ph_commander->update();
+	m_ph_commander_scripts->update();
+	if (measure_precache)
+		pApp->LoadSessionRecordPrecacheUpdate(0, 0, CPU::QPC() - script_started_at);
+}
+
 void CLevel::script_gc()
 {
-	if (mt_ph_commander)
-	{
-		PROF_EVENT("m_ph_commander");
-		ai().script_engine().script_process(ScriptEngine::eScriptProcessorLevel)->update();
-
-		m_ph_commander->update();
-		m_ph_commander_scripts->update();
-	}
 	if (!Device.LuaGCAlwaysActive() && !(psLua_ParallelGC && Device.LuaGC))
 	{
 		PROF_EVENT("CLevel::script_gc");
@@ -1815,11 +1811,11 @@ void CLevel::OnRender()
 		// The PDA is rendered before the main HUD pass. Its hints share the
 		// same text buffers with the UI worker and need the same frame fence.
 		HUD().WaitForUIUpdate();
+		Device.WaitForGameLogic();
 		xrCriticalSectionGuard guard(ui_lock);
 		CUIPdaWnd* pda = &CurrentGameUI()->GetPdaMenu();
 		if (pda->IsShown())
 		{
-            Device.WaitForGameLogic();
 			ps_r4_hdr10_pda = 1; // !!! HACK !!!
 
 			pda->Draw();

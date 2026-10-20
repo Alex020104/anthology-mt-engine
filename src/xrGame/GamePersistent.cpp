@@ -43,9 +43,7 @@
 #endif // _EDITOR
 #include "gametype_chooser.h"
 
-extern BOOL mt_Scheduler;
 extern BOOL g_bLoaded;
-extern BOOL mt_SchedulerRT;
 
 //#ifdef DEBUG_MEMORY_MANAGER
 //	static	void *	ode_alloc	(size_t size)								{ return Memory.mem_alloc(size,"ODE");			}
@@ -870,35 +868,6 @@ void CGamePersistent::OnFrame()
 
 	if (!Device.Paused())
 	{
-		const bool measure_precache_scheduler = pApp && pApp->LoadSessionMeasurePrecache();
-		const u64 scheduler_started_at = measure_precache_scheduler ? CPU::QPC() : 0;
-		if (!mt_Scheduler)
-		{
-			PROF_EVENT("Sheduler");
-			::Engine.Sheduler.Update();
-		}
-		else
-		{
-            if (!mt_SchedulerRT)
-            {
-			PROF_EVENT("Sheduler RT");
-			const u64 scheduler_init_started_at = measure_frame ? CPU::QPC() : 0;
-			::Engine.Sheduler.UpdateInit();
-			if (measure_frame)
-				frame_profile.scheduler_init += CPU::QPC() - scheduler_init_started_at;
-			const u64 scheduler_rt_started_at = measure_frame ? CPU::QPC() : 0;
-			::Engine.Sheduler.UpdateRT();
-			if (measure_frame)
-			{
-				const u64 elapsed = CPU::QPC() - scheduler_rt_started_at;
-				frame_profile.scheduler_rt += elapsed;
-				frame_profile.max_scheduler_rt = std::max(frame_profile.max_scheduler_rt, elapsed);
-			}
-            }
-		}
-		if (measure_precache_scheduler)
-			pApp->LoadSessionRecordPrecacheScheduler(CPU::QPC() - scheduler_started_at);
-
 		// update weathers ambient
 		const u64 weather_started_at = measure_frame ? CPU::QPC() : 0;
 		WeathersUpdate();

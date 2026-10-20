@@ -9,6 +9,15 @@
 #include "stdafx.h"
 #include "alife_schedule_registry.h"
 #include "../xrEngine/EngineThreading.h"
+#include "../xrEngine/device.h"
+
+namespace
+{
+	bool CanContinueALife()
+	{
+		return Device.CanContinueGameLogicWork();
+	}
+}
 
 void CALifeScheduleRegistry::reset_profile()
 {
@@ -21,7 +30,7 @@ void CALifeScheduleRegistry::reset_profile()
 	m_profile_slowest_name = "none";
 }
 
-void CALifeScheduleRegistry::update_object(CSE_ALifeSchedulable* object)
+void CALifeScheduleRegistry::update_object(CSE_ALifeSchedulable* object, bool frame_limited)
 {
 	const bool profile = mt_FrameProfile && mt_FrameProfileDetailed && CPU::qpc_freq;
 #if XRCORE_PROFILER == PROFILER_OPTICK
@@ -30,7 +39,10 @@ void CALifeScheduleRegistry::update_object(CSE_ALifeSchedulable* object)
 	const bool capture = false;
 #endif
 	const CSE_Abstract* base = profile || capture ? object->base() : nullptr;
-	const u64 started_at = profile ? CPU::QPC() : 0;
+	const ALife::_OBJECT_ID profile_id = profile && base ? base->ID : ALife::_OBJECT_ID(-1);
+	const shared_str profile_section = profile && base ? base->s_name : shared_str();
+	const shared_str profile_name = profile && base ? shared_str(base->name_replace()) : shared_str();
+	const u64 started_at = profile || frame_limited ? CPU::QPC() : 0;
 	START_PROFILE("ALife/scheduled/update")
 		if (capture && base)
 		{
@@ -40,21 +52,25 @@ void CALifeScheduleRegistry::update_object(CSE_ALifeSchedulable* object)
 		}
 		object->update();
 	STOP_PROFILE
-	if (!profile)
-		return;
-
-	const u64 elapsed = CPU::QPC() - started_at;
-	if (!m_profile_update_count)
-		m_profile_first_frame = Device.dwFrame;
-	++m_profile_update_count;
-	m_profile_total_ticks += elapsed;
-	if (elapsed > m_profile_slowest_ticks)
+	const u64 elapsed = profile || frame_limited ? CPU::QPC() - started_at : 0;
+	if (profile)
 	{
-		m_profile_slowest_ticks = elapsed;
-		m_profile_slowest_id = base ? base->ID : ALife::_OBJECT_ID(-1);
-		m_profile_slowest_section = base ? base->s_name : shared_str("unknown");
-		m_profile_slowest_name = base ? base->name_replace() : shared_str("unknown");
+		if (!m_profile_update_count)
+			m_profile_first_frame = Device.dwFrame;
+		++m_profile_update_count;
+		m_profile_total_ticks += elapsed;
+		if (elapsed > m_profile_slowest_ticks)
+		{
+			m_profile_slowest_ticks = elapsed;
+			m_profile_slowest_id = profile_id;
+			m_profile_slowest_section = profile_section;
+			m_profile_slowest_name = profile_name;
+		}
 	}
+	// The callback has completely returned. Reuse the existing allocation-
+	// pressure policy here so a long ALife batch cannot starve collection.
+	if (frame_limited)
+		Device.LuaGCAllocationSafePoint(elapsed);
 }
 
 void CALifeScheduleRegistry::flush_profile()
@@ -78,11 +94,34 @@ void CALifeScheduleRegistry::flush_profile()
 	reset_profile();
 }
 
-void CALifeScheduleRegistry::update()
+bool CALifeScheduleRegistry::update(bool frame_limited)
 {
-	if (!objects().empty())
-		inherited::update(CUpdatePredicate(this, m_objects_per_update), false);
+	if (!frame_limited || objects().empty() || !m_objects_per_update)
+	{
+		m_objects_remaining = 0;
+		m_update_in_progress = false;
+		if (!objects().empty())
+			inherited::update(CUpdatePredicate(this, m_objects_per_update), false);
+		flush_profile();
+		return true;
+	}
+
+	if (!m_objects_remaining)
+		m_objects_remaining = m_objects_per_update;
+	bool completed = false;
+	const u32 processed = inherited::update(CUpdatePredicate(this, m_objects_remaining, true),
+		false, &completed, &CanContinueALife);
+	if (completed || processed >= m_objects_remaining)
+	{
+		m_objects_remaining = 0;
+		m_update_in_progress = false;
+	}
+	else
+		m_objects_remaining -= processed;
+	PROF_TAG("ALife objects processed", processed);
+	PROF_TAG("ALife objects remaining", m_objects_remaining);
 	flush_profile();
+	return m_objects_remaining == 0;
 }
 
 CALifeScheduleRegistry::~CALifeScheduleRegistry()

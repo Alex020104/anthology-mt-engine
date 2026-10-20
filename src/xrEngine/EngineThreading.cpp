@@ -11,7 +11,6 @@
 #include "x_ray.h"
 #include "../../Include/xrRender/Kinematics.h"
 
-BOOL mt_Scheduler = TRUE;
 BOOL mt_FrameProfile = FALSE;
 BOOL mt_FrameProfileDetailed = FALSE;
 
@@ -131,7 +130,6 @@ SFrameTaskProfile XRay::Engine::ConsumeFrameTaskProfile()
 	result.max_vision = frame_task_max_ticks[FrameTaskVision].exchange(0, std::memory_order_relaxed);
 	return result;
 }
-BOOL mt_SchedulerRT = FALSE;
 
 void XRay::Engine::PreRenderThread()
 {
@@ -276,20 +274,9 @@ void XRay::Engine::GameThread()
 
 	if (!Device.Paused())
 	{
-		if (mt_Scheduler)
-		{
-			CFrameTaskTimer scheduler_profile(FrameTaskGameScheduler);
-			PROF_EVENT("Sheduler Deferred");
-            if (mt_SchedulerRT)
-            {
-                ::Engine.Sheduler.Update();
-            }
-            else
-            {
-                ::Engine.Sheduler.UpdateDeferred();
-                ::Engine.Sheduler.UpdateFinalize();
-            }
-		}
+		CFrameTaskTimer scheduler_profile(FrameTaskGameScheduler);
+		PROF_EVENT("Sheduler Deferred");
+		::Engine.Sheduler.Update();
 	}
 
 	{
