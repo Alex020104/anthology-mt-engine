@@ -3,10 +3,13 @@
   <string id="ui_mcm_menu_anthology_upscaler"><text>Anthology: DLSS / FSR / PiP</text></string>
   <string id="ui_mcm_anthology_upscaler_about"><text>DX11 upscaling and anti-aliasing. DLSS requires RTX; FSR 3.1 supports compatible DX11 GPUs. This is not frame generation. MCM restarts the renderer after mode or quality changes. An unavailable backend falls back to native rendering.</text></string>
   <string id="ui_mcm_anthology_upscaler_mode"><text>Mode</text></string>
+  <string id="ui_mcm_anthology_upscaler_mode_desc"><text>Select the upscaling technology. DLSS requires an NVIDIA RTX GPU. Disable MSAA to use DLSS or FSR. Changes apply after restarting the renderer.</text></string>
   <string id="ui_mcm_anthology_upscaler_quality"><text>Quality</text></string>
+  <string id="ui_mcm_anthology_upscaler_quality_desc"><text>Controls the internal scene resolution. Ultra Quality sits between native resolution and Quality. Custom uses the render scale slider. Changes apply after restarting the renderer.</text></string>
   <string id="ui_mcm_anthology_upscaler_scale"><text>Custom render scale</text></string>
   <string id="ui_mcm_anthology_upscaler_scale_desc"><text>Only used with Custom quality. DLSS selects the nearest supported preset.</text></string>
   <string id="ui_mcm_anthology_upscaler_sharpness"><text>Upscaler sharpness</text></string>
+  <string id="ui_mcm_anthology_upscaler_sharpness_desc"><text>Controls additional sharpening of the main image after upscaling. A value of 0 disables this effect.</text></string>
   <string id="ui_mcm_anthology_upscaler_pip_effects"><text>Refresh PiP effects (experimental)</text></string>
   <string id="ui_mcm_anthology_upscaler_pip_effects_desc"><text>Refreshes water, rain and translucent contributions between full scope captures using the current main view. Small effects may lose detail. Disable if artifacts appear, or set the PiP capture interval to 1.</text></string>
   <string id="ui_mcm_lst_anthology_upscaler_off"><text>Off</text></string>
