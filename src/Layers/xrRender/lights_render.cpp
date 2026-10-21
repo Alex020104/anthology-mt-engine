@@ -1,7 +1,13 @@
 #include "stdafx.h"
+#include "RenderDimensions.h"
 #include "../../xrEngine/xr_object.h"
 #include "FBasicVisual.h"
 #include "SkeletonCustom.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/LocalLightDebug.h"
+#endif
+
+extern int ps_r2_shadow_omnipart_vischeck;
 
 extern int ps_r2_shadow_omnipart_vischeck;
 
@@ -49,17 +55,47 @@ IC void hud_light_restore(xr_map<light*, std::pair<Fvector, Fvector>>& saved_pos
 	}
 }
 
+#if RENDER == R_R2
+void CRender::render_scope_hud_lights()
+{
+    light_Package& package = LP_scope_hud;
+    xr_map<light*, std::pair<Fvector, Fvector>> saved;
+    hud_light_apply(saved, package.v_point);
+    hud_light_apply(saved, package.v_spot);
+    hud_light_apply(saved, package.v_shadowed);
+    for (light* L : package.v_point)
+        if (L->vis.visible)
+            Target->accum_point(L);
+    for (light* L : package.v_spot)
+        if (L->vis.visible)
+            Target->accum_spot(L, true);
+    for (light* L : package.v_shadowed)
+        if (L->vis.visible)
+            Target->accum_spot(L, true);
+    hud_light_restore(saved, package.v_point);
+    hud_light_restore(saved, package.v_spot);
+    hud_light_restore(saved, package.v_shadowed);
+}
+#endif
+
 void CRender::render_lights(light_Package& LP)
 {
 	const bool reduced_svp_shadow_casters = Device.m_SecondViewport.IsSVPFrame() &&
 		ScopeLenseQualityTier() >= 2;
 	xr_map<light*, std::pair<Fvector, Fvector>> saved_pos;
+	stats.ls_shadowed_in += (u32)LP.v_shadowed.size();
+	stats.ls_unshadowed_point_in += (u32)LP.v_point.size();
+	stats.ls_unshadowed_spot_in += (u32)LP.v_spot.size();
+	stats.ls_shadowed_peak_in = _max(stats.ls_shadowed_peak_in, (u32)LP.v_shadowed.size());
 	//////////////////////////////////////////////////////////////////////////
 	// 0. apply hud_mode projection if necessary
 	hud_light_apply(saved_pos, LP.v_shadowed);
 	hud_light_apply(saved_pos, LP.v_point);
 	hud_light_apply(saved_pos, LP.v_spot);
 
+#if defined(USE_DX11) && RENDER == R_R4
+    if (!local_light_shadows || !local_light_shadows->RenderShadows(LP))
+#endif
 	{
 #if defined(USE_DX10) || defined(USE_DX11)
 		PIX_EVENT(SHADOWED_LIGHTS);
@@ -90,12 +126,20 @@ void CRender::render_lights(light_Package& LP)
 				else
 					L->vis_update();
 				if (!L->vis.visible)
+				{
+					RImplementation.stats.ls_shadowed_invisible_skipped++;
 					return true;
+				}
 
+#if defined(USE_DX11) && RENDER == R_R4
+                if (LocalLightDebug::active) LocalLightDebug::Accepted(*L);
+#endif
 				L->optimize_smap_size();
 
 				return false;
 			}), source.end());
+			stats.ls_shadowed_after_vis += (u32)source.size();
+			stats.ls_shadowed_peak_after_vis = _max(stats.ls_shadowed_peak_after_vis, (u32)source.size());
 		}
 
 		{
@@ -244,6 +288,7 @@ void CRender::render_lights(light_Package& LP)
 			if (!L_spot_s.empty())
 			{
 				PROF_EVENT("ACCUM_SPOT");
+				stats.ls_shadowed_rendered += (u32)L_spot_s.size();
 				for (light* L : L_spot_s)
 				{
 					Target->accum_spot(L);
@@ -280,6 +325,7 @@ void CRender::render_lights(light_Package& LP)
 #if defined(USE_DX10) || defined(USE_DX11)
 		PIX_EVENT(UNSHADOWED_LIGHTS);
 #endif
+        PROF_EVENT("UNSHADOWED_LIGHTS");
 		{
 #if defined(USE_DX10) || defined(USE_DX11)
 			PIX_EVENT(POINT_LIGHTS_ACCUM_UNSH);
@@ -294,6 +340,7 @@ void CRender::render_lights(light_Package& LP)
 						continue;
 
 					Target->accum_point(L);
+					++stats.ls_unshadowed_point_rendered;
 					render_indirect(L);
 				}
 				LP.v_point.clear();
@@ -313,6 +360,7 @@ void CRender::render_lights(light_Package& LP)
 						continue;
 
 					Target->accum_spot(L);
+					++stats.ls_unshadowed_spot_rendered;
 					render_indirect(L);
 				}
 				LP.v_spot.clear();
@@ -321,9 +369,13 @@ void CRender::render_lights(light_Package& LP)
 	}
 
 	// restore world projection if necessary
-	hud_light_restore(saved_pos, LP.v_shadowed);
-	hud_light_restore(saved_pos, LP.v_point);
-	hud_light_restore(saved_pos, LP.v_spot);
+    {
+        PROF_EVENT("hud_light_restore");
+        hud_light_restore(saved_pos, LP.v_shadowed);
+        hud_light_restore(saved_pos, LP.v_point);
+        hud_light_restore(saved_pos, LP.v_spot);
+    }
+
 }
 
 void CRender::render_indirect(light* L)

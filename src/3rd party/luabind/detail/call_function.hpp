@@ -330,6 +330,7 @@ namespace luabind
     template<typename Ret, typename... Args>
     decltype(auto) call_function(lua_State* L, const char* name, const Args&... args)
     {
+		detail::prepare_lua_call(L);
         assert(name && "luabind::call_function() expects a function name");
 
         using proxy_type = std::conditional_t<
@@ -347,6 +348,7 @@ namespace luabind
     template<typename Ret, typename... Args>
     decltype(auto) call_function(luabind::object const& obj, const Args&... args)
     {
+		detail::prepare_lua_call(obj.lua_state());
         using proxy_type = std::conditional_t<
             std::is_void_v<Ret>,
             luabind::detail::proxy_function_void_caller<const Args*...>,
@@ -360,6 +362,7 @@ namespace luabind
     template<typename Ret, typename... Args>
     decltype(auto) resume_function(lua_State* L, const char* name, const Args&... args)
     {
+		detail::prepare_lua_call(L);
         assert(name && "luabind::resume_function() expects a function name");
 
         using proxy_type = std::conditional_t<
@@ -377,6 +380,7 @@ namespace luabind
     template<typename Ret, typename... Args>
     decltype(auto) resume_function(luabind::object const& obj, const Args&... args)
     {
+		detail::prepare_lua_call(obj.lua_state());
         using proxy_type = std::conditional_t<
             std::is_void_v<Ret>,
             luabind::detail::proxy_function_void_caller<const Args*...>,
@@ -390,6 +394,7 @@ namespace luabind
     template<typename Ret, typename... Args>
     decltype(auto) resume(lua_State* L, const Args&... args)
     {
+		detail::prepare_lua_call(L);
         using proxy_type = std::conditional_t<
             std::is_void_v<Ret>,
             luabind::detail::proxy_function_void_caller<const Args*...>,

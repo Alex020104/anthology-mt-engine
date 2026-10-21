@@ -18,6 +18,9 @@ BOOL debug_step_info_load = FALSE;
 
 extern float psHUDStepSoundVolume;
 
+float g_step_sound_distance = 50.0f;
+float g_step_particle_distance = 50.0f;
+
 CStepManager::CStepManager()
 {
 }
@@ -164,7 +167,8 @@ void CStepManager::update(bool b_hud_view)
 		if (!m_blend) return;
 
 		float dist = m_object->Position().distance_to(Device.vCameraPosition);
-		bool b_play = dist < 50.0f; //meters
+        bool b_play_sound = dist < g_step_sound_distance;
+		bool b_play_particles = dist < g_step_particle_distance;
 
 		// получить параметры шага
 		SStepParam& step = m_step_info.params;
@@ -199,7 +203,7 @@ void CStepManager::update(bool b_hud_view)
 					break;
 
 				CGameObject* object = smart_cast<CGameObject*>(m_object);
-				if (b_play && is_on_ground() && anthology::snow::Active() && object &&
+				if (b_play_sound && is_on_ground() && anthology::snow::Active() && object &&
 					(b_hud_view || m_foot_bones[i] != BI_NONE))
 				{
 					// First-person body bones may be in the idle pose. Keep the real
@@ -219,7 +223,7 @@ void CStepManager::update(bool b_hud_view)
 						m_snow_last_foot[i]=foot;m_snow_last_stamp[i]=cur_time;
 					}
 				}
-				if (b_play && is_on_ground() && object)
+				if (b_play_sound && is_on_ground() && object)
 				{
 					if (object->ID() == 0)
 					{
@@ -237,12 +241,12 @@ void CStepManager::update(bool b_hud_view)
 					else
 					{
 						m_step_sound.play_next(mtl_pair, m_object, m_step_info.params.step[i].power, b_hud_view);
-						object->FootStepCallback(m_step_info.params.step[i].power, b_play, is_on_ground(), b_hud_view);
+                     object->FootStepCallback(m_step_info.params.step[i].power, b_play_sound, is_on_ground(), b_hud_view);
 					}	
 				}
 
 				// Играть партиклы
-				if (b_play && !mtl_pair->CollideParticles.empty())
+              if (b_play_particles && !mtl_pair->CollideParticles.empty())
 				{
 					LPCSTR ps_name = *mtl_pair->CollideParticles[::Random.randI(0, mtl_pair->CollideParticles.size())];
 

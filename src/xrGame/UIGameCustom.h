@@ -90,6 +90,7 @@ protected:
 	CUIWindow* Window;
 	CUIXml* MsgConfig;
 	xr_vector<StaticDrawableWrapper*> CustomStatics;
+	// captions are mutated by game logic and drawn by the render thread, guard every access
 	CUIActorMenu* ActorMenu;
 	CUIPdaWnd* PdaMenu;
 	bool showGameIndicators;

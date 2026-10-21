@@ -12,6 +12,9 @@ public:
 	void Reset();
 	//	Sends states to DX10 runtime, creates new state objects if nesessary
 	void Apply();
+#ifdef USE_DX11
+    bool ShadowBatchStateSafe();
+#endif
 
 	//	Unmaps all constant bindings.
 	void UnmapConstants();
@@ -92,5 +95,8 @@ private:
 };
 
 extern dx10StateManager StateManager;
+#if defined(USE_DX11) && RENDER == R_R4
+#define StateManager ActiveStateManager()
+#endif
 
 #endif	//	dx10StateManager_included

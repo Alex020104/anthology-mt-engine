@@ -657,6 +657,9 @@
     <ClInclude Include="..\xrRenderDX10\dx10BufferUtils.h">
       <Filter>dx9 to dx10 Utils</Filter>
     </ClInclude>
+    <ClInclude Include="..\xrRenderDX10\dx10DebugName.h">
+      <Filter>dx9 to dx10 Utils</Filter>
+    </ClInclude>
     <ClInclude Include="..\xrRenderDX10\dx10StateUtils.h">
       <Filter>dx9 to dx10 Utils</Filter>
     </ClInclude>
@@ -756,6 +759,8 @@
     <ClInclude Include="..\..\Include\xrRender\ImGuiRender.h">
       <Filter>Interfase implementations\ImGuiRender</Filter>
     </ClInclude>
+    <ClInclude Include="..\xrRender\gifPlayer.h">
+      <Filter>Core</Filter>
     <ClInclude Include="..\xrRender\CHudInitializer.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -1379,6 +1384,9 @@
     </ClCompile>
     <ClCompile Include="..\xrRender\dxImGuiRender.cpp">
       <Filter>Interfase implementations\ImGuiRender</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRender\gifPlayer.cpp">
+      <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\CHudInitializer.cpp">
       <Filter>Core</Filter>

@@ -11,14 +11,15 @@ namespace
 {
 u32 ResolveEffectiveQuality(u32 mode)
 {
-	const u32 configured = clampr(ps_r4_upscaler_quality, 0u, 5u);
+	const u32 configured = clampr(ps_r4_upscaler_quality, 0u, 6u);
 	if (mode != AnthologyUpscalerDLSS || configured != 5)
 		return configured;
 
 	// Direct NGX has no arbitrary custom-ratio quality mode. Snap Custom to the
 	// nearest supported preset and use that preset's render size, so a low-res
 	// input can never be paired with DLAA.
-	static const float presetScales[] = {1.0f, 2.0f / 3.0f, 0.5882353f, 0.5f, 1.0f / 3.0f};
+	static const float presetScales[] = {1.0f, 2.0f / 3.0f, 0.5882353f, 0.5f, 1.0f / 3.0f, 5.0f / 6.0f};
+    static const u32 presetQualities[] = {0, 1, 2, 3, 4, 6};
 	const float customScale = clampr(ps_r4_upscaler_custom_scale, 0.33f, 1.0f);
 	u32 nearest = 0;
 	float nearestDistance = fabsf(customScale - presetScales[0]);
@@ -31,7 +32,7 @@ u32 ResolveEffectiveQuality(u32 mode)
 			nearestDistance = distance;
 		}
 	}
-	return nearest;
+	return presetQualities[nearest];
 }
 
 LPCSTR QualityName(u32 quality)
@@ -44,6 +45,7 @@ LPCSTR QualityName(u32 quality)
 	case 3: return "performance";
 	case 4: return "ultra_performance";
 	case 5: return "custom";
+    case 6: return "ultra_quality";
 	default: return "unknown";
 	}
 }
@@ -59,6 +61,7 @@ float CAnthologyUpscalerRuntime::ResolveRenderScale() const
     case 2: return 0.5882353f;
     case 3: return 0.5f;
     case 4: return 1.f / 3.f;
+    case 6: return 5.f / 6.f;
     default: return clampr(ps_r4_upscaler_custom_scale, 0.33f, 1.f);
     }
 }
@@ -72,7 +75,8 @@ void BackendLog(const char* stage, unsigned result)
 
 dlss::Quality BackendQuality(u32 quality)
 {
-    return static_cast<dlss::Quality>(clampr(quality, 0u, 4u) + 1u);
+    return quality == 6 ? dlss::Quality::UltraQuality :
+        static_cast<dlss::Quality>(clampr(quality, 0u, 4u) + 1u);
 }
 }
 
@@ -157,7 +161,7 @@ bool CAnthologyUpscalerRuntime::Initialize(u32 renderWidth, u32 renderHeight, u3
 	const float automaticMipBias = scaled ? clampr(log2f(actualScale) - 1.0f, -3.0f, 0.0f) : 0.0f;
 	SetTemporalUpscalerMipBias(automaticMipBias, scaled);
 	const float effectiveMipBias = GetEffectiveTextureMipBias();
-	const u32 configuredQuality = clampr(ps_r4_upscaler_quality, 0u, 5u);
+	const u32 configuredQuality = clampr(ps_r4_upscaler_quality, 0u, 6u);
 	const u32 effectiveQuality = ResolveEffectiveQuality(m_mode);
 	string64 qualityLabel = {};
 	if (configuredQuality == effectiveQuality)
@@ -445,3 +449,7 @@ void CAnthologyUpscalerRuntime::EndSceneGpuProfile()
 	sample.pending = true;
 	m_gpuActiveSample = -1;
 }
+
+// Shared engine callers use Anthology's active scene size; the swapchain stays native.
+unsigned RenderScreenWidth() { return GetMainRenderWidth(); }
+unsigned RenderScreenHeight() { return GetMainRenderHeight(); }

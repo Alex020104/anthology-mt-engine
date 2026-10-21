@@ -39,6 +39,16 @@ Fvector3 wform(Fmatrix& m, Fvector3 const& v)
 	return r3;
 }
 
+static bool add_shadow_receiver_bounds(Fbox& receiver, const Fbox& world, const Fmatrix& transform)
+{
+    if (!world.is_valid() || !_valid(world.min) || !_valid(world.max) || !_valid(transform)) return false;
+    Fbox projected;
+    projected.xform(world, transform);
+    if (!projected.is_valid() || !_valid(projected.min) || !_valid(projected.max)) return false;
+    receiver.merge(projected);
+    return true;
+}
+
 void CRender::init_cacades()
 {
 	u32 cascade_count = 3;
@@ -66,21 +76,57 @@ void CRender::init_cacades()
 
 void CRender::render_sun_cascades()
 {
+#if RENDER == R_R4
+    if (sun_shadows && sun_shadows->Prepared())
+    {
+        sun_shadows->Record();
+        for (u32 i = 0; i < m_sun_cascades.size(); ++i) render_sun_cascade(i);
+        RCache.shadow_texture_source = nullptr;
+        RCache.shadow_texture_view = nullptr;
+        RCache.InvalidateAfterCommandList();
+        return;
+    }
+#endif
 	bool b_need_to_render_sunshafts = Target->need_to_render_sunshafts();
 	bool last_cascade_chain_mode = m_sun_cascades.back().reset_chain;
 	if (b_need_to_render_sunshafts)
 		m_sun_cascades[m_sun_cascades.size() - 1].reset_chain = true;
 
-	for (u32 i = 0; i < m_sun_cascades.size(); ++i)
-		render_sun_cascade(i);
+    Fmatrix full, inverse;
+    full.mul(Device.mProject, Device.mView);
+    D3DXMatrixInverse((D3DXMATRIX*)&inverse, nullptr, (D3DXMATRIX*)&full);
+    for (u32 i = 0; i < m_sun_cascades.size(); ++i) prepare_sun_cascade(i, inverse);
+#if RENDER == R_R4
+    auto& candidates = sun_query_results;
+    const CFrustum* frustums[3]{};
+    const bool compatible = m_sun_cascades.size() == 3 &&
+        m_sun_cascades[0].GMCascade.i_doptions == m_sun_cascades[1].GMCascade.i_doptions &&
+        m_sun_cascades[0].GMCascade.i_doptions == m_sun_cascades[2].GMCascade.i_doptions;
+    u64 revision = 0;
+    if (compatible)
+    {
+        for (u32 i = 0; i < 3; ++i)
+        {
+            auto& cascade = m_sun_cascades[i];
+            frustums[i] = &cascade.cull_frustum;
+            if (view_preparation) view_preparation->Queue(pOutdoorSector, cascade.cull_frustum,
+                cascade.cull_xform, cascade.cull_COP, false, Fidentity);
+        }
+        revision = g_SpatialSpace->q_frustums(candidates, m_sun_cascades[0].GMCascade.i_doptions, frustums);
+    }
+    for (u32 i = 0; i < m_sun_cascades.size(); ++i)
+        render_sun_cascade(i, compatible ? &candidates[i] : nullptr, revision);
+#else
+    for (u32 i = 0; i < m_sun_cascades.size(); ++i) render_sun_cascade(i);
+#endif
 
 	if (b_need_to_render_sunshafts)
 		m_sun_cascades[m_sun_cascades.size() - 1].reset_chain = last_cascade_chain_mode;
 }
 
-void CRender::render_sun_cascade(u32 cascade_ind)
+void CRender::prepare_sun_cascade(u32 cascade_ind, const Fmatrix& inverse)
 {
-	PROF_EVENT("Render Cascade");
+	PROF_EVENT("Render Cascade: PrepareView");
 	light* fuckingsun = (light*)Lights.sun_adapted._get();
 	sun::cascade& cascade = m_sun_cascades[cascade_ind];
 
@@ -93,12 +139,7 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 		PROF_EVENT("Render Cascade: Prepass");
 
 		// calculate view-frustum bounds in world space
-		Fmatrix ex_project, ex_full, ex_full_inverse;
-		{
-			ex_project = Device.mProject;
-			ex_full.mul(ex_project, Device.mView);
-			D3DXMatrixInverse((D3DXMATRIX*)&ex_full_inverse, 0, (D3DXMATRIX*)&ex_full);
-		}
+		const Fmatrix& ex_full_inverse = inverse;
 
 		// Compute volume(s) - something like a frustum for infinite directional light
 		// Also compute virtual light position and sector it is inside
@@ -271,6 +312,10 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 			}
 
 			cascade.xform = cull_xform;
+            const bool caster_frustum_fallback = cull_frustum.p_count == 0;
+            if (caster_frustum_fallback)
+                cull_frustum.CreateFromMatrix(cull_xform, FRUSTUM_P_LRTB);
+            PROF_TAG("Caster frustum fallback", caster_frustum_fallback);
 
 			s32 limit = o.smapsize - 1;
 			fuckingsun->X.D.minX = 0;
@@ -283,13 +328,147 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 		}
 	}
 
+}
+
+#if RENDER == R_R4
+bool CRender::sun_cascade_needs_receiver_bounds(u32 cascade_ind)
+{
+    return !(cascade_ind == m_sun_cascades.size() - 1 && o.advancedpp &&
+        (ps_sunshafts_mode == R2SS_VOLUMETRIC || ps_sunshafts_mode == R2SS_COMBINE_SUNSHAFTS) &&
+        Target->need_to_render_sunshafts());
+}
+#endif
+
+void CRender::capture_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared, u64 revision, bool static_only)
+{
+    PROF_EVENT("Render Cascade");
+    light* fuckingsun = (light*)Lights.sun_adapted._get();
+    sun::cascade& cascade = m_sun_cascades[cascade_ind];
+    Fmatrix& cull_xform = cascade.cull_xform;
+
 	// Begin SMAP-render
     {
         PROF_EVENT("Render Cascade: SMAP traverse");
-        phase = PHASE_SMAP;
+        if (!RenderContextId()) phase = PHASE_SMAP;
+        cascade.GMCascade.set_shadow_receiver_bounds(nullptr);
         cascade.GMCascade.traverse(pOutdoorSector, cascade.cull_frustum, cascade.cull_COP, cascade.cull_xform);
-        cascade.GMCascade.r_dsgraph_capture(false, true);
+#if RENDER == R_R4
+        const bool volumetric_sunshafts_need_full_shadow = !sun_cascade_needs_receiver_bounds(cascade_ind);
+        PROF_TAG("Receiver bounds skipped", volumetric_sunshafts_need_full_shadow);
+        if (!volumetric_sunshafts_need_full_shadow)
+        {
+            PROF_EVENT("Render.Shadow.ReceiverBounds");
+            Fbox receiver_bounds;
+            receiver_bounds.invalidate();
+            bool receiver_bounds_valid = false;
+            bool receiver_bounds_complete = true;
+            bool outdoor_visible = false;
+            {
+                xrSRWLockGuard guard(&GMBase.S_LC, true);
+                if (pOutdoorSector)
+                {
+                    if (auto node = GMBase.m_sector_frustums.find(pOutdoorSector))
+                        outdoor_visible = !node->val.first.empty();
+                }
+
+                if (outdoor_visible)
+                {
+                    for (dxRender_Visual* visual : GMBase.m_static_seen)
+                    {
+                        if (!visual)
+                            continue;
+
+                        receiver_bounds_complete &= add_shadow_receiver_bounds(receiver_bounds, visual->vis.box, cull_xform);
+                        receiver_bounds_valid = true;
+                    }
+                }
+                else
+                {
+                    for (auto& pair : GMBase.m_sector_frustums)
+                    {
+                        if (pair.val.first.empty() || !pair.key || !pair.key->root())
+                            continue;
+
+                        receiver_bounds_complete &= add_shadow_receiver_bounds(receiver_bounds, pair.key->root()->vis.box, cull_xform);
+                        receiver_bounds_valid = true;
+                    }
+                }
+
+                for (const ISpatialShared& spatial : GMBase.lstRenderables)
+                {
+                    if (!spatial || !(spatial->spatial.type & (STYPE_RENDERABLE | STYPE_PARTICLE)))
+                        continue;
+
+                    CSector* sector = static_cast<CSector*>(spatial->spatial.sector);
+                    auto node = sector ? GMBase.m_sector_frustums.find(sector) : nullptr;
+                    if (!node || node->val.first.empty())
+                        continue;
+
+                    const Fsphere& sphere = spatial->spatial.sphere;
+                    Fvector radius;
+                    radius.set(sphere.R, sphere.R, sphere.R);
+                    Fbox world_bounds;
+                    world_bounds.setb(sphere.P, radius);
+                    receiver_bounds_complete &= add_shadow_receiver_bounds(receiver_bounds, world_bounds, cull_xform);
+                    receiver_bounds_valid = true;
+                }
+            }
+
+            Fbox detail_bounds;
+            if (Details && Details->GetVisibleBounds(detail_bounds))
+            {
+                receiver_bounds_complete &= add_shadow_receiver_bounds(receiver_bounds, detail_bounds, cull_xform);
+                receiver_bounds_valid = true;
+            }
+
+            else if (Details && psDeviceFlags.test(rsDetails)) receiver_bounds_complete = false;
+
+            if (receiver_bounds_valid && receiver_bounds_complete &&
+                receiver_bounds.max.x >= -1.f && receiver_bounds.max.y >= -1.f &&
+                receiver_bounds.min.x <= 1.f && receiver_bounds.min.y <= 1.f)
+            {
+                receiver_bounds.min.x = _max(receiver_bounds.min.x, -1.f);
+                receiver_bounds.min.y = _max(receiver_bounds.min.y, -1.f);
+                receiver_bounds.max.x = _min(receiver_bounds.max.x, 1.f);
+                receiver_bounds.max.y = _min(receiver_bounds.max.y, 1.f);
+                const float receiver_margin = _max(128.f / float(o.smapsize), 4.f / cascade.size);
+                receiver_bounds.min.x -= receiver_margin;
+                receiver_bounds.min.y -= receiver_margin;
+                receiver_bounds.max.x += receiver_margin;
+                receiver_bounds.max.y += receiver_margin;
+                receiver_bounds.min.x = _max(receiver_bounds.min.x, -1.f);
+                receiver_bounds.min.y = _max(receiver_bounds.min.y, -1.f);
+                receiver_bounds.max.x = _min(receiver_bounds.max.x, 1.f);
+                receiver_bounds.max.y = _min(receiver_bounds.max.y, 1.f);
+                Fvector depth_margin;
+                depth_margin.mul(fuckingsun->direction, 2.f);
+                cull_xform.transform_dir(depth_margin);
+                receiver_bounds.max.z += _abs(depth_margin.z);
+                cascade.GMCascade.set_shadow_receiver_bounds(&receiver_bounds);
+                PROF_TAG("Receiver clipping active", true);
+            }
+        }
+#endif
+        cascade.GMCascade.r_dsgraph_capture_static();
+        if (!static_only) cascade.GMCascade.r_dsgraph_capture_dynamic(nullptr, prepared, revision);
+#if RENDER == R_R4
+        if (!static_only && view_preparation) view_preparation->QueueGraph(cascade.GMCascade, Fidentity, cascade.cull_xform);
+#endif
     }
+
+}
+
+void CRender::render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared, u64 revision)
+{
+    PROF_EVENT("Render Cascade");
+    light* fuckingsun = (light*)Lights.sun_adapted._get();
+    sun::cascade& cascade = m_sun_cascades[cascade_ind];
+    Fmatrix& cull_xform = cascade.cull_xform;
+#if RENDER == R_R4
+    if (!sun_shadows || !sun_shadows->Prepared())
+#endif
+        capture_sun_cascade(cascade_ind, prepared, revision);
+    phase = PHASE_SMAP;
 
     // Finalize & Cleanup
     {
@@ -305,18 +484,36 @@ void CRender::render_sun_cascade(u32 cascade_ind)
             // Grass is a shadow caster even if this cascade contains no mesh casters.
             const bool bDetail_Shadows = Details && psDeviceFlags.is(rsDetails) &&
                 psDeviceFlags2.test(rsGrassShadow) && cascade_ind <= ps_ssfx_grass_shadows.x;
+#if RENDER == R_R4
+            const bool context_shadow = sun_shadows && sun_shadows->Bind(cascade_ind);
+#endif
             if (bDeffered_Shadows || bForward_Shadows || bDetail_Shadows)
             {
+
+#if RENDER == R_R4
+                if (!context_shadow)
+#endif
                 Target->phase_smap_direct(fuckingsun, SE_SUN_FAR);
                 RCache.set_xform_world(Fidentity);
                 RCache.set_xform_view(Fidentity);
                 RCache.set_xform_project(fuckingsun->X.D.combine);
                 cascade.GMCascade.r_dsgraph_render_graph(0);
+#if RENDER == R_R4
+                cascade.GMCascade.shadow_execution = 0;
+#endif
 
-                if (bDetail_Shadows)
+                if (bDetail_Shadows
+#if RENDER == R_R4
+                    && !(sun_shadows && sun_shadows->GrassRecorded(cascade_ind))
+#endif
+                    )
                 {
+#if RENDER == R_R4
+                    Details->RenderShadow(dm_fade * dm_fade * ps_ssfx_grass_shadows.y);
+#else
                     Details->fade_distance = dm_fade * dm_fade * ps_ssfx_grass_shadows.y;
                     Details->Render();
+#endif
                 }
 
                 fuckingsun->X.D.transluent = FALSE;

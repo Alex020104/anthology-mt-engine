@@ -17,8 +17,17 @@ void __stdcall CHOM::MT_RENDER()
 {
 	PROF_EVENT("Render HOM");
 
+	xrCriticalSectionGuard guard(m_mt_render_guard);
+	const u32 current_frame = Device.dwFrame;
+
 	bool b_main_menu_is_active = (g_pGamePersistent->m_pMainMenu && g_pGamePersistent->m_pMainMenu->IsActive());
-	if (MT_frame_rendered != Device.dwFrame && !b_main_menu_is_active)
+	if (b_main_menu_is_active)
+	{
+		MT_frame_rendered.store(current_frame, std::memory_order_release);
+		return;
+	}
+
+	if (MT_frame_rendered.load(std::memory_order_acquire) != current_frame)
 	{
 		CFrustum ViewBase;
 		ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
@@ -37,6 +46,7 @@ CHOM::CHOM()
 	m_pModel = 0;
 	m_pTris = 0;
 	m_view_marker = 1;
+    MT_frame_rendered.store(0, std::memory_order_relaxed);
 #ifdef DEBUG
 	Device.seqRender.Add(this,REG_PRIORITY_LOW-1000);
 #endif
@@ -162,7 +172,6 @@ void CHOM::Unload()
 	bEnabled = FALSE;
 
 	auto I = std::find(Device.seqParallelRender.begin(), Device.seqParallelRender.end(), xr_make_delegate(this, &CHOM::MT_RENDER));
-
 	if (I != Device.seqParallelRender.end())
 		Device.seqParallelRender.erase(I);
 }
@@ -248,6 +257,9 @@ void CHOM::Render_DB(CFrustum& base)
 
 	Fvector COP = Device.vCameraPosition;
 	end = std::remove_if(it, end, pred_fb(m_pTris));
+    {
+    PROF_EVENT("Render.HOM.SortOccluders");
+    PROF_TAG("Triangles", u32(end - it));
 	for (CDB::RESULT* cursor = it; cursor != end; ++cursor)
 		cursor->range = COP.distance_to_sqr(m_pTris[cursor->id].center);
 	if (end - it > 1)
@@ -257,6 +269,7 @@ void CHOM::Render_DB(CFrustum& base)
 			return left.range < right.range;
 		});
 	}
+    }
 
 	// Build frustum with near plane only
 	CFrustum clip;
@@ -328,7 +341,7 @@ void CHOM::Render(CFrustum& base)
 	Raster.clear();
 	Render_DB(base);
 	Raster.propagade();
-	MT_frame_rendered = Device.dwFrame;
+	MT_frame_rendered.store(Device.dwFrame, std::memory_order_release);
 	Device.Statistic->RenderCALC_HOM.End();
 }
 

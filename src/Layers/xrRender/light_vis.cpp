@@ -2,12 +2,31 @@
 #include "light.h"
 #include "QueryHelper.h"
 #include "../../xrEngine/cl_intersect.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/LocalLightDebug.h"
+#endif
 
 const u32 delay_small_min = 1;
 const u32 delay_small_max = 3;
 const u32 delay_large_min = 10;
 const u32 delay_large_max = 20;
 const u32 cullfragments = 4;
+
+#if defined(USE_DX11) && RENDER == R_R4
+bool light::vis_query_current() const
+{
+    // A zero sample count only establishes occlusion for the query's camera
+    // and light volume. Jitter and weather far-plane drift do not change its rays.
+    return vis.query_view_valid &&
+        !memcmp(&vis.query_view, &Device.mView, sizeof(Fmatrix)) &&
+        !memcmp(&vis.query_world, &m_xform, sizeof(Fmatrix)) &&
+        _abs(vis.query_parameters.x - Device.mProject._11) < .001f &&
+        _abs(vis.query_parameters.y - Device.mProject._22) < .001f &&
+        vis.query_parameters.z == float(RenderScreenWidth()) &&
+        vis.query_parameters.w == float(RenderScreenHeight()) &&
+        vis.query_svp == Device.m_SecondViewport.IsSVPFrame();
+}
+#endif
 
 void light::vis_prepare()
 {
@@ -22,18 +41,39 @@ void light::vis_prepare()
     {
         vis.visible = false;
         vis.pending = false;
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this, LocalLightDebug::Reason::Inactive);
+#endif
         return;
     }
     if (!flags.bOccq || flags.bHudMode)
     {
         vis.visible = true;
         vis.pending = false;
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this,
+            flags.bHudMode ? LocalLightDebug::Reason::Hud : LocalLightDebug::Reason::OccqDisabled);
+#endif
         return;
     }
 
     u32 frame = Device.dwFrame;
+#if defined(USE_DX11) && RENDER == R_R4
+    if (!vis.visible && !vis_query_current())
+    {
+        // Preserve pending-query ownership; only revoke its old hidden answer.
+        vis.visible = true;
+        vis.frame2test = frame;
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this, LocalLightDebug::Reason::ViewChanged);
+    }
+#endif
     if (frame < vis.frame2test)
+    {
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Cached(*this);
+#endif
         return;
+    }
 
     float safe_area = VIEWPORT_NEAR;
     {
@@ -56,17 +96,34 @@ void light::vis_prepare()
 
     vis.distance = Device.vCameraPosition.distance_to(SpatialComponent->spatial.sphere.P);
 
-    if (skiptest || vis.distance <= (SpatialComponent->spatial.sphere.R * 1.01f + safe_area + (SpatialComponent->spatial.sphere.R * 0.1f))) // small error
+    const float near_limit = SpatialComponent->spatial.sphere.R * 1.01f + safe_area + (SpatialComponent->spatial.sphere.R * 0.1f);
+    if (skiptest || vis.distance <= near_limit) // small error
     {
         // small error
         vis.visible = true;
         vis.pending = false;
         vis.frame2test = frame + ::Random.randI(delay_small_min, delay_small_max);
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this, skiptest ?
+            (flags.bShadow ? LocalLightDebug::Reason::ShadowTestDisabled : LocalLightDebug::Reason::UnshadowedTestDisabled) :
+            LocalLightDebug::Reason::NearCamera, near_limit);
+#endif
         return;
     }
 
     // testing
+    if (vis.pending)
+        return;
+
     vis.pending = true;
+#if defined(USE_DX11) && RENDER == R_R4
+    vis.query_view = Device.mView;
+    vis.query_world = m_xform;
+    vis.query_parameters.set(Device.mProject._11, Device.mProject._22,
+        float(RenderScreenWidth()), float(RenderScreenHeight()));
+    vis.query_svp = Device.m_SecondViewport.IsSVPFrame();
+    vis.query_view_valid = true;
+#endif
     RCache.set_xform_world(m_xform);
     CHK_DX(BeginQuery(vis.Q));
     //	Hack: Igor. Light is visible if it's frutum is visible. (Only for volumetric)
@@ -78,6 +135,9 @@ void light::vis_prepare()
         RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, 0x01, 0xff, 0x00);
     RImplementation.Target->draw_volume(this);
     CHK_DX(EndQuery(vis.Q));
+#if defined(USE_DX11) && RENDER == R_R4
+    if (LocalLightDebug::active) LocalLightDebug::QueryIssued(*this);
+#endif
 }
 
 void light::vis_update()
@@ -88,23 +148,50 @@ void light::vis_update()
     //	. test-result:	invisible:
     //		. shedule for 'next-frame' interval
 
+#if defined(USE_DX11) && RENDER == R_R4
+    const bool current_view = vis_query_current();
+    if (flags.bActive && !vis.visible && !current_view)
+    {
+        vis.visible = true;
+        vis.frame2test = Device.dwFrame;
+        if (LocalLightDebug::active) LocalLightDebug::Visibility(*this, LocalLightDebug::Reason::ViewChanged);
+    }
+#endif
     if (!vis.pending) return;
 
     u32 frame = Device.dwFrame;
     R_occlusion::occq_result fragments = 0;
-    const HRESULT hr = GetData(vis.Q, &fragments, sizeof(fragments),
-        0x1 /*D3D11_ASYNC_GETDATA_DONOTFLUSH*/);
+    HRESULT hr = GetData(vis.Q, &fragments, sizeof(fragments), 0x1 /*D3D11_ASYNC_GETDATA_DONOTFLUSH*/);
 
-    // Never stall the CPU waiting for a GPU occlusion result. Treat an
-    // unfinished query as visible and retry next frame; this is conservative
-    // for image correctness and removes the old per-light spin of up to 0.5 ms.
+    vis.pending = hr != S_OK;
     if (hr != S_OK)
-        fragments = R_occlusion::occq_result(-1);
+    {
+        vis.frame2test = frame + 1;
+        // An unfinished query keeps the last confirmed visibility result.
+        if (hr != S_FALSE)
+        {
+            // Fail-open on timeout/device/query errors to avoid popping.
+            vis.visible = true;
+            vis.pending = false;
+            vis.frame2test = frame + ::Random.randI(delay_small_min, delay_small_max);
+        }
+#if defined(USE_DX11) && RENDER == R_R4
+        if (LocalLightDebug::active) LocalLightDebug::QueryResult(*this, hr, fragments);
+#endif
+        return;
+    }
 
     vis.visible = (fragments > cullfragments);
-    vis.pending = false;
-    if (vis.visible && hr == S_OK)
-        vis.frame2test = frame + ::Random.randI(delay_large_min, delay_large_max);
-    else
+    vis.frame2test = vis.visible ? (frame + ::Random.randI(delay_large_min, delay_large_max)) : (frame + 1);
+#if defined(USE_DX11) && RENDER == R_R4
+    if (!current_view)
+    {
+        // The GPU may be several frames behind. A late zero from another view
+        // must not hide a face that the camera has already revealed.
+        vis.visible = true;
         vis.frame2test = frame + 1;
+    }
+    if (LocalLightDebug::active) LocalLightDebug::QueryResult(*this, hr, fragments);
+    if (!current_view && LocalLightDebug::active) LocalLightDebug::Visibility(*this, LocalLightDebug::Reason::ViewChanged);
+#endif
 }

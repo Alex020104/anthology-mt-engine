@@ -14,6 +14,7 @@
 #include "../xrRender/dxRenderDeviceRender.h"
 #include "../xrRender/dxWallMarkArray.h"
 #include "../xrRender/dxUIShader.h"
+#include "../../xrCore/ShaderSourceCRC.h"
 //#include "../../xrServerEntities/smart_cast.h"
 
 #ifndef _EDITOR
@@ -373,6 +374,7 @@ void CRender::add_Occluder(Fbox2& bb_screenspace)
 
 void CRender::apply_object(IRenderable* O)
 {
+	RCache.bus_object.apply(O);
 	if (0 == O) return;
 	if (O->renderable_ROS())
 	{
@@ -406,6 +408,7 @@ IC void gm_SetNearer(BOOL bNearer)
 CRender::CRender()
 	: m_bFirstFrameAfterReset(false)
 {
+    o.defer_hud = FALSE;
 }
 
 CRender::~CRender()
@@ -426,6 +429,9 @@ extern float r_ssaHZBvsTEX;
 
 void CRender::Calculate()
 {
+    scope_heat_items.clear();
+    scope_heat_only = false;
+    GMBase.RGraph.mapScopeHUDSorted.clear();
 #ifdef _GPA_ENABLED
 	TAL_SCOPED_TASK_NAMED("CRender::Calculate()");
 #endif // _GPA_ENABLED
@@ -445,9 +451,8 @@ void CRender::Calculate()
 	r_ssaHZBvsTEX = _sqr(ps_r__ssaHZBvsTEX / 3) / g_fSCREEN;
 
 	// Frustum & HOM rendering
-	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB | FRUSTUM_P_FAR);
-	HOM.Enable();
-	HOM.Render(ViewBase);
+    ViewBase.CreateFromCamera(Device.mFullTransform);
+    HOM.MT_RENDER();
 	gm_SetNearer(FALSE);
 	phase = PHASE_NORMAL;
 
@@ -516,8 +521,10 @@ void CRender::Render()
 	Device.Statistic->RenderDUMP.Begin();
 	// Begin
 	Target->Begin();
+	o.defer_hud = Target->IsScopeSceneCaptureActive();
 	phase = PHASE_NORMAL;
-	GMBase.r_dsgraph_render_hud(); // hud
+    if (!o.defer_hud)
+        GMBase.r_dsgraph_render_hud(); // hud
 	GMBase.r_dsgraph_render_graph(0); // normal level
 	if (Details)Details->Render(); // grass / details
 	GMBase.r_dsgraph_render_lods(true, false); // lods - FB
@@ -529,7 +536,7 @@ void CRender::Render()
 	L_Dynamic->render(0); // addititional light sources
 	if (Wallmarks)Wallmarks->Render(); // wallmarks has priority as normal geometry
 
-	if (g_hud)
+	if (g_hud && !o.defer_hud)
 	{
 		g_hud->Render_R1_Attachment_UI();
 
@@ -543,7 +550,6 @@ void CRender::Render()
 	if (L_Shadows)L_Shadows->render(); // ... and shadows
 	GMBase.r_dsgraph_render_lods(false, true); // lods - FB
 	GMBase.r_dsgraph_render_static(1); // normal level, secondary priority
-	CParticlesAsync::Wait();
 	GMBase.r_dsgraph_render_dynamic(1, true); // normal level, secondary priority
 	L_Dynamic->render(1); // addititional light sources, secondary priority
 	GMBase.fade_render(); // faded-portals
@@ -551,6 +557,32 @@ void CRender::Render()
 	if (L_Glows)L_Glows->Render(); // glows
 	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES))Env->RenderFlares(); // lens-flares
 	Env->RenderLast(); // rain/thunder-bolts
+
+    if (o.defer_hud)
+    {
+        Target->CaptureScopeScene();
+        if (Target->IsScopeThermalActive())
+            Target->CaptureScopeHeat();
+        scope_heat_items.clear();
+        o.defer_hud = FALSE;
+        phase = PHASE_NORMAL;
+        GMBase.r_dsgraph_render_hud();
+        L_Dynamic->render(0, true);
+        phase = PHASE_NORMAL;
+        if (scope_3D_fake_enabled)
+            GMBase.r_dsgraph_render_ScopeSorted();
+        GMBase.r_dsgraph_render_sorted();
+        if (g_hud)
+        {
+            g_hud->Render_R1_Attachment_UI();
+            if (g_hud->RenderActiveItemUIQuery())
+                GMBase.r_dsgraph_render_hud_ui();
+            if (g_hud->RenderCamAttachedUIQuery())
+                GMBase.r_dsgraph_render_cam_ui();
+        }
+    }
+    GMBase.RGraph.mapScopeHUDSorted.clear();
+    scope_heat_items.clear();
 
 #if DEBUG
 	for (int _priority=0; _priority<2; ++_priority)
@@ -760,6 +792,7 @@ HRESULT CRender::shader_compile(
 	
 	D3DXMACRO defines [128];
 	int def_it = 0;
+	char c_shader_bus [32];
 
 	char sh_name[MAX_PATH] = "";
 	u32 len = 0;
@@ -833,6 +866,14 @@ HRESULT CRender::shader_compile(
 	sh_name[len] = '0' + char(4 == m_skinning);
 	++len;
 
+	// the bus version, in the cache name too so each version keeps its own build
+	xr_sprintf(c_shader_bus, "%d", ShaderBus::version());
+	defines[def_it].Name = "SHADER_BUS";
+	defines[def_it].Definition = c_shader_bus;
+	def_it ++;
+	xr_strcat(sh_name, c_shader_bus);
+	len += xr_strlen(c_shader_bus);
+
 	// finish
 	defines[def_it].Name = 0;
 	defines[def_it].Definition = 0;
@@ -857,7 +898,9 @@ HRESULT CRender::shader_compile(
 	FS.file_list(m_file_set, folder_name, FS_ListFiles | FS_RootOnly, "*");
 
 	string_path temp_file_name, file_name;
-	if (psDeviceFlags2.test(rsPrecompiledShaders) || !match_shader_id(name, sh_name, m_file_set, temp_file_name))
+	bool const useGeneratedShaderCache =
+		psDeviceFlags2.test(rsPrecompiledShaders) || !match_shader_id(name, sh_name, m_file_set, temp_file_name);
+	if (useGeneratedShaderCache)
 	{
 		string_path file;
 		xr_strcpy(file, "shaders_cache\\r1\\");
@@ -874,13 +917,38 @@ HRESULT CRender::shader_compile(
 		xr_strcat(file_name, temp_file_name);
 	}
 
+	u32 source_crc = 0;
+	if (useGeneratedShaderCache)
+		source_crc = getShaderSourceCrc32(pSrcData, SrcDataLen, ::Render->getShaderPath());
+
 	if (FS.exist(file_name))
 	{
 		IReader* file = FS.r_open(file_name);
-		if (file->length() > 4)
+		if (useGeneratedShaderCache)
 		{
-			u32 crc = 0;
-			crc = file->r_u32();
+			if (file->length() > 8)
+			{
+				u32 const saved_source_crc = file->r_u32();
+				if (saved_source_crc == source_crc)
+				{
+					u32 const crc = file->r_u32();
+					u32 const real_crc = crc32(file->pointer(), file->elapsed());
+
+					if (real_crc == crc)
+					{
+						_result = create_shader(pTarget, (DWORD*)file->pointer(), file->elapsed(), file_name, result, o.disasm);
+					}
+				}
+				else
+				{
+                    Msg("~Shader cache source CRC mismatch for '%s': cached=0x%08x current=0x%08x, recompiling",
+                        name, saved_source_crc, source_crc);
+				}
+			}
+		}
+		else if (file->length() > 4)
+		{
+			u32 const crc = file->r_u32();
 
 			u32 const real_crc = crc32(file->pointer(), file->elapsed());
 
@@ -907,6 +975,9 @@ HRESULT CRender::shader_compile(
 			IWriter* file = FS.w_open(file_name);
 
 			u32 const crc = crc32(pShaderBuf->GetBufferPointer(), pShaderBuf->GetBufferSize());
+
+			if (useGeneratedShaderCache)
+				file->w_u32(source_crc);
 
 			file->w_u32(crc);
 			file->w(pShaderBuf->GetBufferPointer(), (u32)pShaderBuf->GetBufferSize());

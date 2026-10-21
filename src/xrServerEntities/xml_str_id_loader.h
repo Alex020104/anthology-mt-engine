@@ -1,4 +1,5 @@
 #pragma once
+#include "../xrCore/profiler.h"
 
 #ifdef XRGAME_EXPORTS
 #	include "ui/xrUIXmlParser.h"
@@ -142,6 +143,7 @@ void CSXML_IdToIndex::DeleteIdToIndexData()
 TEMPLATE_SPECIALIZATION
 typename void CSXML_IdToIndex::InitInternal()
 {
+	PROF_EVENT("XML.IDRegistryBuild");
 	VERIFY(!m_pItemDataVector);
 	T_INIT::InitXmlIdToIndex();
 
@@ -149,6 +151,7 @@ typename void CSXML_IdToIndex::InitInternal()
 
 	VERIFY(file_str);
 	VERIFY(tag_name);
+	PROF_TAG("RegistryTag", tag_name);
 
 	string_path xml_file;
 	int count = _GetItemCount(file_str);
@@ -157,6 +160,7 @@ typename void CSXML_IdToIndex::InitInternal()
 	for (int it = 0; it < count; ++it)
 	{
 		_GetItem(file_str, it, xml_file);
+		PROF_EVENT_DYNAMIC(xml_file);
 
 		CUIXml* uiXml = xr_new<CUIXml>();
 		xr_string xml_file_full;
@@ -178,7 +182,10 @@ typename void CSXML_IdToIndex::InitInternal()
 
 			//проверетить ID на уникальность
 			const shared_str itemId = item_name;
-			R_ASSERT3(ids.emplace(itemId).second, "duplicate item id", item_name);
+			{
+				PROF_EVENT("XML.CheckDuplicateID");
+				R_ASSERT3(ids.emplace(itemId).second, "duplicate item id", item_name);
+			}
 
 			ITEM_DATA data;
 			data.id = itemId;

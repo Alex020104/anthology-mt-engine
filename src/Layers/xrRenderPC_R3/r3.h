@@ -104,6 +104,17 @@ public:
 		s32 s_used, s_merged, s_finalclip;
 		u32 o_queries, o_culled;
 		u32 ic_total, ic_culled;
+		u32 ls_shadowed_in;
+		u32 ls_shadowed_after_vis;
+		u32 ls_shadowed_rendered;
+		u32 ls_shadowed_pending_skipped;
+		u32 ls_shadowed_invisible_skipped;
+		u32 ls_shadowed_peak_in;
+		u32 ls_shadowed_peak_after_vis;
+		u32 ls_unshadowed_point_in;
+		u32 ls_unshadowed_spot_in;
+		u32 ls_unshadowed_point_rendered;
+		u32 ls_unshadowed_spot_rendered;
 	} stats;
 
 public:
@@ -143,6 +154,7 @@ public:
 
 	shared_str c_sbase;
 	shared_str c_lmaterial;
+	bool o_hotness_own = false;
 	float o_hemi;
 	float o_hemi_cube[CROS_impl::NUM_FACES];
 	float o_sun;
@@ -184,7 +196,9 @@ public:
 	void render_menu();
 	void render_rain();
 
-	void render_sun_cascade(u32 cascade_ind);
+	void prepare_sun_cascade(u32 cascade_ind, const Fmatrix& inverse);
+    void render_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared = nullptr, u64 revision = 0);
+    void capture_sun_cascade(u32 cascade_ind, const xr_vector<ISpatialShared>* prepared, u64 revision, bool static_only = false);
 	void init_cacades();
 	void render_sun_cascades();
 
@@ -211,6 +225,7 @@ public:
 
 	ICF void apply_object(IRenderable* O)
 	{
+		RCache.bus_object.apply(O);
 		if (0 == O) return;
 		if (0 == O->renderable_ROS()) return;
 		CROS_impl& LT = *((CROS_impl*)O->renderable_ROS());
@@ -219,7 +234,9 @@ public:
 		//o_hemi						= 0.5f*LT.get_hemi			()	;
 		o_sun = 0.75f * LT.get_sun();
 
-		RCache.hemi.set_hotness(O->GetHotness(), O->GetTransparency(), 0.f, 0.f);		//--DSR-- HeatVision
+		float hotness = O->GetHotness();
+		o_hotness_own = ShaderBus::object_hotness(O->renderable.bus_values, hotness);
+		RCache.hemi.set_hotness(hotness, O->GetTransparency(), 0.f, 0.f);		//--DSR-- HeatVision
 		RCache.hemi.set_glowing(														//--DSR-- SilencerOverheat
 			sil_glow_color.x,
 			sil_glow_color.y,
@@ -230,6 +247,10 @@ public:
 
 	IC void apply_lmaterial()
 	{
+		RCache.bus_object.apply_static();
+		// an object's own obj_hotness skips the hot texture check, only for the draw right after apply_object
+		const bool hotness_own = o_hotness_own;
+		o_hotness_own = false;
 		R_constant* C = RCache.get_c(c_sbase); // get sampler
 		if (0 == C) return;
 		VERIFY(RC_dest_sampler == C->destination);
@@ -240,7 +261,7 @@ public:
 #ifdef	DEBUG
         if (ps_r2_ls_flags.test(R2FLAG_GLOBALMATERIAL))	mtl=ps_r2_gmaterial;
 #endif
-		if (!(T && T->m_is_hot))							//--DSR-- HeatVision
+		if (!hotness_own && !(T && T->m_is_hot))			//--DSR-- HeatVision
 			RCache.hemi.set_hotness(0.f, 0.f, 0.f, 0.f);
 		if (!(T && T->m_is_glowing))						//--DSR-- SilencerOverheat
 			RCache.hemi.set_glowing(0.f, 0.f, 0.f, 0.f);

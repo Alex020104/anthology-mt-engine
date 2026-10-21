@@ -1206,8 +1206,8 @@ void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, con
 	if ((sub_phase != SE_SUN_NEAR) && (sub_phase != SE_SUN_FAR)) return;
 
 // SSS : Deprecated
-/*	float w = float(Device.dwWidth);
-	float h = float(Device.dwHeight);
+/*	float w = float(RenderScreenWidth());
+	float h = float(RenderScreenHeight());
 
 	if (RImplementation.o.ssfx_volumetric) 
 		set_viewport_size(HW.pContext, w / ps_ssfx_volumetric.w, h / ps_ssfx_volumetric.w);*/

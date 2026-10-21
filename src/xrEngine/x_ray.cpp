@@ -33,6 +33,7 @@
 
 #include "xrSash.h"
 #include "MonitorList.h"
+#include "renderdoc_integration.h"
 
 extern "C" void XR_EARLY_INIT();
 
@@ -163,6 +164,7 @@ struct _SoundProcessor : public pureFrame
 	{
 		//Msg ("------------- sound: %d [%3.2f,%3.2f,%3.2f]",u32(Device.dwFrame),VPUSH(Device.vCameraPosition));
 		Device.Statistic->Sound.Begin();
+		::Sound->set_async(psDeviceFlags.test(mtSound));
 		::Sound->update(Device.vCameraPosition, Device.vCameraDirection, Device.vCameraTop);
 		Device.Statistic->Sound.End();
 	}
@@ -277,6 +279,7 @@ PROTECT_API void InitSettings()
 
 PROTECT_API void InitConsole()
 {
+    PROF_EVENT("Startup.Console");
 	////SECUROM_MARKER_SECURITY_ON(5)
 
 #ifdef DEDICATED_SERVER
@@ -317,11 +320,13 @@ void destroyInput()
 
 PROTECT_API void InitSound1()
 {
+    PROF_EVENT("Startup.SoundStage1");
 	CSound_manager_interface::_create(0);
 }
 
 PROTECT_API void InitSound2()
 {
+    PROF_EVENT("Startup.SoundStage2");
 	CSound_manager_interface::_create(1);
 }
 
@@ -359,8 +364,11 @@ void destroyEngine()
 
 void execUserScript()
 {
+    PROF_EVENT("Startup.UserConfig");
 	Console->Execute("default_controls");
 	Console->ExecuteScript(Console->ConfigFile);
+    if (Console->GetBool("dump_cvar_enable"))
+	    Console->Execute("dump_cvar");
 }
 
 void slowdownthread(void*)
@@ -685,6 +693,7 @@ void Startup()
 	CTimer phase_timer;
 	startup_timer.Start();
 	phase_timer.Start();
+    START_PROFILE("Startup.AppInitialization");
 #ifndef DEDICATED_SERVER
 	fill_vid_monitor_list();
 #endif
@@ -774,6 +783,7 @@ void Startup()
 	Msg("* [STARTUP] before main loop: %d ms", startup_timer.GetElapsed_ms());
 
 	// Main cycle
+    STOP_PROFILE;
 	Msg("* [x-ray]: Starting Main Loop");
 	//Memory.mem_usage();
 
@@ -1232,7 +1242,8 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 #endif // DEDICATED_SERVER
 
 	// Title window
-	logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
+    START_PROFILE("Startup.SplashWindow");
+    logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
 
 	u32 screenW, screenH;
 	int monX, monY;
@@ -1247,10 +1258,17 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 	int x = monX + (screenW - splashW) / 2;
 	int y = monY + (screenH - splashH) / 2;
 
+    // verdatim: set the size of the splash window to be zero when the flag "-nosplashwindow" is given
+    if (strstr(xr_strdup(GetCommandLine()), "-nosplashwindow")) {
+        splashW = int(0);
+        splashH = int(0);
+    }
+
+
 	SetWindowPos(
 		logoWindow,
 #ifndef DEBUG
-		HWND_TOPMOST,
+        HWND_TOP,
 #else
         HWND_NOTOPMOST,
 #endif // NDEBUG
@@ -1263,6 +1281,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 
 	RedrawWindow(logoWindow, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
 	UpdateWindow(logoWindow);
+    STOP_PROFILE;
 
 	// AVI
 	g_bIntroFinished = TRUE;
@@ -1286,6 +1305,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 	ULONGLONG early_phase_time = GetTickCount64();
 	Core._initialize("xray", NULL, TRUE, fsgame[0] ? fsgame : NULL);
 	Msg("* [STARTUP] core and filesystem: %llu ms", GetTickCount64() - early_phase_time);
+	renderdoc_initialize();
 
 	CTimer startup_phase_timer;
 	startup_phase_timer.Start();
@@ -1475,9 +1495,16 @@ int APIENTRY WinMain(HINSTANCE hInstance,
                      int nCmdShow)
 {
 	startup_begin_time = GetTickCount64();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    const s64 optickEntryTime = Optick::GetHighPrecisionTime();
+#endif
   // Initialize LuaJIT low-memory pool FIRST, before any DLLs load and fragment
 	// the lower 2GB address space.
 	XR_EARLY_INIT();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    OptickStartupBegin(optickEntryTime, Optick::GetHighPrecisionTime());
+    const s64 optickPlatformStart = Optick::GetHighPrecisionTime();
+#endif
   
 	// Enable per-monitor DPI awareness so GetMonitorInfo returns real pixel sizes.
 	// Without this, monitors with different DPI scaling report wrong resolutions
@@ -1513,6 +1540,11 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	DllMainXrPhysics(NULL, DLL_PROCESS_ATTACH, NULL);
 
 	DllMainXrCore(NULL, DLL_THREAD_ATTACH, NULL);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    if (Optick::IsActive())
+        Optick::Event::Add(*Optick::GetEventStorageSlotForCurrentThread(),
+            Optick::EventDescription::Create("Startup.PlatformInitialize", __FILE__, __LINE__), optickPlatformStart, Optick::GetHighPrecisionTime());
+#endif
 
 	__try
 	{
@@ -1531,35 +1563,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	return (0);
 }
 
-LPCSTR _GetFontTexName(LPCSTR section)
-{
-	static char* tex_names[] = {"texture800", "texture", "texture1600", "texture2160"};
-	int def_idx = 1; //default 1024x768
-	int idx = def_idx;
-
-#if 0
-    u32 w = Device.dwWidth;
-
-    if (w <= 800) idx = 0;
-    else if (w <= 1280)idx = 1;
-    else idx = 2;
-#else
-	u32 h = Device.dwHeight;
-
-	if (h <= 600) idx = 0;
-	else if (h < 1024) idx = 1;
-	else if (h < 1440) idx = 2;
-	else idx = 3;
-#endif
-
-	while (idx >= 0)
-	{
-		if (pSettings->line_exist(section, tex_names[idx]))
-			return pSettings->r_string(section, tex_names[idx]);
-		--idx;
-	}
-	return pSettings->r_string(section, tex_names[def_idx]);
-}
+LPCSTR _GetFontTexName(LPCSTR section) { return GetFontTextureName(section); }
 
 void _InitializeFont(CGameFont*& F, LPCSTR section, u32 flags)
 {
@@ -1663,13 +1667,18 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 	}
 	else if (E == eStart)
 	{
-		PROF_EVENT("CApplication::OnEvent: eStart");
 		LPSTR op_server = LPSTR(P1);
 		LPSTR op_client = LPSTR(P2);
 		IGame_Persistent::params game_params;
 		game_params.parse_cmd_line(op_server ? op_server : "");
 		LoadSessionStartEvent(!xr_strcmp(game_params.m_new_or_load, "new") ? "new-game" :
 			!xr_strcmp(game_params.m_new_or_load, "load") ? "menu-save" : "start");
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        LPCSTR loadOption = op_server ? strstr(op_server, "/load") : nullptr;
+        if (loadOption && strstr(op_server, "/alife") && (loadOption[5] == 0 || loadOption[5] == '/'))
+            OptickLoadGameBegin(op_server);
+#endif
+		PROF_EVENT("CApplication::OnEvent: eStart");
 		Level_Current = u32(-1);
 		R_ASSERT(0 == g_pGameLevel);
 		R_ASSERT(0 != g_pGamePersistent);
@@ -1709,6 +1718,11 @@ void CApplication::OnEvent(EVENT E, u64 P1, u64 P2)
 	else if (E == eDisconnect)
 	{
 		LoadSessionPhaseBegin(LoadSessionTeardown);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        if (!Engine.Event.Peek("KERNEL:start"))
+            OptickLoadGameCancel("Disconnected");
+#endif
+        PROF_EVENT("LoadGame.Disconnect");
 		ls_header[0] = '\0';
 		ls_tip_number[0] = '\0';
 		ls_tip[0] = '\0';
@@ -1847,6 +1861,11 @@ void CApplication::LoadSessionEnsureResourceGeneration()
 
 void CApplication::LoadSessionBegin(LPCSTR scenario)
 {
+	const bool suspend_background_gc = Device.LuaGCAlwaysActive();
+	if (suspend_background_gc)
+		Device.WaitForGameLogic();
+	const bool restore_native_gc = suspend_background_gc && Device.LuaGCAutomaticAllowed();
+
 	if (m_load_session.active)
 		LoadSessionCancel("superseded");
 
@@ -1879,6 +1898,10 @@ void CApplication::LoadSessionBegin(LPCSTR scenario)
 		throw;
 	}
 	m_load_session.active = true;
+	// Native loading defers full collections and skips most world renders.
+	// Restore its automatic collector on the admitted Lua owner before callbacks.
+	if (restore_native_gc && Device.LuaGCPrepare)
+		Device.LuaGCPrepare(false);
 	Msg("* [load-session] begin scenario=%s", m_load_session.scenario);
 	Msg("* [load-session] optimization native=%s save-prefetch=%s spawn-prefetch=%s level-cache=%s precache=%s",
 		NativeLoadExecutor::Instance().Enabled() ? "parallel" : "serial",
@@ -2314,6 +2337,7 @@ void CApplication::LoadSessionTryFinish(bool level_ready, bool control_ready, bo
 
 void CApplication::LoadBegin()
 {
+    PROF_EVENT("LoadGame.LoadBegin");
 	if (m_load_session.active)
 		LoadSessionEnsureResourceGeneration();
 
@@ -2339,6 +2363,7 @@ void CApplication::LoadBegin()
 
 void CApplication::LoadEnd()
 {
+    PROF_EVENT("LoadGame.LoadEnd");
 	ll_dwReference--;
 	if (0 == ll_dwReference)
 	{
@@ -2347,6 +2372,9 @@ void CApplication::LoadEnd()
 		Msg("* phase cmem: %lld K", Memory.mem_usage() / 1024);
 		Console->Execute("stat_memory");
 		g_appLoaded = TRUE;
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickLoadGameStagesFinished();
+#endif
 		// DUMP_PHASE;
 	}
 }
@@ -2488,6 +2516,7 @@ void gen_logo_name(string_path& dest, LPCSTR level_name, int num)
 
 void CApplication::Level_Set(u32 L)
 {
+	if (::Sound) ::Sound->wait_for_streaming();
 	PROF_EVENT();
 
 	//SECUROM_MARKER_PERFORMANCE_ON(9)

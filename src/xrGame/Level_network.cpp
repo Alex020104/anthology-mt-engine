@@ -146,6 +146,7 @@ extern CUISequencer* g_tutorial2;
 
 void CLevel::net_Stop()
 {
+    Device.ResetLuaGCState();
 	Msg("- Disconnect");
 
 	if (CurrentGameUI())
@@ -193,6 +194,8 @@ void CLevel::net_Stop()
     Device.LuaGC.clear();
     Device.LuaGCFull.clear();
     Device.LuaGCDebug.clear();
+    Device.LuaGCPrepare.clear();
+    Device.LuaGCReadInfo.clear();
 
 	if (!g_dedicated_server)
 		ai().script_engine().collect_all_garbage();

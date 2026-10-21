@@ -188,10 +188,19 @@ PS::CParticleGroup::SItem::~SItem()
 		return;
 
 	auto Callback = xr_make_delegate(this, &PS::CParticleGroup::SItem::DelayDeleteChilds);
+	xrCriticalSectionGuard guard(&Device.seqParallelBeforRenderCS);
 	auto Iter = std::find(Device.seqParallelBeforRender.begin(), Device.seqParallelBeforRender.end(), Callback);
 	if (Iter != Device.seqParallelBeforRender.end())
 	{
-		Device.seqParallelBeforRender.erase(Iter);
+		// Cancel in place rather than erasing. This destructor can run from
+		// inside the main thread's drain loop in CRenderDevice::on_idle, when
+		// an invoked callback destroys an object owning this particle group
+		// (CObjectList::ProcessDestroyQueue is registered in the same vector).
+		// Erasing there would invalidate the loop's iteration; clearing the
+		// entry leaves the size untouched. The drain skips cleared entries and
+		// clear()s the whole vector once it finishes, so the callback is never
+		// invoked on a destroyed SItem either way.
+		Iter->clear();
 	}
 }
 
@@ -393,7 +402,7 @@ void CParticleGroup::SItem::OnFrame(u32 u_dt, const CPGDef::SEffect& def, Fbox& 
 		if (E->IsPlaying())
 		{
 			bPlaying = true;
-			if (E->vis.box.is_valid()) box.merge(E->vis.box);
+			if (E->SimulationBounds().is_valid()) box.merge(E->SimulationBounds());
 			if (def.m_Flags.is(CPGDef::SEffect::flOnPlayChild) && def.m_OnPlayChildName.size())
 			{
 				PAPI::Particle* particles;
@@ -429,7 +438,7 @@ void CParticleGroup::SItem::OnFrame(u32 u_dt, const CPGDef::SEffect& def, Fbox& 
 				if (E->IsPlaying())
 				{
 					bPlaying = true;
-					if (E->vis.box.is_valid()) box.merge(E->vis.box);
+					if (E->SimulationBounds().is_valid()) box.merge(E->SimulationBounds());
 				}
 				else
 				{
@@ -453,7 +462,7 @@ void CParticleGroup::SItem::OnFrame(u32 u_dt, const CPGDef::SEffect& def, Fbox& 
 				if (E->IsPlaying())
 				{
 					bPlaying = true;
-					if (E->vis.box.is_valid()) box.merge(E->vis.box);
+					if (E->SimulationBounds().is_valid()) box.merge(E->SimulationBounds());
 				}
 				else
 				{
@@ -467,6 +476,7 @@ void CParticleGroup::SItem::OnFrame(u32 u_dt, const CPGDef::SEffect& def, Fbox& 
 		if (!_children_destroy.empty())
 		{
 			auto Callback = xr_make_delegate(this, &PS::CParticleGroup::SItem::DelayDeleteChilds);
+			xrCriticalSectionGuard guard(&Device.seqParallelBeforRenderCS);
 			if (std::find(Device.seqParallelBeforRender.begin(), Device.seqParallelBeforRender.end(), Callback) == Device.seqParallelBeforRender.end())
 			{
 				Device.seqParallelBeforRender.emplace_back(std::move(Callback));
@@ -540,7 +550,9 @@ CParticleGroup::CParticleGroup()
 CParticleGroup::~CParticleGroup()
 {
 	xrCriticalSectionGuard guard(&onframe_lock);
-	// Msg ("!!! destoy PG");
+	published_frame.reset();
+	frame_buffers[0].reset();
+	frame_buffers[1].reset();
 	for (u32 i = 0; i < items.size(); i++) items[i].Clear();
 	items.clear();
 }
@@ -604,16 +616,52 @@ void CParticleGroup::OnFrame(u32 u_dt)
 
 		if (box.is_valid())
 		{
-			vis.box.set(box);
-			vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+			simulation_bounds.set(box);
 		}
 	}
 	else
 	{
-		vis.box.set(m_InitialPosition, m_InitialPosition);
-		vis.box.grow(EPS_L);
-		vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+		simulation_bounds.set(m_InitialPosition, m_InitialPosition);
+		simulation_bounds.grow(EPS_L);
 	}
+#ifdef _EDITOR
+    PublishRenderState(CaptureRenderState());
+#endif
+}
+
+IParticleCustom::RenderStatePtr CParticleGroup::CaptureRenderState()
+{
+	PROF_EVENT("Particles.Group.Snapshot");
+	xrCriticalSection::raii guard(&onframe_lock);
+	auto& slot = frame_buffers[next_frame_buffer++ % 2];
+	if (!slot || slot.use_count() != 1) slot = std::make_shared<GroupFrame>();
+	// Release old child tokens before selecting the children's writable slots.
+	slot->children.clear();
+	slot->bounds = simulation_bounds;
+	const auto capture = [&](dxRender_Visual* visual)
+	{
+		if (!visual) return;
+		auto* child = static_cast<dxParticleCustom*>(visual);
+		slot->children.push_back({intrusive_ptr<dxParticleCustom>(child), child->CaptureRenderState()});
+	};
+	for (auto& item : items)
+	{
+		capture(item._effect);
+		for (auto* child : item._children_related) capture(child);
+		for (auto* child : item._children_free) capture(child);
+	}
+	return slot;
+}
+
+void CParticleGroup::PublishRenderState(const RenderStatePtr& state)
+{
+	published_frame = std::static_pointer_cast<const GroupFrame>(state);
+	// Publish the exact children paired with these bounds, never their newer pending states.
+	for (const auto& child : published_frame->children) child.visual->PublishRenderState(child.state);
+	vis.box = published_frame->bounds;
+	for (const auto& child : published_frame->children)
+		vis.box.merge(child.visual->vis.box);
+	vis.box.getsphere(vis.sphere.P, vis.sphere.R);
 }
 
 void CParticleGroup::UpdateParent(const Fmatrix& m, const Fvector& velocity, BOOL bXFORM)

@@ -26,11 +26,46 @@
 #endif
 #include "lj_trace.h"
 #include "lj_vm.h"
+#include "xr_alloc.h"
+
+#if LJ_HASPROFILE
+#include "lj_allocprof.h"
+#endif
+
+/* Use the existing Optick C API; ordinary and Verified builds compile this out. */
+#if defined(XRCORE_PROFILER) && XRCORE_PROFILER == 1 && !defined(USE_VERIFY_IN_RELEASE)
+#include "../../optick-git/src/optick_capi.h"
+#include <intrin.h>
+#define GC_PROFILE_BEGIN(name) \
+  static volatile __int64 gc_profile_description = 0; \
+  uint64_t gc_profile_id = (uint64_t)_InterlockedCompareExchange64(&gc_profile_description, 0, 0); \
+  uint64_t gc_profile_event; \
+  if (!gc_profile_id) { \
+    uint64_t created = OptickAPI_CreateEventDescription(name, sizeof(name)-1, __FILE__, sizeof(__FILE__)-1, __LINE__); \
+    uint64_t existing = (uint64_t)_InterlockedCompareExchange64(&gc_profile_description, (__int64)created, 0); \
+    gc_profile_id = existing ? existing : created; \
+  } \
+  gc_profile_event = OptickAPI_PushEvent(gc_profile_id)
+#define GC_PROFILE_END() \
+  do { if (gc_profile_event) OptickAPI_PopEvent(gc_profile_event); } while (0)
+#else
+#define GC_PROFILE_BEGIN(name)
+#define GC_PROFILE_END()
+#endif
 
 #define GCSTEPSIZE	1024u
 #define GCSWEEPMAX	40
 #define GCSWEEPCOST	10
 #define GCFINALIZECOST	100
+
+LJ_STATIC_ASSERT(GCSpause == LUA_GCPHASE_PAUSE);
+LJ_STATIC_ASSERT(GCSpropagate == LUA_GCPHASE_MARK);
+LJ_STATIC_ASSERT(GCSpropagateagain == LUA_GCPHASE_REMARK);
+LJ_STATIC_ASSERT(GCSseparate == LUA_GCPHASE_SEPARATE);
+LJ_STATIC_ASSERT(GCSatomic == LUA_GCPHASE_ATOMIC);
+LJ_STATIC_ASSERT(GCSsweepstring == LUA_GCPHASE_SWEEPSTRING);
+LJ_STATIC_ASSERT(GCSsweep == LUA_GCPHASE_SWEEP);
+LJ_STATIC_ASSERT(GCSfinalize == LUA_GCPHASE_FINALIZE);
 
 /* Macros to set GCobj colors and flags. */
 #define white2gray(x)		((x)->gch.marked &= (uint8_t)~LJ_GC_WHITES)
@@ -84,9 +119,201 @@ static void gc_mark_gcroot(global_State *g)
       gc_markobj(g, gcref(g->gcroot[i]));
 }
 
+enum { UDSCAN_NONE, UDSCAN_FULL, UDSCAN_PREFIX, UDSCAN_READY };
+
+static GCobj *gc_udata_head_candidate(global_State *g)
+{
+  GCobj *head = gcref(g->gc.udheadgap);
+  GCobj *prev;
+  if (head == NULL) return NULL;
+  prev = gcref(gco2ud(head)->scanprev);
+  while (prev->gch.gct == ~LJ_TUDATA) {
+    GCudata *ud = gco2ud(prev);
+    if (ud->unused2 == LJ_XRAY_CANDIDATE_UDATA)
+      head = prev;
+    else if (ud->unused2 != LJ_XRAY_LEAF_UDATA)
+      return NULL;
+    prev = gcref(ud->scanprev);
+  }
+  return prev == obj2gco(mainthread(g)) ? head : NULL;
+}
+
+int lj_gc_udata_head_gap(global_State *g)
+{
+  return gc_udata_head_candidate(g) != NULL;
+}
+
+void lj_gc_udata_link(global_State *g, GCobj *o)
+{
+  GCobj *head = gc_udata_head_candidate(g);
+  if (head) setgcref(gco2ud(head)->scanprev, o);
+  /* Finish the old suffix before scanning newly prepended userdata. */
+  if (g->gc.state == GCSseparate &&
+      gcref(g->gc.udscanprev) == obj2gco(mainthread(g)))
+    setgcref(g->gc.udscanprev, o);
+}
+
+/* AOE's resumable candidate preparation, using Anthology's native lists.
+** Only white userdata are detached. The padding word keeps their predecessor,
+** so restoring reachable candidates does not grow the 24-byte userdata header.
+** Candidates stay oldest first: restoration and finalizer order both match
+** the native newest-first suffix, including allocations between scan steps. */
+static void gc_udata_finish_batch(global_State *g)
+{
+  if (gcref(g->gc.udbatch)) {
+    if (gcref(g->gc.udcandidate_tail))
+      setgcrefr(gcref(g->gc.udcandidate_tail)->gch.nextgc, g->gc.udbatch);
+    else
+      setgcrefr(g->gc.udcandidate, g->gc.udbatch);
+    setgcrefr(g->gc.udcandidate_tail, g->gc.udbatch_tail);
+    setgcrefnull(g->gc.udbatch);
+    setgcrefnull(g->gc.udbatch_tail);
+  }
+}
+
+static void gc_udata_restore(global_State *g, GCobj *o)
+{
+  GCudata *ud = gco2ud(o);
+  GCobj *prev = gcref(ud->scanprev);
+  GCobj *p = prev;
+  /* Resolve and compress detached predecessors in linear total time. */
+  while (prev->gch.gct == ~LJ_TUDATA &&
+         (gco2ud(prev)->unused2 == LJ_XRAY_CANDIDATE_UDATA ||
+          gco2ud(prev)->unused2 == LJ_XRAY_LEAF_UDATA))
+    prev = gcref(gco2ud(prev)->scanprev);
+  while (p != prev) {
+    GCobj *next = gcref(gco2ud(p)->scanprev);
+    if (gco2ud(p)->unused2 == LJ_XRAY_CANDIDATE_UDATA)
+      setgcref(gco2ud(p)->scanprev, prev);
+    p = next;
+  }
+  lua_assert(prev == obj2gco(mainthread(g)) ||
+             (prev->gch.gct == ~LJ_TUDATA &&
+              gco2ud(prev)->unused2 != LJ_XRAY_CANDIDATE_UDATA));
+  setgcrefr(o->gch.nextgc, prev->gch.nextgc);
+  setgcref(prev->gch.nextgc, o);
+  ud->unused2 = 0;
+}
+
+static void gc_udata_scan_reset(global_State *g)
+{
+  GCobj *o;
+  gc_udata_finish_batch(g);
+  o = gcref(g->gc.udcandidate);
+  while (o) {
+    GCobj *next = gcnext(o);
+    gc_udata_restore(g, o);
+    o = next;
+  }
+  setgcrefnull(g->gc.udcandidate);
+  setgcrefnull(g->gc.udcandidate_tail);
+  setgcrefnull(g->gc.udscanprev);
+  setgcrefnull(g->gc.udscananchor);
+  setgcrefnull(g->gc.udheadgap);
+  g->gc.udscanmode = UDSCAN_NONE;
+}
+
+static void gc_udata_scan_start(global_State *g)
+{
+  lua_assert(g->gc.udscanmode == UDSCAN_NONE);
+  setgcref(g->gc.udscanprev, obj2gco(mainthread(g)));
+  setgcrefr(g->gc.udscananchor, g->gc.udscanprev);
+  g->gc.udscanmode = UDSCAN_FULL;
+  g->gc.state = GCSseparate;
+}
+
+static size_t gc_udata_scan_step(global_State *g)
+{
+  unsigned n;
+  /* Bound each native step without an event or clock read per userdata. */
+  for (n = 0; n < 64; n++) {
+    GCobj *prev = gcref(g->gc.udscanprev);
+    GCobj *o = gcnext(prev);
+    GCudata *ud;
+    if (o == NULL || (g->gc.udscanmode == UDSCAN_PREFIX &&
+                     gco2ud(o)->unused2 == LJ_XRAY_SCANNED_UDATA)) {
+      gc_udata_finish_batch(g);
+      if (g->gc.udscanmode == UDSCAN_FULL) {
+        /* New allocations and unmarked leaves are prepended by the native API. */
+        setgcref(g->gc.udscanprev, obj2gco(mainthread(g)));
+        setgcrefr(g->gc.udscananchor, g->gc.udscanprev);
+        g->gc.udscanmode = UDSCAN_PREFIX;
+      } else {
+        g->gc.udscanmode = UDSCAN_READY;
+        g->gc.state = GCSatomic;
+      }
+      return LJ_MAX_MEM;
+    }
+    lua_assert(o->gch.gct == ~LJ_TUDATA);
+    ud = gco2ud(o);
+    lua_assert(ud->unused2 != LJ_XRAY_LEAF_UDATA &&
+               ud->unused2 != LJ_XRAY_CANDIDATE_UDATA);
+    setgcrefr(ud->scanprev, g->gc.udscananchor);
+    g->gc.udscanned_count++;
+    if (iswhite(o) && !isfinalized(ud)) {
+      /* Do not filter on __gc: a metatable may gain it before atomic. */
+      setgcrefr(prev->gch.nextgc, o->gch.nextgc);
+      setgcrefr(o->gch.nextgc, g->gc.udbatch);
+      if (gcref(g->gc.udbatch) == NULL)
+        setgcref(g->gc.udbatch_tail, o);
+      setgcref(g->gc.udbatch, o);
+      ud->unused2 = LJ_XRAY_CANDIDATE_UDATA;
+      if (gcref(g->gc.udheadgap) == NULL ||
+          gcref(g->gc.udscananchor) == obj2gco(mainthread(g)))
+        setgcref(g->gc.udheadgap, o);
+      g->gc.udcandidate_count++;
+    } else {
+      ud->unused2 = LJ_XRAY_SCANNED_UDATA;
+      setgcref(g->gc.udscanprev, o);
+    }
+    setgcref(g->gc.udscananchor, o);
+  }
+  return n * sizeof(GCudata);
+}
+
+static size_t gc_udata_candidates_commit(global_State *g)
+{
+  GCobj *o = gcref(g->gc.udcandidate);
+  GCobj *head = NULL, *tail = NULL;
+  size_t size = 0;
+  while (o) {
+    GCobj *next = gcnext(o);
+    GCudata *ud = gco2ud(o);
+    lua_assert(ud->unused2 == LJ_XRAY_CANDIDATE_UDATA);
+    if (iswhite(o) && !isfinalized(ud) &&
+        lj_meta_fastg(g, tabref(ud->metatable), MM_gc)) {
+      size += sizeudata(ud);
+      markfinalized(o);
+      ud->unused2 = 0;
+      setgcref(o->gch.nextgc, head);
+      head = o;
+      if (tail == NULL) tail = o;
+    } else {
+      if (iswhite(o) && !isfinalized(ud)) markfinalized(o);
+      gc_udata_restore(g, o);
+    }
+    o = next;
+  }
+  if (head) {
+    GCobj *root = gcref(g->gc.mmudata);
+    setgcref(tail->gch.nextgc, root ? gcnext(root) : head);
+    if (root) setgcref(root->gch.nextgc, head);
+    setgcref(g->gc.mmudata, tail);
+  }
+  setgcrefnull(g->gc.udcandidate);
+  setgcrefnull(g->gc.udcandidate_tail);
+  setgcrefnull(g->gc.udscanprev);
+  setgcrefnull(g->gc.udscananchor);
+  setgcrefnull(g->gc.udheadgap);
+  g->gc.udscanmode = UDSCAN_NONE;
+  return size;
+}
+
 /* Start a GC cycle and mark the root set. */
 static void gc_mark_start(global_State *g)
 {
+  gc_udata_scan_reset(g);
+  g->gc.udscanned_count = g->gc.udcandidate_count = 0;
   setgcrefnull(g->gc.gray);
   setgcrefnull(g->gc.grayagain);
   setgcrefnull(g->gc.weak);
@@ -128,6 +355,7 @@ size_t lj_gc_separateudata(global_State *g, int all)
   size_t m = 0;
   GCRef *p = &mainthread(g)->nextgc;
   GCobj *o;
+  gc_udata_scan_reset(g);
   while ((o = gcref(*p)) != NULL) {
     if (!(iswhite(o) || all) || isfinalized(gco2ud(o))) {
       p = &o->gch.nextgc;  /* Nothing to do. */
@@ -567,6 +795,7 @@ void lj_gc_finalize_cdata(lua_State *L)
 void lj_gc_freeall(global_State *g)
 {
   MSize i, strmask;
+  gc_udata_scan_reset(g);
   /* Free everything, except super-fixed objects (the main thread). */
   g->gc.currentwhite = LJ_GC_WHITES | LJ_GC_SFIXED;
   gc_fullsweep(g, &g->gc.root);
@@ -614,6 +843,9 @@ static void atomic(global_State *g, lua_State *L)
   unsigned long long now;
   size_t udsize;
 
+  GC_PROFILE_BEGIN("LuaGC.Atomic");
+  memset(&profile, 0, sizeof(profile));
+
   if (clock != NULL)
     atomic_started_at = phase_started_at = clock();
 
@@ -644,7 +876,8 @@ static void atomic(global_State *g, lua_State *L)
     phase_started_at = now;
   }
 
-  udsize = lj_gc_separateudata(g, 0);  /* Separate userdata to be finalized. */
+  udsize = g->gc.udscanmode == UDSCAN_READY ?
+    gc_udata_candidates_commit(g) : lj_gc_separateudata(g, 0);
 
   if (clock != NULL) {
     now = clock();
@@ -677,12 +910,17 @@ static void atomic(global_State *g, lua_State *L)
     profile.leaf_udata_marked = GG->xray_leaf_udata_marked;
     profile.leaf_udata_unmarked = GG->xray_leaf_udata_unmarked;
     profile.leaf_udata_finalized = GG->xray_leaf_udata_finalized;
+    profile.userdata_scanned = g->gc.udscanned_count;
+    profile.userdata_candidates = g->gc.udcandidate_count;
     profile.sequence = GG->xray_gc_atomic_profile.sequence + 1;
     GG->xray_gc_atomic_profile = profile;
   }
+  GC_PROFILE_END();
 }
 
 /* GC state machine. Returns a cost estimate for each step performed. */
+uint32_t lj_gc_cycles = 0;
+
 static size_t gc_onestep(lua_State *L)
 {
   global_State *g = G(L);
@@ -693,11 +931,40 @@ static size_t gc_onestep(lua_State *L)
   case GCSpropagate:
     if (gcref(g->gc.gray) != NULL)
       return propagatemark(g);  /* Propagate one gray object. */
-    g->gc.state = GCSatomic;  /* End of mark phase. */
-    return 0;
+    if (!g->gc.incremental) {
+      g->gc.state = GCSatomic;
+      return 0;
+    }
+    setgcrefr(g->gc.gray, g->gc.grayagain);
+    setgcrefnull(g->gc.grayagain);
+    g->gc.state = GCSpropagateagain;
+    return LJ_MAX_MEM;
+  case GCSpropagateagain:
+    if (gcref(g->gc.gray) != NULL)
+      return propagatemark(g);
+    gc_udata_scan_start(g);
+    return LJ_MAX_MEM;
+  case GCSseparate:
+    if (!g->gc.incremental) {
+      gc_udata_scan_reset(g);
+      g->gc.state = GCSatomic;
+      return 0;
+    }
+    if (gcref(g->gc.gray) != NULL)
+      return propagatemark(g);
+    return gc_udata_scan_step(g);
   case GCSatomic:
     if (gcref(g->jit_L))  /* Don't run atomic phase on trace. */
       return LJ_MAX_MEM;
+    if (g->gc.udscanmode == UDSCAN_READY &&
+        gcref(mainthread(g)->nextgc) != NULL &&
+        gco2ud(gcref(mainthread(g)->nextgc))->unused2 != LJ_XRAY_SCANNED_UDATA) {
+      setgcref(g->gc.udscanprev, obj2gco(mainthread(g)));
+      setgcrefr(g->gc.udscananchor, g->gc.udscanprev);
+      g->gc.udscanmode = UDSCAN_PREFIX;
+      g->gc.state = GCSseparate;
+      return LJ_MAX_MEM;
+    }
     atomic(g, L);
     g->gc.state = GCSsweepstring;  /* Start of sweep phase. */
     g->gc.sweepstr = 0;
@@ -726,6 +993,7 @@ static size_t gc_onestep(lua_State *L)
       } else {  /* Otherwise skip this phase to help the JIT. */
 	g->gc.state = GCSpause;  /* End of GC cycle. */
 	g->gc.debt = 0;
+	lj_gc_cycles++;
       }
     }
     return GCSWEEPMAX*GCSWEEPCOST;
@@ -744,6 +1012,7 @@ static size_t gc_onestep(lua_State *L)
 #endif
     g->gc.state = GCSpause;  /* End of GC cycle. */
     g->gc.debt = 0;
+    lj_gc_cycles++;
     return 0;
   default:
     lua_assert(0);
@@ -757,6 +1026,7 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
   global_State *g = G(L);
   MSize lim;
   int32_t ostate = g->vmstate;
+  GC_PROFILE_BEGIN("LuaGC.Step");
   setvmstate(g, GC);
   lim = (GCSTEPSIZE/100) * g->gc.stepmul;
   if (lim == 0)
@@ -768,17 +1038,20 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
     if (g->gc.state == GCSpause) {
       g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
       g->vmstate = ostate;
+      GC_PROFILE_END();
       return 1;  /* Finished a GC cycle. */
     }
   } while ((int32_t)lim > 0);
   if (g->gc.debt < GCSTEPSIZE) {
     g->gc.threshold = g->gc.total + GCSTEPSIZE;
     g->vmstate = ostate;
+    GC_PROFILE_END();
     return -1;
   } else {
     g->gc.debt -= GCSTEPSIZE;
     g->gc.threshold = g->gc.total;
     g->vmstate = ostate;
+    GC_PROFILE_END();
     return 0;
   }
 }
@@ -809,6 +1082,8 @@ void lj_gc_fullgc(lua_State *L)
 {
   global_State *g = G(L);
   int32_t ostate = g->vmstate;
+  GC_PROFILE_BEGIN("LuaGC.FullCollection");
+  gc_udata_scan_reset(g);
   setvmstate(g, GC);
   if (g->gc.state <= GCSatomic) {  /* Caught somewhere in the middle. */
     setmref(g->gc.sweep, &g->gc.root);  /* Sweep everything (preserving it). */
@@ -826,6 +1101,7 @@ void lj_gc_fullgc(lua_State *L)
   do { gc_onestep(L); } while (g->gc.state != GCSpause);
   g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
   g->vmstate = ostate;
+  GC_PROFILE_END();
 }
 
 /* -- Write barriers ------------------------------------------------------ */
@@ -837,10 +1113,18 @@ void lj_gc_barrierf(global_State *g, GCobj *o, GCobj *v)
   lua_assert(g->gc.state != GCSfinalize && g->gc.state != GCSpause);
   lua_assert(o->gch.gct != ~LJ_TTAB);
   /* Preserve invariant during propagation. Otherwise it doesn't matter. */
-  if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
+  if (g->gc.state == GCSpropagate || g->gc.state == GCSpropagateagain ||
+      g->gc.state == GCSseparate || g->gc.state == GCSatomic)
     gc_mark(g, v);  /* Move frontier forward. */
   else
     makewhite(g, o);  /* Make it white to avoid the following barrier. */
+}
+
+void lj_gc_barriertf(global_State *g, GCobj *v)
+{
+  lua_assert((g->gc.state == GCSpropagateagain || g->gc.state == GCSseparate) &&
+             iswhite(v) && !isdead(g, v));
+  gc_mark(g, v);
 }
 
 /* Specialized barrier for closed upvalue. Pass &uv->tv. */
@@ -848,7 +1132,8 @@ void LJ_FASTCALL lj_gc_barrieruv(global_State *g, TValue *tv)
 {
 #define TV2MARKED(x) \
   (*((uint8_t *)(x) - offsetof(GCupval, tv) + offsetof(GCupval, marked)))
-  if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
+  if (g->gc.state == GCSpropagate || g->gc.state == GCSpropagateagain ||
+      g->gc.state == GCSseparate || g->gc.state == GCSatomic)
     gc_mark(g, gcV(tv));
   else
     TV2MARKED(tv) = (TV2MARKED(tv) & (uint8_t)~LJ_GC_COLORS) | curwhite(g);
@@ -866,7 +1151,8 @@ void lj_gc_closeuv(global_State *g, GCupval *uv)
   setgcrefr(o->gch.nextgc, g->gc.root);
   setgcref(g->gc.root, o);
   if (isgray(o)) {  /* A closed upvalue is never gray, so fix this. */
-    if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic) {
+    if (g->gc.state == GCSpropagate || g->gc.state == GCSpropagateagain ||
+      g->gc.state == GCSseparate || g->gc.state == GCSatomic) {
       gray2black(o);  /* Make it black and preserve invariant. */
       if (tviswhite(&uv->tv))
 	lj_gc_barrierf(g, o, gcV(&uv->tv));
@@ -881,12 +1167,48 @@ void lj_gc_closeuv(global_State *g, GCupval *uv)
 /* Mark a trace if it's saved during the propagation phase. */
 void lj_gc_barriertrace(global_State *g, uint32_t traceno)
 {
-  if (g->gc.state == GCSpropagate || g->gc.state == GCSatomic)
+  if (g->gc.state == GCSpropagate || g->gc.state == GCSpropagateagain ||
+      g->gc.state == GCSseparate || g->gc.state == GCSatomic)
     gc_marktrace(g, traceno);
 }
 #endif
 
 /* -- Allocator ----------------------------------------------------------- */
+
+#if LJ_TARGET_WINDOWS
+static __declspec(thread) lua_XRayMemoryError last_memory_error;
+static __declspec(thread) global_State *last_memory_error_vm;
+#else
+static __thread lua_XRayMemoryError last_memory_error;
+static __thread global_State *last_memory_error_vm;
+#endif
+
+static void record_memory_error(global_State *g, MSize previous, MSize requested,
+                               unsigned kind)
+{
+  ++last_memory_error.sequence;
+  last_memory_error.requested = requested;
+  last_memory_error.previous = previous;
+  last_memory_error.heap = g->gc.total;
+  last_memory_error.threshold = g->gc.threshold;
+  last_memory_error.debt = g->gc.debt;
+  last_memory_error.kind = kind;
+  last_memory_error.phase = g->gc.state;
+  last_memory_error.incremental = g->gc.incremental;
+  last_memory_error.hookmask = g->hookmask;
+  last_memory_error_vm = g;
+}
+
+LUA_API int lua_xray_memory_error_snapshot(lua_State *L, lua_XRayMemoryError *info)
+{
+  int matched;
+  if (info == NULL) return 0;
+  memset(info, 0, sizeof(*info));
+  matched = last_memory_error_vm == G(L);
+  if (matched) *info = last_memory_error;
+  XR_MEMORY_ERROR_POOL_INFO(info);
+  return matched;
+}
 
 /* Call pluggable memory allocator to allocate or resize a fragment. */
 void *lj_mem_realloc(lua_State *L, void *p, MSize osz, MSize nsz)
@@ -894,11 +1216,17 @@ void *lj_mem_realloc(lua_State *L, void *p, MSize osz, MSize nsz)
   global_State *g = G(L);
   lua_assert((osz == 0) == (p == NULL));
   p = g->allocf(g->allocd, p, osz, nsz);
-  if (p == NULL && nsz > 0)
+  if (p == NULL && nsz > 0) {
+    record_memory_error(g, osz, nsz, 1);
     lj_err_mem(L);
+  }
   lua_assert((nsz == 0) == (p == NULL));
   lua_assert(checkptr32(p));
   g->gc.total = (g->gc.total - osz) + nsz;
+#if LJ_HASPROFILE
+  if (lj_allocprof_active && nsz > osz)
+    lj_allocprof_pending += (uint64_t)(nsz - osz);
+#endif
   return p;
 }
 
@@ -907,13 +1235,19 @@ void * LJ_FASTCALL lj_mem_newgco(lua_State *L, MSize size)
 {
   global_State *g = G(L);
   GCobj *o = (GCobj *)g->allocf(g->allocd, NULL, 0, size);
-  if (o == NULL)
+  if (o == NULL) {
+    record_memory_error(g, 0, size, 2);
     lj_err_mem(L);
+  }
   lua_assert(checkptr32(o));
   g->gc.total += size;
   setgcrefr(o->gch.nextgc, g->gc.root);
   setgcref(g->gc.root, o);
   newwhite(g, o);
+#if LJ_HASPROFILE
+  if (lj_allocprof_active)
+    lj_allocprof_pending += (uint64_t)size;
+#endif
   return o;
 }
 

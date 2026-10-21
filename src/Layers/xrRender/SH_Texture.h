@@ -6,6 +6,7 @@
 
 class ENGINE_API CAviPlayerCustom;
 class CTheoraSurface;
+class CGIFAnimationPlayer;
 
 class ECORE_API CTexture : public xr_resource_named
 {
@@ -29,6 +30,7 @@ public:
 	void __stdcall apply_theora(u32 stage);
 	void __stdcall apply_avi(u32 stage);
 	void __stdcall apply_seq(u32 stage);
+    void __stdcall apply_gif(u32 stage);
 	void __stdcall apply_normal(u32 stage);
 
 	void Preload();
@@ -37,13 +39,14 @@ public:
 	void PostLoad();
 	void Unload(void);
 	void Bind(u32 stage)
-	{
-		wait_for_loading();
-		bind(stage);
 #if defined(USE_DX10) || defined(USE_DX11)
-		Touch();
+    ;
+#else
+    {
+        wait_for_loading();
+        bind(stage);
+    }
 #endif
-	}
 	bool TryQueueLoad();
 	void CancelQueuedLoad();
 	bool CanLoadAsync() const;
@@ -57,6 +60,7 @@ public:
 		LoadKindOgm,
 		LoadKindAvi,
 		LoadKindSequence,
+        LoadKindGif,
 	};
 	void SetLoadSource(LPCSTR logical_name, LPCSTR resolved_path, ELoadKind kind);
 	bool IsDemandOnly() const { return m_demandOnly; }
@@ -86,6 +90,14 @@ public:
 		return desc.Height;
 	}
 
+    IC void get_UIResolution(Fvector2& size)
+    {
+        if (source_size.x > 0.f && source_size.y > 0.f)
+            size.set(source_size);
+        else
+            size.set(float(get_Width()), float(get_Height()));
+    }
+
 	void video_Sync(u32 _time) { m_play_time = _time; }
 	void video_Play(BOOL looped, u32 _time = 0xFFFFFFFF);
 	void video_Pause(BOOL state);
@@ -97,6 +109,7 @@ public:
 
 #if defined(USE_DX10) || defined(USE_DX11)
 	ID3DShaderResourceView* get_SRView();
+    ID3DShaderResourceView* RenderView() const;
 #endif	//	USE_DX10
 
 private:
@@ -144,6 +157,8 @@ public: //	Public class members (must be encapsulated furthur)
 	xr_atomic_u32 loadState;
 	mutable xr_atomic_u32 loadKind;
 
+    u32 dwLastUsedFrame = 0; // frame index of last Apply() call — used for eviction
+
 	xr_delegate<void(u32)> bind;
 
 
@@ -169,6 +184,9 @@ private:
 	// Description
 	ID3DBaseTexture* desc_cache;
 	D3D_TEXTURE2D_DESC desc;
+    Fvector2 source_size = {0.f, 0.f}; // source pixel coordinates for static D3D9 UI textures
+
+    CGIFAnimationPlayer* gifPlayer;
 
 #if defined(USE_DX10) || defined(USE_DX11)
 	std::atomic<u64> m_residentBytes{0};

@@ -247,6 +247,7 @@ void CBulletManager::PlayWhineSound(SBullet* bullet, CObject* object, const Fvec
 
 void CBulletManager::Clear()
 {
+	xrCriticalSectionGuard guard(&m_Lock);
 	m_Bullets.clear();
 	m_Events.clear();
 }
@@ -267,10 +268,6 @@ void CBulletManager::AddBullet(const Fvector& position,
                                bool AimBullet,
                                int iShotNum)
 {
-#ifdef DEBUG
-	VERIFY(m_thread_id == GetCurrentThreadId());
-#endif
-
 	VERIFY(u16(-1)!=cartridge.bullet_material_idx);
 	//	u32 CurID					= Level().CurrentControlEntity()->ID();
 	//	u32 OwnerID					= sender_id;
@@ -853,6 +850,14 @@ BOOL CBulletManager::firetrace_callback(collide::rq_result& result, LPVOID param
 	if (!kinematics)
 		return (FALSE);
 
+#ifdef CBULLETMANAGER_EX
+    if (result.O->GetBulletCheckVisual() && !bullet_manager.ValidateHitDynamicVisualMesh(bullet, result, collide_position, data.max_distance))
+    {
+        /* Ignore this hit and allow the bullet to continue flying. */
+        return TRUE;
+    }
+#endif
+
 	CBoneData const& bone_data = kinematics->LL_GetData((u16)result.element);
 	bullet_manager.RegisterEvent(EVENT_HIT, TRUE, &bullet, collide_position, result, bone_data.game_mtl_idx);
 	return (FALSE);
@@ -881,6 +886,9 @@ bool CBulletManager::trajectory_check_error(
 
 	bullet_test_callback_data data;
 	data.pBullet = &bullet;
+#ifdef CBULLETMANAGER_EX
+    data.max_distance = distance;
+#endif
 #if 1//def DEBUG
 	data.high_time = high;
 #endif // #ifdef DEBUG
@@ -1230,6 +1238,12 @@ void __stdcall CBulletManager::net_Relcase(CObject* object)
 void CBulletManager::CommitEvents() // @ the start of frame
 {
 	PROF_EVENT("CBulletManager::CommitEvents");
+	PROF_TAG("Bullet events", u32(m_Events.size()));
+	const auto lock_events = [this]()
+	{
+		PROF_EVENT("Bullets.Commit.LockWait");
+		return xrCriticalSectionGuard(&m_Lock);
+	};
 	if (m_Events.size() > 1000)
 		Msg("! too many bullets during single frame: %d", m_Events.size());
 
@@ -1245,9 +1259,16 @@ void CBulletManager::CommitEvents() // @ the start of frame
 			{
 				// demonized: bullet on impact callback
 				{
-					xrCriticalSectionGuard guard(&m_Lock);
+					PROF_EVENT("Bullets.Commit.ImpactCallback");
+					auto guard = lock_events();
 					::luabind::functor<void> funct;
-					if (ai().script_engine().functor("_G.CBulletOnImpact", funct)) {
+					bool has_callback;
+					{
+						PROF_EVENT("Bullets.Commit.LookupCallback");
+						has_callback = ai().script_engine().functor("_G.CBulletOnImpact", funct);
+					}
+					if (has_callback) {
+						PROF_EVENT("Bullets.Commit.BuildAndCallLua");
 						::luabind::object table = ::luabind::newtable(ai().script_engine().lua());
 						populateBulletTable(
 							table,
@@ -1268,17 +1289,32 @@ void CBulletManager::CommitEvents() // @ the start of frame
 					}
 				}
 
-				if (E.dynamic) DynamicObjectHit(E);
-				else StaticObjectHit(E);
+				if (E.dynamic)
+				{
+					PROF_EVENT("Bullets.Commit.DynamicHit");
+					DynamicObjectHit(E);
+				}
+				else
+				{
+					PROF_EVENT("Bullets.Commit.StaticHit");
+					StaticObjectHit(E);
+				}
 			}
 
 			break;
 		case EVENT_REMOVE:
 			{
 				// demonized: bullet on remove callback
-				xrCriticalSectionGuard guard(&m_Lock);
+				PROF_EVENT("Bullets.Commit.Remove");
+				auto guard = lock_events();
 				::luabind::functor<void> funct;
-				if (ai().script_engine().functor("_G.CBulletOnRemove", funct)) {
+				bool has_callback;
+				{
+					PROF_EVENT("Bullets.Commit.LookupCallback");
+					has_callback = ai().script_engine().functor("_G.CBulletOnRemove", funct);
+				}
+				if (has_callback) {
+					PROF_EVENT("Bullets.Commit.BuildAndCallLua");
 					::luabind::object table = ::luabind::newtable(ai().script_engine().lua());
 					populateBulletTable(
 						table,
@@ -1374,3 +1410,16 @@ void CBulletManager::RegisterEvent(EventType Type, BOOL _dynamic, SBullet* bulle
 		break;
 	}
 }
+
+#ifdef CBULLETMANAGER_EX
+bool CBulletManager::ValidateHitDynamicVisualMesh(SBullet& B, collide::rq_result& R, Fvector& collide_position, float range)
+{
+    IKinematics::pick_result res;
+    if (R.O->Visual()->dcast_PKinematics()->PickBone(R.O->XFORM(), res, range, B.bullet_pos, B.dir, (u16)R.element))
+    {
+        collide_position.mad(B.bullet_pos, B.dir, res.dist);
+        return true;
+    }
+    return false;
+}
+#endif

@@ -54,6 +54,7 @@ protected:
 public:
 	// Main interface
 	dxRender_Visual* root() { return m_root; }
+    const xr_vector<CPortal*>& PreparationPortals() const { return m_portals; }
 	void traverse(CFrustum&& F, CDSGraphManager& DM);
 	void load(IReader& fs);
 

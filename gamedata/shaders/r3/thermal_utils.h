@@ -15,6 +15,8 @@
     Texture2D   s_heat;
 #endif
 
+#include "thermal_coordinates.h"
+
 #define FADE_DISTANCE_NEAR 0.0
 #define FADE_DISTANCE_FAR 200.0
 
@@ -40,10 +42,18 @@ float3 normal_blur(float2 pos2d, int samples)
 
 float3 infrared(gbuffer_data gbd, float2 HPos, float2 Tex0) 
 {	
-    float hotness = s_heat.Load(int3(Tex0 * screen_res.xy, 0 ), 0).r;
+    uint heat_width, heat_height;
+#ifdef USE_MSAA
+    uint heat_samples;
+    s_heat.GetDimensions(heat_width, heat_height, heat_samples);
+#else
+    s_heat.GetDimensions(heat_width, heat_height);
+#endif
+    int2 heat_pixel = clamp(int2(Tex0 * float2(heat_width, heat_height)), int2(0, 0), int2(heat_width, heat_height) - 1);
+    float hotness = s_heat.Load(int3(heat_pixel, 0), 0).r;
     
     float depth = gbd.P.z;
-	float hot_color;
+    float hot_color = COLOR_NEAR_MAX;
     if (hotness > 0.0) 
     {
         int samples = lerp(15, 4, smoothstep(0.0, 60, depth));

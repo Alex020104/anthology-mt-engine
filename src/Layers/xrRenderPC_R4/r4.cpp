@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "../xrRender/ParticlePositionProof.h"
 #include "r4.h"
 #include "SnowRenderer.h"
 #include "../xrRender/fbasicvisual.h"
@@ -17,6 +18,7 @@
 #include "../xrRender/ShaderCompileOptions.h"
 
 #include "../../xrCore/profiler.h"
+#include "../../xrCore/ShaderSourceCRC.h"
 
 #include "D3DX10Core.h"
 
@@ -72,7 +74,7 @@ float r_dtex_range = 50.f;
 ShaderElement* CRender::rimp_select_sh_dynamic(dxRender_Visual* pVisual, float cdist_sq)
 {
 	int id = SE_R2_SHADOW;
-	if (CRender::PHASE_NORMAL == RImplementation.phase)
+	if (CRender::PHASE_NORMAL == RCache.RenderPhase(RImplementation.phase))
 	{
 		id = ((_sqrt(cdist_sq) - pVisual->vis.sphere.R) < r_dtex_range) ? SE_R2_NORMAL_HQ : SE_R2_NORMAL_LQ;
 	}
@@ -83,16 +85,12 @@ ShaderElement* CRender::rimp_select_sh_dynamic(dxRender_Visual* pVisual, float c
 ShaderElement* CRender::rimp_select_sh_static(dxRender_Visual* pVisual, float cdist_sq)
 {
 	int id = SE_R2_SHADOW;
-	if (CRender::PHASE_NORMAL == RImplementation.phase)
+	if (CRender::PHASE_NORMAL == RCache.RenderPhase(RImplementation.phase))
 	{
 		if (pVisual->shader->E[0]->flags.isLandscape)
 		{
 			float sec_dist = _sqrt(cdist_sq) - pVisual->vis.sphere.R;
 			id = (sec_dist < ps_ssfx_terrain_quality.x * 10) ? SE_R2_NORMAL_HQ : SE_R2_NORMAL_LQ;
-			
-			// Very low shader variation
-			if (sec_dist > 240)
-				id = 3;
 		}
 		else
 		{
@@ -119,10 +117,8 @@ static class cl_LOD : public R_constant_setup
 	}
 } binder_LOD;
 
-static class cl_pos_decompress_params : public R_constant_setup
+Fvector4 CalculatePositionDecompression()
 {
-	virtual void setup(R_constant* C)
-	{
 		float VertTan = -1.0f * tanf(deg2rad(Device.fFOV / 2.0f));
 		float HorzTan = - VertTan / Device.fASPECT;
 
@@ -134,19 +130,38 @@ static class cl_pos_decompress_params : public R_constant_setup
 		// G-buffer depth was rasterized with jitter; remove the same offset when
 		// reconstructing view-space rays for lighting, shadows and reflections.
 		const bool jittered = core && g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame();
-		RCache.set_c(C, HorzTan + (jittered ? g_main_taa_jitter_pixels.x * stepX : 0.f),
+		return Fvector4().set( HorzTan + (jittered ? g_main_taa_jitter_pixels.x * stepX : 0.f),
 		             VertTan + (jittered ? g_main_taa_jitter_pixels.y * stepY : 0.f), stepX, stepY);
+}
+
+
+Fvector4 CalculatePositionDecompressionDimensions()
+{
+    const bool core = RImplementation.Target && !g_upscale_reticle_pass;
+    const float width = core ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
+    const float height = core ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
+    return Fvector4().set(width, height, 1.f / width, 1.f / height);
+}
+
+static class cl_pos_decompress_params : public R_constant_setup
+{
+    bool parallel_safe() const override { return true; }
+	virtual void setup(R_constant* C)
+	{
+        Fvector4 value;
+        if (!ContextPositionDecompression(value, false)) value = CalculatePositionDecompression();
+        RCache.set_c(C, value);
 	}
 } binder_pos_decompress_params;
 
 static class cl_pos_decompress_params2 : public R_constant_setup
 {
+    bool parallel_safe() const override { return true; }
 	virtual void setup(R_constant* C)
 	{
-		const bool core = RImplementation.Target && !g_upscale_reticle_pass;
-		const float width = core ? float(RImplementation.Target->get_core_width()) : float(Device.dwWidth);
-		const float height = core ? float(RImplementation.Target->get_core_height()) : float(Device.dwHeight);
-		RCache.set_c(C, width, height, 1.0f / width, 1.0f / height);
+        Fvector4 value;
+        if (!ContextPositionDecompression(value, true)) value = CalculatePositionDecompressionDimensions();
+        RCache.set_c(C, value);
 	}
 } binder_pos_decompress_params2;
 
@@ -585,6 +600,9 @@ void CRender::create()
 
 void CRender::destroy()
 {
+    local_light_shadows.reset();
+    sun_shadows.reset();
+    rain_shadows.reset();
     xr_delete(Snow);
 	m_bMakeAsyncSS = false;
 	WaitLevelPrepare();
@@ -605,6 +623,9 @@ void CRender::destroy()
 
 void CRender::reset_begin()
 {
+    if (local_light_shadows) local_light_shadows->Clear();
+    if (sun_shadows) sun_shadows->Clear();
+    if (rain_shadows) rain_shadows->Clear();
     xr_delete(Snow);
 	WaitLevelPrepare();
 	m_prepared_level_path = nullptr;
@@ -982,6 +1003,10 @@ CRender::CRender()
 
 CRender::~CRender()
 {
+    local_light_shadows.reset();
+    sun_shadows.reset();
+    rain_shadows.reset();
+    view_preparation.reset();
 	for (auto& it : SWIs) {
 		xr_free(it.sw);
 		it.sw = nullptr;
@@ -998,6 +1023,22 @@ void CRender::Statistics(CGameFont* _F)
 	F.OutNext(" **** LT:%2d,LV:%2d **** ", stats.l_total, stats.l_visible);
 	stats.l_visible = 0;
 	F.OutNext("    S(%2d)   | (%2d)NS   ", stats.l_shadowed, stats.l_unshadowed);
+	F.OutNext("LP sh(in:%u,vis:%u,r:%u) pk(%u/%u)", stats.ls_shadowed_in, stats.ls_shadowed_after_vis,
+	          stats.ls_shadowed_rendered, stats.ls_shadowed_peak_in, stats.ls_shadowed_peak_after_vis);
+	F.OutNext("LP uns p(in:%u,r:%u) s(in:%u,r:%u)", stats.ls_unshadowed_point_in, stats.ls_unshadowed_point_rendered,
+	          stats.ls_unshadowed_spot_in, stats.ls_unshadowed_spot_rendered);
+	F.OutNext("LP sh skip: pend[%u] inv[%u]", stats.ls_shadowed_pending_skipped, stats.ls_shadowed_invisible_skipped);
+	stats.ls_shadowed_in = 0;
+	stats.ls_shadowed_after_vis = 0;
+	stats.ls_shadowed_rendered = 0;
+	stats.ls_shadowed_pending_skipped = 0;
+	stats.ls_shadowed_invisible_skipped = 0;
+	stats.ls_shadowed_peak_in = 0;
+	stats.ls_shadowed_peak_after_vis = 0;
+	stats.ls_unshadowed_point_in = 0;
+	stats.ls_unshadowed_spot_in = 0;
+	stats.ls_unshadowed_point_rendered = 0;
+	stats.ls_unshadowed_spot_rendered = 0;
 	F.OutNext("smap use[%2d], merge[%2d], finalclip[%2d]", stats.s_used, stats.s_merged - stats.s_used,
 	          stats.s_finalclip);
 	stats.s_used = 0;
@@ -1041,6 +1082,125 @@ void CRender::clearAllShaderOptions()
 	ShaderCompileOptions::clear();
 }
 
+#ifdef USE_DX11
+static bool static_draw_shader_safe(ID3DShaderReflection* reflection)
+{
+    D3D11_SHADER_DESC description{};
+    if (FAILED(reflection->GetDesc(&description)) || reflection->GetNumInterfaceSlots()) return false;
+    for (UINT i = 0; i < description.InputParameters; ++i)
+    {
+        D3D11_SIGNATURE_PARAMETER_DESC input{};
+        if (FAILED(reflection->GetInputParameterDesc(i, &input))) return false;
+        if (input.SystemValueType == D3D_NAME_VERTEX_ID || input.SystemValueType == D3D_NAME_PRIMITIVE_ID ||
+            input.SystemValueType == D3D_NAME_INSTANCE_ID) return false;
+    }
+    for (UINT i = 0; i < description.BoundResources; ++i)
+    {
+        D3D11_SHADER_INPUT_BIND_DESC resource{};
+        if (FAILED(reflection->GetResourceBindingDesc(i, &resource))) return false;
+        switch (resource.Type)
+        {
+        case D3D_SIT_CBUFFER: case D3D_SIT_TBUFFER: case D3D_SIT_TEXTURE: case D3D_SIT_SAMPLER:
+        case D3D_SIT_STRUCTURED: case D3D_SIT_BYTEADDRESS: break;
+        default: return false;
+        }
+    }
+    return true;
+}
+
+static bool shadow_depth_shader_safe(ID3DShaderReflection* reflection)
+{
+    if (!static_draw_shader_safe(reflection)) return false;
+    D3D11_SHADER_DESC desc{};
+    if (FAILED(reflection->GetDesc(&desc))) return false;
+    for (UINT i = 0; i < desc.BoundResources; ++i)
+    {
+        D3D11_SHADER_INPUT_BIND_DESC resource{};
+        if (FAILED(reflection->GetResourceBindingDesc(i, &resource)) || resource.Type != D3D_SIT_CBUFFER)
+            return false; // No textures, samplers, UAVs or externally mutable buffers.
+    }
+    for (UINT i = 0; i < desc.ConstantBuffers; ++i)
+    {
+        auto* buffer = reflection->GetConstantBufferByIndex(i);
+        D3D11_SHADER_BUFFER_DESC info{};
+        if (FAILED(buffer->GetDesc(&info))) return false;
+        for (UINT j = 0; j < info.Variables; ++j)
+        {
+            D3D11_SHADER_VARIABLE_DESC variable{};
+            if (FAILED(buffer->GetVariableByIndex(j)->GetDesc(&variable))) return false;
+            if ((variable.uFlags & D3D_SVF_USED) && xr_strcmp(variable.Name, "m_WVP")) return false;
+        }
+    }
+    return true;
+}
+
+static bool recording_shader_safe(ID3DShaderReflection* reflection)
+{
+    D3D11_SHADER_DESC description{};
+    if (FAILED(reflection->GetDesc(&description)) || reflection->GetNumInterfaceSlots()) return false;
+    for (UINT i = 0; i < description.BoundResources; ++i)
+    {
+        D3D11_SHADER_INPUT_BIND_DESC resource{};
+        if (FAILED(reflection->GetResourceBindingDesc(i, &resource))) return false;
+        switch (resource.Type)
+        {
+        case D3D_SIT_CBUFFER: case D3D_SIT_TBUFFER: case D3D_SIT_TEXTURE:
+        case D3D_SIT_SAMPLER: case D3D_SIT_STRUCTURED: case D3D_SIT_BYTEADDRESS: break;
+        default: return false;
+        }
+    }
+    return true;
+}
+
+static u32 tree_shadow_inputs(ID3DShaderReflection* reflection)
+{
+    if (!static_draw_shader_safe(reflection)) return 0;
+    D3D11_SHADER_DESC desc{};
+    if (FAILED(reflection->GetDesc(&desc))) return 0;
+    u32 mask = 0;
+    for (UINT i = 0; i < desc.InputParameters; ++i)
+    {
+        D3D11_SIGNATURE_PARAMETER_DESC input{};
+        if (FAILED(reflection->GetInputParameterDesc(i, &input)) || input.SystemValueType != D3D_NAME_UNDEFINED || input.SemanticIndex) return 0;
+        if (!_stricmp(input.SemanticName, "POSITION")) mask |= 1;
+        else if (!_stricmp(input.SemanticName, "TEXCOORD")) mask |= 2;
+        else return 0;
+    }
+    return (mask & 1) ? mask : 0;
+}
+
+static bool tree_shadow_batch_safe(ID3DShaderReflection* reflection)
+{
+    if (tree_shadow_inputs(reflection) != 1) return false;
+    D3D11_SHADER_DESC desc{};
+    if (FAILED(reflection->GetDesc(&desc))) return false;
+    for (UINT i = 0; i < desc.BoundResources; ++i)
+    {
+        D3D11_SHADER_INPUT_BIND_DESC resource{};
+        if (FAILED(reflection->GetResourceBindingDesc(i, &resource)) || resource.Type != D3D_SIT_CBUFFER) return false;
+    }
+    static const char* allowed[] = {"m_xform", "m_xform_v", "m_VP", "m_V", "m_P", "consts",
+        "wave", "wind", "prev_wave", "prev_wind", "wind_params", "ssfx_wsetup_trees",
+        "ssfx_wind_anim", "ssfx_wind_anim_prev", "c_scale", "c_bias", "c_sun", "timers", "eye_position"};
+    for (UINT i = 0; i < desc.ConstantBuffers; ++i)
+    {
+        auto* buffer = reflection->GetConstantBufferByIndex(i);
+        D3D11_SHADER_BUFFER_DESC info{};
+        if (FAILED(buffer->GetDesc(&info))) return false;
+        for (UINT j = 0; j < info.Variables; ++j)
+        {
+            D3D11_SHADER_VARIABLE_DESC variable{};
+            if (FAILED(buffer->GetVariableByIndex(j)->GetDesc(&variable))) return false;
+            if (!(variable.uFlags & D3D_SVF_USED)) continue;
+            bool known = false;
+            for (const char* name : allowed) known |= !xr_strcmp(name, variable.Name);
+            if (!known) return false;
+        }
+    }
+    return true;
+}
+
+#endif
 template <typename T>
 static HRESULT create_shader(
 	LPCSTR const pTarget,
@@ -1052,6 +1212,7 @@ static HRESULT create_shader(
 )
 {
 	result->sh = ShaderTypeTraits<T>::CreateHWShader(buffer, buffer_size);
+    result->recording_safe = false;
 
 	ID3DShaderReflection* pReflection = 0;
 
@@ -1060,6 +1221,7 @@ static HRESULT create_shader(
 	{
 		// Parse constant table data
 		result->constants.parse(pReflection, ShaderTypeTraits<T>::GetShaderDest());
+        result->recording_safe = recording_shader_safe(pReflection);
 
 		_RELEASE(pReflection);
 	}
@@ -1080,10 +1242,18 @@ static HRESULT create_shader(
 	bool const disasm
 )
 {
+	PROF_EVENT("Shader.CreateFromBytecode");
 	HRESULT _result = E_FAIL;
 	if (pTarget[0] == 'p')
 	{
 		SPS* sps_result = (SPS*)result;
+#ifdef USE_DX11
+        sps_result->static_draw_safe = false;
+        sps_result->recording_safe = false;
+        sps_result->shadow_batch_safe = false;
+        sps_result->shadow_depth_cache_safe = false;
+        ++sps_result->shadow_shader_revision;
+#endif
 #ifdef USE_DX11
 		_result = HW.pDevice->CreatePixelShader(buffer, buffer_size, 0, &sps_result->ps);
 #else // #ifdef USE_DX11
@@ -1110,6 +1280,14 @@ static HRESULT create_shader(
 		{
 			//	Let constant table parse it's data
 			sps_result->constants.parse(pReflection, RC_dest_pixel);
+#ifdef USE_DX11
+            sps_result->static_draw_safe = static_draw_shader_safe(pReflection);
+            sps_result->recording_safe = recording_shader_safe(pReflection);
+            sps_result->shadow_depth_cache_safe = shadow_depth_shader_safe(pReflection);
+            D3D11_SHADER_DESC desc{};
+            sps_result->shadow_batch_safe = sps_result->shadow_depth_cache_safe &&
+                SUCCEEDED(pReflection->GetDesc(&desc)) && desc.InputParameters == 0;
+#endif
 
 			_RELEASE(pReflection);
 		}
@@ -1122,6 +1300,15 @@ static HRESULT create_shader(
 	else if (pTarget[0] == 'v')
 	{
 		SVS* svs_result = (SVS*)result;
+#ifdef USE_DX11
+        svs_result->static_draw_safe = false;
+        svs_result->recording_safe = false;
+        svs_result->particle_position_safe = false;
+        svs_result->tree_shadow_inputs = 0;
+        svs_result->tree_shadow_batch_safe = false;
+        svs_result->shadow_depth_cache_safe = false;
+        ++svs_result->shadow_shader_revision;
+#endif
 #ifdef USE_DX11
 		_result = HW.pDevice->CreateVertexShader(buffer, buffer_size, 0, &svs_result->vs);
 #else // #ifdef USE_DX11
@@ -1161,6 +1348,53 @@ static HRESULT create_shader(
 
 			//	Let constant table parse it's data
 			svs_result->constants.parse(pReflection, RC_dest_vertex);
+#ifdef USE_DX11
+            svs_result->static_draw_safe = static_draw_shader_safe(pReflection);
+            svs_result->recording_safe = recording_shader_safe(pReflection);
+            svs_result->shadow_depth_cache_safe = shadow_depth_shader_safe(pReflection);
+            svs_result->tree_shadow_inputs = tree_shadow_inputs(pReflection);
+            svs_result->tree_shadow_batch_safe = tree_shadow_batch_safe(pReflection);
+            if (strstr(file_name, "particle") && svs_result->static_draw_safe)
+            {
+                D3D11_SHADER_DESC desc{}; pReflection->GetDesc(&desc);
+                unsigned input = ~0u, output = ~0u;
+                for (unsigned i = 0; i < desc.InputParameters; ++i)
+                {
+                    D3D11_SIGNATURE_PARAMETER_DESC p{}; pReflection->GetInputParameterDesc(i, &p);
+                    if (!_stricmp(p.SemanticName, "POSITION") && !p.SemanticIndex) input = p.Register;
+                }
+                for (unsigned i = 0; i < desc.OutputParameters; ++i)
+                {
+                    D3D11_SIGNATURE_PARAMETER_DESC p{}; pReflection->GetOutputParameterDesc(i, &p);
+                    if (p.SystemValueType == D3D_NAME_POSITION) output = p.Register;
+                }
+                ID3DBlob* assembly = nullptr;
+                if (input != ~0u && output != ~0u && SUCCEEDED(D3DDisassemble(buffer, buffer_size, 0, nullptr, &assembly)))
+                {
+                    for (unsigned i = 0; i < desc.ConstantBuffers && !svs_result->particle_position_safe; ++i)
+                    {
+                        auto* cb = pReflection->GetConstantBufferByIndex(i);
+                        D3D11_SHADER_BUFFER_DESC bd{}; cb->GetDesc(&bd);
+                        D3D11_SHADER_INPUT_BIND_DESC binding{};
+                        if (FAILED(pReflection->GetResourceBindingDescByName(bd.Name, &binding))) continue;
+                        for (unsigned j = 0; j < bd.Variables; ++j)
+                        {
+                            auto* variable = cb->GetVariableByIndex(j);
+                            D3D11_SHADER_VARIABLE_DESC vd{}; variable->GetDesc(&vd);
+                            D3D11_SHADER_TYPE_DESC td{}; variable->GetType()->GetDesc(&td);
+                            if ((strcmp(vd.Name, "m_VP") && strcmp(vd.Name, "m_WVP")) || vd.Size != 64 ||
+                                td.Class != D3D_SVC_MATRIX_ROWS || td.Rows != 4 || td.Columns != 4 || td.Elements) continue;
+                            if (particle_position_dp4(static_cast<const char*>(assembly->GetBufferPointer()), input, output, binding.BindPoint, vd.StartOffset / 16))
+                            {
+                                svs_result->particle_position_safe = true;
+                                svs_result->particle_uses_vp = !strcmp(vd.Name, "m_VP");
+                            }
+                        }
+                    }
+                    assembly->Release();
+                }
+            }
+#endif
 
 			_RELEASE(pReflection);
 		}
@@ -1174,6 +1408,7 @@ static HRESULT create_shader(
 	{
 		SGS* sgs_result = (SGS*)result;
 #ifdef USE_DX11
+        sgs_result->recording_safe = false;
 		_result = HW.pDevice->CreateGeometryShader(buffer, buffer_size, 0, &sgs_result->gs);
 #else // #ifdef USE_DX11
 		_result			= HW.pDevice->CreateGeometryShader(buffer, buffer_size, &sgs_result->gs);
@@ -1199,6 +1434,9 @@ static HRESULT create_shader(
 		{
 			//	Let constant table parse it's data
 			sgs_result->constants.parse(pReflection, RC_dest_geometry);
+#ifdef USE_DX11
+            sgs_result->recording_safe = recording_shader_safe(pReflection);
+#endif
 
 			_RELEASE(pReflection);
 		}
@@ -1348,6 +1586,9 @@ HRESULT CRender::shader_compile(
 	DWORD Flags,
 	void*& result)
 {
+    PROF_EVENT("Render.ShaderCompileOrCache");
+    PROF_TAG("Shader", name);
+    PROF_TAG("Target", pTarget);
 	D3D_SHADER_MACRO defines [128];
 	int def_it = 0;
 	char c_smapsize [32];
@@ -1370,6 +1611,7 @@ HRESULT CRender::shader_compile(
 	char c_inter_grass[32];
 	char c_msaa_sample[2];
 	char c_msaa_samples[2];
+	char c_shader_bus[32];
 
 	char sh_name[MAX_PATH] = "";
 
@@ -2017,6 +2259,14 @@ HRESULT CRender::shader_compile(
 		++len;
 	}
 
+	// the bus version, in the cache name too so each version keeps its own build
+	xr_sprintf(c_shader_bus, "%d", ShaderBus::version());
+	defines[def_it].Name = "SHADER_BUS";
+	defines[def_it].Definition = c_shader_bus;
+	def_it++;
+	xr_strcat(sh_name, c_shader_bus);
+	len += xr_strlen(c_shader_bus);
+
 	sh_name[len] = 0;
 
 	// finish
@@ -2133,13 +2383,40 @@ HRESULT CRender::shader_compile(
 		xr_strcat(file_name, temp_file_name);
 	}
 
+	u32 source_crc = 0;
+	if (useGeneratedShaderCache)
+		source_crc = getShaderSourceCrc32(pSrcData, SrcDataLen, ::Render->getShaderPath());
+
 	if (FS.exist(file_name))
 	{
+		PROF_EVENT("Shader.CacheRead");
+		PROF_EVENT_DYNAMIC(file_name);
 		IReader* file = FS.r_open(file_name);
-		if (file->length() > 4)
+		if (useGeneratedShaderCache)
 		{
-			u32 crc = 0;
-			crc = file->r_u32();
+			if (file->length() > 8)
+			{
+				u32 const saved_source_crc = file->r_u32();
+				if (saved_source_crc == source_crc)
+				{
+					u32 const crc = file->r_u32();
+					u32 const real_crc = crc32(file->pointer(), file->elapsed());
+
+					if (real_crc == crc)
+					{
+						_result = create_shader(pTarget, (DWORD*)file->pointer(), file->elapsed(), file_name, result, o.disasm);
+					}
+				}
+				else
+				{
+					Msg("~Shader cache source CRC mismatch for '%s': cached=0x%08x current=0x%08x, recompiling",
+						name, saved_source_crc, source_crc);
+				}
+			}
+		}
+		else if (file->length() > 4)
+		{
+			u32 const crc = file->r_u32();
 
 			u32 const real_crc = crc32(file->pointer(), file->elapsed());
 
@@ -2155,6 +2432,8 @@ HRESULT CRender::shader_compile(
 	{
 		LPD3DBLOB pShaderBuf = NULL;
 		LPD3DBLOB pErrorBuf = NULL;
+    {
+    PROF_EVENT("Shader.D3DCompile");
 		_result =
 			D3DCompile(
                 preprocessed.text->GetBufferPointer(),
@@ -2166,12 +2445,16 @@ HRESULT CRender::shader_compile(
 				&pShaderBuf,
 				&pErrorBuf
 			);
+    }
 
 		if (SUCCEEDED(_result))
 		{
 			IWriter* file = FS.w_open(file_name);
 
 			u32 const crc = crc32(pShaderBuf->GetBufferPointer(), pShaderBuf->GetBufferSize());
+
+			if (useGeneratedShaderCache)
+				file->w_u32(source_crc);
 
 			file->w_u32(crc);
 			file->w(pShaderBuf->GetBufferPointer(), (u32)pShaderBuf->GetBufferSize());

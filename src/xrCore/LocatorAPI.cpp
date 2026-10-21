@@ -7,6 +7,10 @@
 
 #pragma warning(disable:4995)
 #include <direct.h>
+#include <winternl.h>
+#include <time.h>
+#include <cstddef>
+#include <array>
 #include <fcntl.h>
 #include <sys\stat.h>
 #define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
@@ -512,6 +516,7 @@ void CLocatorAPI::Register(LPCSTR name, u32 vfs, u32 crc, u32 ptr, u32 size_real
 
 void CLocatorAPI::CommitInitialFiles(u64 scan_started_at)
 {
+    PROF_EVENT("VFS.BuildCatalog");
 	using InitialFileMap = xr_unordered_map<xr_string, InitialFileData, InitialNameHash>;
 	using InitialFileMapEntry = InitialFileMap::value_type;
 
@@ -1104,22 +1109,163 @@ bool ignore_path(const char* _path)
 		return true;
 }
 
+// Batched directory enumeration adapted from AOE (377836cc9).
+struct xr_file_both_dir_information
+{
+    ULONG NextEntryOffset;
+    ULONG FileIndex;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER EndOfFile;
+    LARGE_INTEGER AllocationSize;
+    ULONG FileAttributes;
+    ULONG FileNameLength;
+    ULONG EaSize;
+    CCHAR ShortNameLength;
+    WCHAR ShortName[12];
+    WCHAR FileName[1];
+};
+
+static bool directory_write_time(const LARGE_INTEGER& time, __time64_t& result)
+{
+    PROF_EVENT("VFS.NativeTimestamp");
+    result = -1;
+    if (!time.QuadPart)
+        return true;
+    FILETIME file_time = {time.LowPart, static_cast<DWORD>(time.HighPart)};
+    SYSTEMTIME utc, local;
+    if (!FileTimeToSystemTime(&file_time, &utc) ||
+        !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local) || local.wYear < 1970 || local.wYear > 3000)
+        return true;
+    // Match CRT's local-time conversion, including the TZ environment variable.
+    // ProcessOne only consumes the last-write timestamp.
+    tm value = {};
+    value.tm_year = local.wYear - 1900;
+    value.tm_mon = local.wMonth - 1;
+    value.tm_mday = local.wDay;
+    value.tm_hour = local.wHour;
+    value.tm_min = local.wMinute;
+    value.tm_sec = local.wSecond;
+    value.tm_isdst = -1;
+    result = _mktime64(&value);
+    // CRT's find functions can return negative times near the epoch, unlike mktime.
+    // Leave these boundary cases to the original enumerator.
+    return result != -1;
+}
+
+// Keep the batch buffer out of recursive Recurse frames, including LTCG builds.
+static ICN bool enumerate_directory_native(const char* path, xr_vector<_finddata_t>& entries, bool check_paths, u32& batches)
+{
+    using NtQueryDirectoryFileFn = NTSTATUS(NTAPI*)(HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID,
+        PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS, BOOLEAN, PUNICODE_STRING, BOOLEAN);
+    static const auto query_directory = reinterpret_cast<NtQueryDirectoryFileFn>(
+        GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryDirectoryFile"));
+    if (!query_directory)
+        return false;
+    HANDLE directory;
+    {
+        PROF_EVENT("VFS.NativeOpenDirectory");
+        directory = CreateFileA(path, FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    }
+    if (directory == INVALID_HANDLE_VALUE)
+        return false;
+
+    // This buffer leaves the stack before ProcessOne recurses into child directories.
+    const bool complete = [&]()
+    {
+        alignas(LARGE_INTEGER) std::array<std::byte, 64 * 1024> buffer;
+        constexpr size_t header_size = offsetof(xr_file_both_dir_information, FileName);
+        static_assert(header_size == 94, "FILE_BOTH_DIR_INFORMATION layout");
+        const UINT code_page = AreFileApisANSI() ? CP_ACP : CP_OEMCP;
+        bool first_query = true;
+        for (;;)
+        {
+            IO_STATUS_BLOCK io_status = {};
+            NTSTATUS status;
+            {
+                PROF_EVENT("VFS.NativeQuery");
+                status = query_directory(directory, nullptr, nullptr, nullptr, &io_status,
+                    buffer.data(), static_cast<ULONG>(buffer.size()), static_cast<FILE_INFORMATION_CLASS>(3),
+                    FALSE, nullptr, first_query ? TRUE : FALSE);
+            }
+            constexpr NTSTATUS no_more_files = static_cast<NTSTATUS>(0x80000006L);
+            if (status == no_more_files)
+                return !first_query;
+            // Empty success, partial records or errors require a fresh CRT scan.
+            if (status != 0 || !io_status.Information || io_status.Information > buffer.size())
+                return false;
+            first_query = false;
+            ++batches;
+            PROF_EVENT("VFS.NativeEntries");
+            size_t offset = 0;
+            for (;;)
+            {
+                const size_t remaining = io_status.Information - offset;
+                if (remaining < header_size)
+                    return false;
+                const auto* info = reinterpret_cast<const xr_file_both_dir_information*>(buffer.data() + offset);
+                if (info->FileNameLength % sizeof(WCHAR) || info->FileNameLength > remaining - header_size)
+                    return false;
+                _finddata_t entry = {};
+                const int name_length = WideCharToMultiByte(code_page, 0, info->FileName,
+                    static_cast<int>(info->FileNameLength / sizeof(WCHAR)), entry.name,
+                    static_cast<int>(sizeof(entry.name) - 1), nullptr, nullptr);
+                if (name_length <= 0)
+                    return false;
+                entry.name[name_length] = 0;
+                entry.attrib = info->FileAttributes == FILE_ATTRIBUTE_NORMAL ? 0 : info->FileAttributes;
+                entry.size = static_cast<decltype(entry.size)>(info->EndOfFile.QuadPart);
+                if (!directory_write_time(info->LastWriteTime, entry.time_write))
+                    return false;
+                string1024 full_path;
+                xr_strcpy(full_path, sizeof(full_path), path);
+                xr_strcat(full_path, entry.name);
+                if (!ignore_name(entry.name) && (!check_paths || !ignore_path(full_path)))
+                    entries.push_back(entry);
+                if (!info->NextEntryOffset)
+                    break;
+                if (info->NextEntryOffset < header_size + info->FileNameLength ||
+                    info->NextEntryOffset % alignof(LARGE_INTEGER) || info->NextEntryOffset >= remaining)
+                    return false;
+                offset += info->NextEntryOffset;
+            }
+        }
+    }();
+    {
+        PROF_EVENT("VFS.NativeCloseDirectory");
+        CloseHandle(directory);
+    }
+    return complete;
+}
+
 bool CLocatorAPI::Recurse(const char* path, u32 parallel_depth)
 {
+    PROF_EVENT("VFS.ScanDirectory");
+    PROF_EVENT_DYNAMIC(path);
 	string_path scanPath;
 	xr_strcpy(scanPath, sizeof(scanPath), path);
 	xr_strcat(scanPath, ".xrignore");
 	struct stat buffer;
 	if (!stat(scanPath, &buffer))
 		return true;
+    FFVec files;
+    files.reserve(256);
+    u32 native_batches = 0;
+    const bool native = m_initial_build && enumerate_directory_native(path, files,
+        m_Flags.test(flNeedCheck), native_batches);
+    if (!native)
+    {
+        files.clear();
 	xr_strcpy(scanPath, sizeof(scanPath), path);
 	xr_strcat(scanPath, "*.*");
 	_finddata_t findData;
 	intptr_t handle = _findfirst(scanPath, &findData);
 	if (handle == -1)
 		return false;
-	FFVec files;
-	files.reserve(256);
 	intptr_t done = handle;
 	while (done != -1)
 	{
@@ -1140,6 +1286,8 @@ bool CLocatorAPI::Recurse(const char* path, u32 parallel_depth)
 		done = _findnext(handle, &findData);
 	}
 	_findclose(handle);
+    }
+
 	if (!files.empty())
 	{
 		std::sort(files.begin(), files.end(), pred_str_ff);

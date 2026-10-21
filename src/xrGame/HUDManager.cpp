@@ -70,34 +70,7 @@ void CFontManager::InitializeFonts()
 	pFontStat->SetInterval(0.75f, 1.0f);
 }
 
-LPCSTR CFontManager::GetFontTexName(LPCSTR section)
-{
-	static char* tex_names[] = {"texture800", "texture", "texture1600", "texture2160"};
-	int def_idx = 1; //default 1024x768
-	int idx = def_idx;
-#if 0
-    u32 w = Device.dwWidth;
-
-    if(w<=800)		idx = 0;
-    else if(w<=1280)idx = 1;
-    else 			idx = 2;
-#else
-	u32 h = Device.dwHeight;
-
-	if (h <= 600) idx = 0;
-	else if (h < 1024) idx = 1;
-	else if (h < 1440) idx = 2;
-	else idx = 3;
-#endif
-
-	while (idx >= 0)
-	{
-		if (pSettings->line_exist(section, tex_names[idx]))
-			return pSettings->r_string(section, tex_names[idx]);
-		--idx;
-	}
-	return pSettings->r_string(section, tex_names[def_idx]);
-}
+LPCSTR CFontManager::GetFontTexName(LPCSTR section) { return GetFontTextureName(section); }
 
 void CFontManager::InitializeFont(CGameFont*& F, LPCSTR section, u32 flags)
 {
@@ -173,6 +146,7 @@ void CHUDManager::OnFrame()
 	PP.CameraPick();
 	g_player_hud->OnFrame();
 	DoPick(PP);
+    g_pGamePersistent->m_pGShaderConstants->hud_target_distance = PP.result.range;
 }
 
 xrCriticalSection ui_lock;
@@ -338,6 +312,7 @@ extern ENGINE_API BOOL bShowPauseString;
 void CHUDManager::RenderUI()
 {
 	PROF_EVENT("CHUDManager::RenderUI");
+    Device.WaitForGameLogic(); // Join before ui_lock: a GC finalizer may need UI state.
 	if (!psHUD_Flags.is(HUD_DRAW_RT2))
 		return;
 

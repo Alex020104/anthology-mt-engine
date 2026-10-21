@@ -42,6 +42,76 @@ void RecordPresentInterval(HRESULT result)
 		double(window.regular.p95) * toMs, double(window.regular.maximum) * toMs);
 }
 }
+#include "../../xrEngine/shader_bus.h"
+#include "../../xrEngine/x_ray.h"
+
+// a shader bus texture lane's $user$bus_ alias and the texture it shows
+struct bus_texture_slot
+{
+	ref_texture alias;
+	ref_texture target;
+	ID3DBaseTexture* applied;
+};
+
+static xr_vector<bus_texture_slot> bus_texture_slots;
+static u32 bus_texture_serial = 0;
+
+// empties every alias so no surface outlives a reset or the device
+static void bus_textures_release()
+{
+	for (u32 i = 0; i < bus_texture_slots.size(); ++i)
+	{
+		bus_texture_slots[i].alias->surface_set(nullptr);
+		bus_texture_slots[i].applied = nullptr;
+	}
+}
+
+// rebuilds the slots when a lane's texture changed and follows targets whose surface moved
+static void bus_textures_update()
+{
+	const u32 serial = ShaderBus::texture_serial();
+	if (serial != bus_texture_serial)
+	{
+		bus_texture_serial = serial;
+
+		// the old slots keep their textures loaded until the new slots take them
+		xr_vector<bus_texture_slot> old_slots;
+		old_slots.swap(bus_texture_slots);
+
+		shared_str id, name;
+		for (u32 i = 0; ShaderBus::texture_get(i, id, name); ++i)
+		{
+			if (!name.size())
+				continue;
+
+			bus_texture_slot slot;
+			slot.target.create(name.c_str());
+			if (!slot.target)
+				continue;
+
+			string_path alias;
+			xr_sprintf(alias, "$user$bus_%s", id.c_str());
+			slot.alias.create(alias);
+			slot.applied = nullptr;
+			bus_texture_slots.push_back(slot);
+		}
+
+		for (u32 i = 0; i < old_slots.size(); ++i)
+			old_slots[i].alias->surface_set(nullptr);
+	}
+
+	for (u32 i = 0; i < bus_texture_slots.size(); ++i)
+	{
+		bus_texture_slot& slot = bus_texture_slots[i];
+		ID3DBaseTexture* surface = slot.target->surface_get();
+		if (surface != slot.applied)
+		{
+			slot.alias->surface_set(surface);
+			slot.applied = surface;
+		}
+		_RELEASE(surface);
+	}
+}
 
 dxRenderDeviceRender::dxRenderDeviceRender()
 	: Resources(0)
@@ -80,6 +150,9 @@ void dxRenderDeviceRender::OnDeviceDestroy(BOOL bKeepTextures)
 	m_WireShader.destroy();
 	m_SelectionShader.destroy();
 
+	bus_textures_release();
+	bus_texture_slots.clear();
+	bus_texture_serial = 0;
 	Resources->OnDeviceDestroy(bKeepTextures);
 	RCache.OnDeviceDestroy();
 }
@@ -102,6 +175,7 @@ void dxRenderDeviceRender::Reset(HWND hWnd, u32& dwWidth, u32& dwHeight, float& 
     _SHOW_REF("*ref -CRenderDevice::ResetTotal: DeviceREF:",HW.pDevice);
 #endif // DEBUG
 
+	bus_textures_release();
 	Resources->reset_begin();
 	Memory.mem_compact();
 
@@ -437,6 +511,7 @@ void dxRenderDeviceRender::Begin()
 	RCache.set_CullMode(CULL_CW);
 	RCache.set_CullMode(CULL_CCW);
 	if (HW.Caps.SceneMode) overdrawBegin();
+	bus_textures_update();
 }
 
 void dxRenderDeviceRender::Clear()
@@ -492,8 +567,27 @@ void dxRenderDeviceRender::End()
 	}
 # endif
 
-	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady) {
-		const HRESULT result = HW.m_pSwapChain->Present(present_interval, present_flags);
+    if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady)
+    {
+        if (Device.HasPresentSlack())
+        {
+            PROF_EVENT("FramePacer.SubmitBeforeWait");
+#if defined(USE_DX11)
+            HW.pContext->Flush();
+#else
+            HW.pDevice->Flush();
+#endif
+        }
+        Device.BeforePresent();
+        HRESULT result;
+        {
+            PROF_EVENT("FramePacer.Present");
+            result = HW.m_pSwapChain->Present(present_interval, present_flags);
+        }
+        Device.AfterPresent(result == S_OK);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        if (result == S_OK) { OptickStartupFramePresented(); OptickLoadGameFramePresented(); }
+#endif
 		if (profilePresent)
 			RecordPresentInterval(result);
 		Resources->TrimUnusedTextures();
@@ -503,7 +597,16 @@ void dxRenderDeviceRender::End()
 
 	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady)
 	{
-		const HRESULT result = HW.pDevice->Present(NULL, NULL, NULL, NULL);
+        Device.BeforePresent();
+        HRESULT result;
+        {
+            PROF_EVENT("FramePacer.Present");
+            result = HW.pDevice->Present(NULL, NULL, NULL, NULL);
+        }
+        Device.AfterPresent(result == S_OK);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        if (result == S_OK) { OptickStartupFramePresented(); OptickLoadGameFramePresented(); }
+#endif
 		if (profilePresent)
 			RecordPresentInterval(result);
 	}

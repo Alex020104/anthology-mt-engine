@@ -10,6 +10,7 @@
 #include "../xrRender/dxRenderDeviceRender.h"
 #include "../xrRender/dxWallMarkArray.h"
 #include "../xrRender/dxUIShader.h"
+#include "../../xrCore/ShaderSourceCRC.h"
 //#include "../../xrServerEntities/smart_cast.h"
 
 CRender RImplementation;
@@ -694,6 +695,22 @@ void CRender::Statistics(CGameFont* _F)
 	F.OutNext(" **** LT:%2d,LV:%2d **** ", stats.l_total, stats.l_visible);
 	stats.l_visible = 0;
 	F.OutNext("    S(%2d)   | (%2d)NS   ", stats.l_shadowed, stats.l_unshadowed);
+	F.OutNext("LP sh(in:%u,vis:%u,r:%u) pk(%u/%u)", stats.ls_shadowed_in, stats.ls_shadowed_after_vis,
+	          stats.ls_shadowed_rendered, stats.ls_shadowed_peak_in, stats.ls_shadowed_peak_after_vis);
+	F.OutNext("LP uns p(in:%u,r:%u) s(in:%u,r:%u)", stats.ls_unshadowed_point_in, stats.ls_unshadowed_point_rendered,
+	          stats.ls_unshadowed_spot_in, stats.ls_unshadowed_spot_rendered);
+	F.OutNext("LP sh skip: pend[%u] inv[%u]", stats.ls_shadowed_pending_skipped, stats.ls_shadowed_invisible_skipped);
+	stats.ls_shadowed_in = 0;
+	stats.ls_shadowed_after_vis = 0;
+	stats.ls_shadowed_rendered = 0;
+	stats.ls_shadowed_pending_skipped = 0;
+	stats.ls_shadowed_invisible_skipped = 0;
+	stats.ls_shadowed_peak_in = 0;
+	stats.ls_shadowed_peak_after_vis = 0;
+	stats.ls_unshadowed_point_in = 0;
+	stats.ls_unshadowed_spot_in = 0;
+	stats.ls_unshadowed_point_rendered = 0;
+	stats.ls_unshadowed_spot_rendered = 0;
 	F.OutNext("smap use[%2d], merge[%2d], finalclip[%2d]", stats.s_used, stats.s_merged - stats.s_used,
 	          stats.s_finalclip);
 	stats.s_used = 0;
@@ -855,6 +872,7 @@ HRESULT CRender::shader_compile(
 	char c_ssao [32];
 	char c_sun_quality [32];
 	char c_smaa_quality [32];
+	char c_shader_bus [32];
 
 	char sh_name[MAX_PATH] = "";
 	u32 len = 0;
@@ -1235,6 +1253,14 @@ HRESULT CRender::shader_compile(
 		def_it++;
 	}
 
+	// the bus version, in the cache name too so each version keeps its own build
+	xr_sprintf(c_shader_bus, "%d", ShaderBus::version());
+	defines[def_it].Name = "SHADER_BUS";
+	defines[def_it].Definition = c_shader_bus;
+	def_it++;
+	xr_strcat(sh_name, c_shader_bus);
+	len += xr_strlen(c_shader_bus);
+
 	/////////////////////////////////////////////
 	defines[def_it].Name = 0;
 	defines[def_it].Definition = 0;
@@ -1258,7 +1284,9 @@ HRESULT CRender::shader_compile(
 	FS.file_list(m_file_set, folder_name, FS_ListFiles | FS_RootOnly, "*");
 
 	string_path temp_file_name, file_name;
-	if (psDeviceFlags2.test(rsPrecompiledShaders) || !match_shader_id(name, sh_name, m_file_set, temp_file_name))
+	bool const useGeneratedShaderCache =
+		psDeviceFlags2.test(rsPrecompiledShaders) || !match_shader_id(name, sh_name, m_file_set, temp_file_name);
+	if (useGeneratedShaderCache)
 	{
 		//		Msg				( "no library shader found" );
 		string_path file;
@@ -1276,14 +1304,45 @@ HRESULT CRender::shader_compile(
 		xr_strcat(file_name, temp_file_name);
 	}
 
+	u32 source_crc = 0;
+	if (useGeneratedShaderCache)
+		source_crc = getShaderSourceCrc32(pSrcData, SrcDataLen, ::Render->getShaderPath());
+
 	if (FS.exist(file_name))
 	{
 		//		Msg				( "opening library or cache shader..." );
 		IReader* file = FS.r_open(file_name);
-		if (file->length() > 4)
+		if (useGeneratedShaderCache)
 		{
-			u32 crc = 0;
-			crc = file->r_u32();
+			if (file->length() > 8)
+			{
+				u32 const saved_source_crc = file->r_u32();
+				if (saved_source_crc == source_crc)
+				{
+					u32 const crc = file->r_u32();
+					u32 const real_crc = crc32(file->pointer(), file->elapsed());
+
+					if (real_crc == crc)
+					{
+						_result = create_shader(pTarget, (DWORD*)file->pointer(), file->elapsed(), file_name, result, o.disasm);
+						//if ( !SUCCEEDED(_result) ) {
+						//	Msg				("! create shader failed");
+						//}
+						//else {
+						//	Msg				( "create shaders succeeded" );
+						//}
+					}
+				}
+				else
+				{
+                    Msg("~Shader cache source CRC mismatch for '%s': cached=0x%08x current=0x%08x, recompiling",
+                        name, saved_source_crc, source_crc);
+				}
+			}
+		}
+		else if (file->length() > 4)
+		{
+			u32 const crc = file->r_u32();
 
 			u32 const real_crc = crc32(file->pointer(), file->elapsed());
 
@@ -1324,6 +1383,9 @@ HRESULT CRender::shader_compile(
 			IWriter* file = FS.w_open(file_name);
 
 			u32 const crc = crc32(pShaderBuf->GetBufferPointer(), pShaderBuf->GetBufferSize());
+
+			if (useGeneratedShaderCache)
+				file->w_u32(source_crc);
 
 			file->w_u32(crc);
 			file->w(pShaderBuf->GetBufferPointer(), (u32)pShaderBuf->GetBufferSize());

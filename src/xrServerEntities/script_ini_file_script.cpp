@@ -28,7 +28,7 @@ CScriptIniFile* reload_system_ini()
 	pSettings->Destroy(const_cast<CInifile*>(pSettings));
 	string_path fname;
 	FS.update_path(fname, "$game_config$", "system.ltx");
-	CInifile::InvalidateCache(fname);
+	CInifile::InvalidateCache();
 	pSettings = xr_new<CInifile>(fname);
 	return ((CScriptIniFile*)pSettings);
 }
@@ -88,15 +88,19 @@ void section_for_each(CScriptIniFile* self, const ::luabind::functor<bool>& func
 	lua_State* const lua = functor.lua_state();
 	R_ASSERT(lua);
 
+	// the functor can remove sections so walk a copy of the section list and skip whatever it removed
+	xr_vector<shared_str> names;
+	names.reserve(sections.size());
+
 	sections_type::const_iterator i = sections.begin();
 	sections_type::const_iterator e = sections.end();
 	for (; i != e; ++i)
+		names.push_back((*i).Name);
+
+	for (const shared_str& name : names)
 	{
-		// section_for_each is heavily used against the merged system.ltx. Going
-		// through luabind's proxy/converter machinery for every section costs
-		// seconds in large modpacks. Keep the exact callback order and early-exit
-		// semantics, but call the already-bound Lua function directly.
-		if (invoke_section_callback(lua, functor, (*i).Name.c_str()))
+        if (!self->section_exist(name.c_str())) continue;
+        if (invoke_section_callback(lua, functor, name.c_str()))
 			return;
 	}
 }
@@ -289,6 +293,7 @@ void CScriptIniFile::script_register(lua_State* L)
 		.def("save_as", &CScriptIniFile::save_as)
 		.def("save_at_end", &CScriptIniFile::save_at_end)
 		.def("remove_line", &CScriptIniFile::remove_line)
+		.def("remove_section", &CScriptIniFile::remove_section)
 		.def("set_override_names", &CScriptIniFile::set_override_names)
 		.def("section_count", &CScriptIniFile::section_count)
 		.def("section_for_each", &::section_for_each)
@@ -309,6 +314,7 @@ void CScriptIniFile::script_register(lua_State* L)
 		.def("r_s32", &CScriptIniFile::r_s32)
 		.def("r_float", &CScriptIniFile::r_float)
 		.def("r_vector", &CScriptIniFile::r_fvector3)
+		.def("r_vector4", &CScriptIniFile::r_fvector4)
 		.def("close", &CScriptIniFile::close)
 		.def("r_line", &::r_line, out_value<4>() + out_value<5>())
 

@@ -450,7 +450,7 @@ namespace luabind
 			allocate_slot();
 			m_ref.replace(m_state);
 		}
-		lua_State* lua_state() const { return m_state; }
+		lua_State* lua_state() const { detail::prepare_lua_call(m_state); return m_state; }
 		void pushvalue() const
 		{
 			// you are trying to dereference an invalid object

@@ -395,6 +395,8 @@ void CGameMtlLibrary::Load()
 #endif // DEBUG_PRINT_MATERIAL
 
 #ifndef _EDITOR
+    {
+    PROF_EVENT("Materials.SoundResources");
 	xr_vector<xr_string> materialSoundNames;
 	for (const SGameMtlPair* pair : material_pairs)
 		pair->CollectSoundNames(materialSoundNames);
@@ -407,6 +409,7 @@ void CGameMtlLibrary::Load()
 	soundResourcesMs = loadTimer.GetElapsed_ms() -
 		baseMaterialsMs - materialOverridesMs - basePairsMs - pairOverridesMs;
 
+    }
 	material_count = (u32)materials.size();
 	material_pairs_rt.resize(material_count * material_count, 0);
 	for (GameMtlPairIt p_it = material_pairs.begin(); material_pairs.end() != p_it; ++p_it)

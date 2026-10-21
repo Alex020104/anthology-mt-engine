@@ -4,6 +4,7 @@
 #include "r__dsgraph_types.h"
 #include "r__sector.h"
 #include "../../xrCore/FixedMap.h"
+struct PreparedStaticCommand;
 class CDSGraphManager : public IDSGraphManager
 {
 public:
@@ -20,6 +21,8 @@ public:
 	Fvector									i_vBase;		// input:	"view" point
 	CFrustum								i_frustum;		// input:	"view" frustum
 	Fmatrix									i_mXFORM;		// input:	4x4 xform
+    bool i_shadow_receiver_clip = false;
+    Fbox i_shadow_receiver_bounds;
 	CSector* i_start;		// input:	starting point
 	xrCriticalSection						P_CS;
 	xrSRWLock								S_LC;
@@ -36,6 +39,38 @@ public:
 	{
 		std::copy(mask, mask + 7, i_mask);
 	}
+    void set_shadow_receiver_bounds(const Fbox* bounds)
+    {
+        i_shadow_receiver_clip = bounds != nullptr;
+        if (bounds)
+            i_shadow_receiver_bounds.set(*bounds);
+    }
+    bool shadow_receiver_visible(const Fbox& world_bounds) const
+    {
+        if (!i_shadow_receiver_clip)
+            return true;
+
+        if (!world_bounds.is_valid() || !_valid(world_bounds.min) || !_valid(world_bounds.max) || !_valid(i_mXFORM)) return true;
+        Fbox projected;
+        projected.xform(world_bounds, i_mXFORM);
+        if (!projected.is_valid() || !_valid(projected.min) || !_valid(projected.max)) return true;
+        return projected.max.x >= i_shadow_receiver_bounds.min.x &&
+            projected.max.y >= i_shadow_receiver_bounds.min.y &&
+            projected.min.x <= i_shadow_receiver_bounds.max.x &&
+            projected.min.y <= i_shadow_receiver_bounds.max.y &&
+            projected.min.z <= i_shadow_receiver_bounds.max.z;
+    }
+    bool shadow_receiver_visible(const Fbox& local_bounds, const Fmatrix& world_xform) const
+    {
+        if (!i_shadow_receiver_clip)
+            return true;
+        if (!local_bounds.is_valid() || !_valid(local_bounds.min) || !_valid(local_bounds.max) || !_valid(world_xform))
+            return true;
+
+        Fbox world_bounds;
+        world_bounds.xform(local_bounds, world_xform);
+        return shadow_receiver_visible(world_bounds);
+    }
 	void initialize();
 	void destroy();
 	void traverse(CSector* start, CFrustum& F, Fvector& vBase, Fmatrix& mXFORM);
@@ -73,6 +108,32 @@ public:
 	void add_leafs_Dynamic(xr_vector<IRenderVisual*>& children, Fmatrix* xform);
 	void r_dsgraph_insert_dynamic(dxRender_Visual* pVisual, Fmatrix* xform);
 
+#if defined(USE_DX11) && RENDER == R_R4
+    struct PreparedWorld
+    {
+        Fmatrix world, view, projection;
+    };
+    xr_unordered_flat_map<const Fmatrix*, PreparedWorld> prepared_worlds;
+    xr_unordered_flat_map<const SPass*, ref_pass> packet_pass_owners;
+    Fmatrix prepared_view, prepared_projection;
+    u32 prepared_frame = u32(-1);
+    bool local_shadow_recorded = false;
+    // 0: all, 1: recording contexts, 2: owner fallback. The static subset
+    // separates immutable occluders from animated/alpha geometry for smapvis.
+    u32 shadow_execution = 0, shadow_static_subset = 0;
+    bool ShadowPacketEnabled(const R_dsgraph::RenderPacket& packet) const
+    {
+        return (shadow_execution == 0 || !packet.local_shadow_hidden) &&
+            (shadow_execution != 1 || packet.parallel_shadow) &&
+            (shadow_execution != 2 || !packet.parallel_shadow) &&
+            (shadow_static_subset != 1 || packet.local_shadow_eligible) &&
+            (shadow_static_subset != 2 || !packet.local_shadow_eligible);
+    }
+    u32 static_queue_revision = 0;
+    u32 static_sorted_revision[2][SHADER_PASSES_MAX] = {};
+    void SetPreparedWorld(const Fmatrix* world);
+    bool ApplyPreparedStatic(const PreparedStaticCommand& command, const CFrustum& view);
+#endif
 	void AddToRenderQueue(R_dsgraph::RenderQueue& queue, const R_dsgraph::DSGraphItem<u32, false>& item, const SPass& pass);
 	void r_dsgraph_render_graph(R_dsgraph::RenderQueueArray& queue, u32 _priority, bool _clear = true, bool static_geometry = true);
 	IC void r_dsgraph_render_graph(u32 _priority, bool _clear = true)
@@ -94,12 +155,12 @@ public:
 	template<typename T, bool Reverse>
 	void r_dsgraph_render_graph_sorted(R_dsgraph::mapDSGraphItems<T, Reverse>& graph, bool _clear = true, bool static_geometry = false);
 	void r_dsgraph_capture_hud();
+#if RENDER == R_R4
+	void r_dsgraph_extract_native_ui();
+	void r_dsgraph_render_native_ui(bool renderHudUi);
+#endif
 	void r_dsgraph_render_hud();
 	void r_dsgraph_render_hud_ui();
-#if RENDER == R_R4
-    void r_dsgraph_extract_native_ui();
-    void r_dsgraph_render_native_ui(bool renderHudUi);
-#endif
 	void r_dsgraph_render_lods(bool _setup_zb, bool _clear);
 	void r_dsgraph_render_sorted(bool render_hud = true);
 	void r_dsgraph_render_sorted_hud();
@@ -108,7 +169,7 @@ public:
 	void r_dsgraph_render_distort();
 
 	// Anomaly
-#if defined(USE_DX11)
+#if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 	void r_dsgraph_render_ScopeSorted();
 #endif
 	void r_dsgraph_render_cam_ui();
@@ -118,12 +179,21 @@ public:
 	void r_dsgraph_capture(bool lights = false, bool dynamic = false, CObject* O = nullptr);
 	void r_dsgraph_capture_lights();
 	void r_dsgraph_capture_static();
-	void r_dsgraph_capture_dynamic(CObject* O = nullptr);
+	void r_dsgraph_capture_dynamic(CObject* O = nullptr, const xr_vector<ISpatialShared>* prepared = nullptr, u64 revision = 0);
 
 	void clear()
 	{
 		xrSRWLockGuard guard(&S_LC, false);
 		RGraph.clear();
+        i_shadow_receiver_clip = false;
+#if defined(USE_DX11) && RENDER == R_R4
+        prepared_worlds.clear();
+        packet_pass_owners.clear();
+        prepared_frame = u32(-1);
+        local_shadow_recorded = false;
+        shadow_execution = shadow_static_subset = 0;
+        ++static_queue_revision;
+#endif
 		if (m_sector_frustums.size())
 		{
 			for (auto& pair : m_sector_frustums)

@@ -9,6 +9,7 @@
 
 #include "../../xrEngine/tntQAVI.h"
 #include "../../xrEngine/xrTheora_Surface.h"
+#include "gifPlayer.h"
 
 #include "dxRenderDeviceRender.h"
 
@@ -19,7 +20,8 @@
 
 void resptrcode_texture::create(LPCSTR _name)
 {
-	_set(DEV->_CreateTexture(_name));
+	ref_texture texture = DEV->_CreateTexture(_name);
+    _set(texture._get());
 }
 
 
@@ -31,7 +33,9 @@ CTexture::CTexture()
 	pSurface = NULL;
 	pAVI = NULL;
 	pTheora = NULL;
+    gifPlayer = nullptr;
 	desc_cache = 0;
+	ZeroMemory(&desc, sizeof(desc));
 	seqMSPF = 0;
 	flags.MemoryUsage = 0;
 	flags.bLoaded = false;
@@ -59,6 +63,7 @@ void CTexture::surface_set(ID3DBaseTexture* surf)
 	_RELEASE(pSurface);
 
 	pSurface = surf;
+    source_size.set(0.f, 0.f);
 }
 
 ID3DBaseTexture* CTexture::surface_get()
@@ -85,6 +90,7 @@ void CTexture::PostLoad()
 	if (pTheora) bind = xr_make_delegate(this, &CTexture::apply_theora);
 	else if (pAVI) bind = xr_make_delegate(this, &CTexture::apply_avi);
 	else if (!seqDATA.empty()) bind = xr_make_delegate(this, &CTexture::apply_seq);
+	else if (gifPlayer) bind = xr_make_delegate(this, &CTexture::apply_gif);
 	else bind = xr_make_delegate(this, &CTexture::apply_normal);
 }
 
@@ -103,6 +109,7 @@ void CTexture::apply_load(u32 dwStage)
 		bind(dwStage);
 	}
 };
+
 
 void CTexture::apply_theora(u32 dwStage)
 {
@@ -172,6 +179,19 @@ void CTexture::apply_seq(u32 dwStage)
 	}
 	CHK_DX(HW.pDevice->SetTexture(dwStage,pSurface));
 };
+
+void CTexture::apply_gif(u32 dwStage)
+{
+    wait_for_loading();
+    if (gifPlayer->UpdateFrame())
+    {
+        const CGIFAnimationPlayer::Frame* const gifFrame = gifPlayer->GetActiveFrame();
+        R_ASSERT(gifFrame);
+
+        pSurface = gifFrame->surface;
+    }
+    CHK_DX(HW.pDevice->SetTexture(dwStage, pSurface));
+}
 
 void CTexture::apply_normal(u32 dwStage)
 {
@@ -435,11 +455,29 @@ void CTexture::Load(bool queued)
 			pSurface = 0;
 			FS.r_close(_fs);
 		}
+        else if (FS.exist(fn, "$game_textures$", *cName, ".gif"))
+        {
+            gifPlayer = xr_new<CGIFAnimationPlayer>();
+            if (!gifPlayer->Load(fn))
+            {
+                xr_delete(gifPlayer);
+                pSurface = nullptr;
+            }
+            else
+            {
+                flags.MemoryUsage = gifPlayer->GetUsedMemory();
+
+                gifPlayer->Play();
+
+                const CGIFAnimationPlayer::Frame* const gifFrame = gifPlayer->GetActiveFrame();
+                pSurface = gifFrame->surface;
+            }
+        }
 		else
 		{
 			// Normal texture
 			u32 mem = 0;
-			pSurface = ::RImplementation.texture_load(*cName, mem);
+            pSurface = ::RImplementation.texture_load(*cName, mem, &source_size);
 
 			// Calc memory usage and preload into vid-mem
 			if (pSurface)
@@ -502,6 +540,12 @@ void CTexture::ReleaseLoadedData()
 		pSurface = 0;
 	}
 	flags.MemoryUsage = 0;
+
+    if (gifPlayer)
+    {
+        xr_delete(gifPlayer);
+        pSurface = nullptr;
+    }
 
 #ifdef DEBUG
 	_SHOW_REF		(msg_buff, pSurface);

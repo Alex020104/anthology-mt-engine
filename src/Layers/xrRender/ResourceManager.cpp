@@ -1,8 +1,9 @@
-// TextureManager.cpp: implementation of the CResourceManager class.
+
 //
 //////////////////////////////////////////////////////////////////////
 
 #include "stdafx.h"
+#include "xrRender_console.h"
 #pragma hdrstop
 
 #pragma warning(disable:4995)
@@ -192,6 +193,7 @@ void CResourceManager::_ParseList(sh_list& dest, LPCSTR names)
 
 ShaderElement* CResourceManager::_CreateElement(ShaderElement& S, ref_selement* keep_alive)
 {
+	PROF_EVENT("Resources.CreateElement");
 	if (S.passes.empty()) return 0;
 
 	xrCriticalSectionGuard guard(creationGuard);
@@ -654,13 +656,13 @@ std::exception_ptr CResourceManager::WaitForTextureLoadGeneration(const Resource
 	}
 }
 
-void CResourceManager::QueueTextureLoad(const ref_texture& texture)
+void CResourceManager::QueueTextureLoad(const ref_texture& texture, bool streaming)
 {
 	if (!texture)
 		return;
 #if defined(USE_DX10) || defined(USE_DX11)
 	// Weather and optional UI images are demand-loaded; PDA maps preload here.
-	if (texture->IsDemandOnly())
+	if (texture->IsDemandOnly() && !streaming)
 		return;
 #endif
 
@@ -677,11 +679,10 @@ void CResourceManager::QueueTextureLoad(const ref_texture& texture)
 			return;
 	}
 
-	// Overlap immutable DDS reads during startup and explicit load sessions.
-	// Once gameplay is live, new texture work stays on the render owner so it
-	// cannot steal frame time. CanLoadAsync additionally excludes UI, video and
-	// dynamic/PiP render targets.
-	const bool async = (generation || !g_appLoaded) && texture->CanLoadAsync();
+    // Late DDS requests must also enter the worker queue. The owner queue has
+    // no gameplay drain, and Bind cannot resubmit an already queued texture.
+    // Video/sequence/GIF decoders retain their existing owner-thread path.
+    const bool async = texture->CanLoadAsync();
 	const DWORD originThread = GetCurrentThreadId();
 	xrCriticalSectionGuard guard(textureLoadGuard);
 	if (resourceLoadGenerationStarting)
@@ -1048,6 +1049,7 @@ int CResourceManager::GetTextureLoadLod(LPCSTR name) const
 
 void CResourceManager::DeferredUpload()
 {
+    PROF_EVENT("Render.UploadTextures");
 	if (!RDEVICE.b_is_Ready) return;
 
 	CTimer timer;
@@ -1126,7 +1128,10 @@ void CResourceManager::DeferredUnload()
 		xrCriticalSectionGuard guard(creationGuard);
 		textures.reserve(m_textures.size());
 		for (const auto& pair : m_textures)
-			textures.emplace_back(pair.second);
+        {
+            ref_texture texture = AcquireTexture(pair.second);
+            if (texture) textures.push_back(texture);
+        }
 	}
 	xr_parallel_foreach(textures.begin(), textures.end(), [](ref_texture& texture)
 	{
@@ -1145,12 +1150,11 @@ void CResourceManager::UnloadAllTexturesOnLevelUnload()
 		xrCriticalSectionGuard guard(creationGuard);
 		textures_to_unload.reserve(m_textures.size());
 
-		for (const auto& pair : m_textures)
-		{
-			CTexture* texture = pair.second;
-			if (!texture)
-				continue;
-
+        for (const auto& pair : m_textures)
+        {
+            ref_texture texture = AcquireTexture(pair.second);
+            if (!texture)
+                continue;
 			if (texture->flags.bUser)
 				continue;
 
@@ -1198,6 +1202,7 @@ void	CResourceManager::ED_UpdateTextures(AStringVec* names)
 
 Shader* CResourceManager::_CreateShader(Shader* InShader, ref_shader* keep_alive)
 {
+	PROF_EVENT("Resources.CreateShader");
 	xrCriticalSectionGuard guard(creationGuard);
 	const u64 hash = shader_hash(*InShader);
 	auto& candidates = m_shader_index[hash];
@@ -1415,3 +1420,17 @@ BOOL	CResourceManager::_GetDetailTexture(LPCSTR Name,LPCSTR& T, R_constant_setup
 	}
 }*/
 thread_local xr_string g_resource_level_path_override;
+
+ref_texture CResourceManager::AcquireTexture(CTexture* texture)
+{
+    if (!texture) return {};
+    u32 references = texture->dwReference.load(std::memory_order_relaxed);
+    while (references)
+    {
+        R_ASSERT(references != u32(-1));
+        if (texture->dwReference.compare_exchange_weak(references, references + 1,
+            std::memory_order_relaxed, std::memory_order_relaxed))
+            return ref_texture(texture, false);
+    }
+    return {};
+}

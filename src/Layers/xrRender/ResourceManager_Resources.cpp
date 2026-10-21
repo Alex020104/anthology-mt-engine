@@ -77,10 +77,15 @@ void CResourceManager::_DeleteState(const SState* state)
 //--------------------------------------------------------------------------------------------------------------
 SPass* CResourceManager::_CreatePass(const SPass& proto, ref_pass* keep_alive)
 {
+	PROF_EVENT("Resources.CreatePass");
 	xrCriticalSectionGuard guard(creationGuard);
-	for (u32 it = 0; it < v_passes.size(); it++)
-		if (v_passes[it]->equal(proto))
-			return v_passes[it];
+	{
+		PROF_EVENT("Resources.FindPass");
+		PROF_TAG("Candidates", static_cast<u32>(v_passes.size()));
+		for (u32 it = 0; it < v_passes.size(); it++)
+			if (v_passes[it]->equal(proto))
+				return v_passes[it];
+	}
 
 	SPass* P = xr_new<SPass>();
 	P->dwFlags |= xr_resource_flagged::RF_REGISTERED;
@@ -337,15 +342,20 @@ void CResourceManager::_DeletePS(const SPS* ps)
 
 R_constant_table* CResourceManager::_CreateConstantTable(R_constant_table& C, ref_ctable* keep_alive)
 {
+	PROF_EVENT("Resources.CreateConstantTable");
 	if (C.empty()) return NULL;
 
 	xrCriticalSectionGuard guard(creationGuard);
-	for (u32 it = 0; it < v_constant_tables.size(); it++)
-		if (v_constant_tables[it]->equal(C))
-			return v_constant_tables[it];
+	{
+		PROF_EVENT("Resources.FindConstantTable");
+		PROF_TAG("Candidates", static_cast<u32>(v_constant_tables.size()));
+		for (u32 it = 0; it < v_constant_tables.size(); it++)
+			if (v_constant_tables[it]->equal(C))
+				return v_constant_tables[it];
+	}
 
 	auto NewElem = xr_new<R_constant_table>(C);
-	//NewElem->_copy(C);
+    NewElem->prepare_lookup();
 	NewElem->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 	v_constant_tables.push_back(NewElem);
 	return NewElem;
@@ -474,12 +484,14 @@ ref_texture CResourceManager::_CreateTexture(LPCSTR _Name, bool prefetch, LPCSTR
 	{
 		xrCriticalSectionGuard guard(creationGuard);
 		map_TextureIt I = m_textures.find(Name);
-		if (I != m_textures.end())
-		{
-			texture = ref_texture(I->second);
-		}
-		else
-		{
+        if (I != m_textures.end()) texture = AcquireTexture(I->second);
+        if (!texture)
+        {
+            if (I != m_textures.end())
+            {
+                I->second->dwFlags &= ~xr_resource_flagged::RF_REGISTERED;
+                m_textures.erase(I);
+            }
 			CTexture* T = xr_new<CTexture>();
 			T->dwFlags |= xr_resource_flagged::RF_REGISTERED;
 			m_textures.insert(mk_pair(T->set_name(Name), T));
@@ -509,16 +521,30 @@ void CResourceManager::_DeleteTexture(const CTexture* T)
 {
 	// DBG_VerifyTextures	();
 
-	if (0 == (T->dwFlags & xr_resource_flagged::RF_REGISTERED)) return;
 	xrCriticalSectionGuard guard(creationGuard);
+    if (0 == (T->dwFlags & xr_resource_flagged::RF_REGISTERED)) return;
 	LPSTR N = LPSTR(*T->cName);
 	map_Texture::iterator I = m_textures.find(N);
-	if (I != m_textures.end())
+	if (I != m_textures.end() && I->second == T)
 	{
 		m_textures.erase(I);
 		return;
 	}
 	Msg("! ERROR: Failed to find texture surface '%s'", *T->cName);
+}
+
+CTexture* CResourceManager::_FindTexture(LPCSTR _Name)
+{
+	if (!_Name || !_Name[0]) return 0;
+	if (0 == xr_strcmp(_Name, "null")) return 0;
+
+	xrCriticalSectionGuard guard(creationGuard);
+	string_path Name;
+	xr_strcpy(Name, _Name);
+	fix_texture_name(Name);
+
+	map_TextureIt I = m_textures.find(LPSTR(Name));
+	return I != m_textures.end() ? I->second : 0;
 }
 
 #ifdef DEBUG
@@ -612,12 +638,17 @@ bool cmp_tl(const std::pair<u32, ref_texture>& _1, const std::pair<u32, ref_text
 
 STextureList* CResourceManager::_CreateTextureList(STextureList& L, ref_texture_list* keep_alive)
 {
+	PROF_EVENT("Resources.CreateTextureList");
 	xrCriticalSectionGuard guard(creationGuard);
 	std::sort(L.begin(), L.end(), cmp_tl);
-	for (u32 it = 0; it < lst_textures.size(); it++)
 	{
-		STextureList* base = lst_textures[it];
-		if (L.equal(*base)) return base;
+		PROF_EVENT("Resources.FindTextureList");
+		PROF_TAG("Candidates", static_cast<u32>(lst_textures.size()));
+		for (u32 it = 0; it < lst_textures.size(); it++)
+		{
+			STextureList* base = lst_textures[it];
+			if (L.equal(*base)) return base;
+		}
 	}
 	STextureList* lst = xr_new<STextureList>(L);
 	//lst->_copy(L);

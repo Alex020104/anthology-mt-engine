@@ -15,6 +15,7 @@
 
 #include "xr_object.h"
 #include "MonitorList.h"
+#include "renderdoc_integration.h"
 
 xr_token* vid_quality_token = NULL;
 
@@ -124,6 +125,61 @@ public:
 	virtual void Execute(LPCSTR args) { g_pStringContainer->dump(); }
 };
 
+class CCC_RenderDoc : public IConsole_Command
+{
+protected:
+	int Value(LPCSTR args, int fallback) { return (args && args[0]) ? atoi(args) : fallback; }
+
+public:
+	CCC_RenderDoc(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; };
+};
+
+class CCC_RenderDocCapture : public CCC_RenderDoc
+{
+	enum { frames_max = 60 };
+
+public:
+	CCC_RenderDocCapture(LPCSTR N) : CCC_RenderDoc(N) {};
+
+	virtual void Execute(LPCSTR args)
+	{
+		int frames = Value(args, 1);
+		if (frames < 1 || frames > frames_max) InvalidSyntax();
+		else renderdoc_trigger_capture(u32(frames));
+	}
+
+	virtual void Info(TInfo& I) { xr_sprintf(I, sizeof(I), "frame count in range [1,%d], 1 when omitted", frames_max); }
+};
+
+class CCC_RenderDocOpen : public CCC_RenderDoc
+{
+public:
+	CCC_RenderDocOpen(LPCSTR N) : CCC_RenderDoc(N) {};
+
+	virtual void Execute(LPCSTR args) { renderdoc_open_replay_ui(); }
+};
+
+class CCC_RenderDocOverlay : public CCC_RenderDoc
+{
+public:
+	CCC_RenderDocOverlay(LPCSTR N) : CCC_RenderDoc(N) {};
+
+	virtual void Execute(LPCSTR args)
+	{
+		if (!args || !args[0])
+		{
+			Msg("* [RDC] overlay %s", renderdoc_overlay_enabled() ? "on" : "off");
+			return;
+		}
+
+		int visible = Value(args, 0);
+		if (visible < 0 || visible > 1) InvalidSyntax();
+		else renderdoc_set_overlay(visible != 0);
+	}
+
+	virtual void Info(TInfo& I) { xr_strcpy(I, "0 hides, 1 shows, empty prints the state"); }
+};
+
 //-----------------------------------------------------------------------
 class CCC_MotionsStat : public IConsole_Command
 {
@@ -221,6 +277,25 @@ public:
 		Log("Key: Enter  / NumEnter      === Execute current command ");
 
 		Log("- --- Command listing: end ----");
+	}
+};
+
+class CCC_DumpCVars : public IConsole_Command
+{
+public:
+	CCC_DumpCVars(LPCSTR N) : IConsole_Command(N) { bEmptyArgsHandled = TRUE; }
+
+	virtual void Execute(LPCSTR args)
+	{
+		Log("- --- Console variables: start ---");
+		for (const auto& command : Console->Commands)
+		{
+			IConsole_Command::TStatus status;
+			command.second->Status(status);
+			if (status[0])
+				Msg("%s %s", command.second->Name(), status);
+		}
+		Log("- --- Console variables: end ---");
 	}
 };
 
@@ -400,6 +475,12 @@ public:
 			Log("! Can't start game without client. Arguments: '%s'.", args);
 			return;
 		}
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        LPCSTR loadOption = strstr(op_server, "/load");
+        if (!op_demo[0] && strstr(op_server, "/alife") && loadOption &&
+            (loadOption[5] == 0 || loadOption[5] == '/'))
+            OptickLoadGameBegin(op_server);
+#endif
 		if (g_pGameLevel)
 			Engine.Event.Defer("KERNEL:disconnect");
 
@@ -987,6 +1068,7 @@ ENGINE_API float hit_modifier = 1.0f;
 
 extern float g_dispersion_base;
 extern float g_dispersion_factor;
+extern int g_ai_unlimited_ammo;
 float g_AimLookFactor = 1.f;
 
 int ps_framelimiter = 0;
@@ -1013,6 +1095,19 @@ float scope_fog_sharp = 4.0f;
 int scope_2dtexactive = 0.0;
 Fvector3 ssfx_wetness_multiplier = Fvector3().set(1.0f, 0.3f, 0.0f);
 
+BOOL dump_cvar_enable = TRUE;
+
+#if XRCORE_PROFILER == PROFILER_OPTICK
+extern int psOptickCaptureFrames;
+
+class CCC_OptickCapture : public CCC_Integer
+{
+public:
+    CCC_OptickCapture(LPCSTR name) : CCC_Integer(name, &psOptickCaptureFrames, 0, 10000) {}
+    void Save(IWriter*) override {} // Capture requests must not repeat on config reload.
+};
+#endif
+
 void CCC_Register()
 {
 	// General
@@ -1022,6 +1117,14 @@ void CCC_Register()
 	CMD1(CCC_Disconnect, "disconnect");
 	CMD1(CCC_SaveCFG, "cfg_save");
 	CMD1(CCC_LoadCFG, "cfg_load");
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    CMD1(CCC_OptickCapture, "optick_do");
+#endif
+	CMD1(CCC_DumpCVars, "dump_cvar");
+        CMD4(CCC_Integer, "dump_cvar_enable", &dump_cvar_enable, 0, 1);
+	CMD1(CCC_RenderDocCapture, "rdoc_capture");
+	CMD1(CCC_RenderDocOpen, "rdoc_open");
+	CMD1(CCC_RenderDocOverlay, "rdoc_overlay");
 
 	CMD3(CCC_Mask, "mt_particles", &psDeviceFlags, mtParticles);
 
@@ -1067,6 +1170,7 @@ void CCC_Register()
 
 	CMD4(CCC_Float, "g_dispersion_base", &g_dispersion_base, 0.0f, 5.0f);
 	CMD4(CCC_Float, "g_dispersion_factor", &g_dispersion_factor, 0.1f, 10.0f);
+	CMD4(CCC_Integer, "g_ai_unlimited_ammo", &g_ai_unlimited_ammo, 0, 1);
 
 	// Render device states
 	CMD4(CCC_Integer, "r__supersample", &ps_r__Supersample, 1, 4);

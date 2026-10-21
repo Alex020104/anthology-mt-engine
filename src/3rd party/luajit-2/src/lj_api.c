@@ -718,14 +718,20 @@ LUA_API int lua_xray_userdata_mark_leaf(lua_State *L, int idx,
     return 0;
   ud = udataV(tv);
   o = obj2gco(ud);
-  if (ud->udtype != UDTYPE_USERDATA || ud->unused2 != 0 ||
+  if (ud->udtype != UDTYPE_USERDATA ||
+      (ud->unused2 != 0 && ud->unused2 != LJ_XRAY_SCANNED_UDATA) ||
       gcref(mainthread(g)->nextgc) != o)
     return 0;
+  if (gcref(g->gc.udheadgap) && lj_gc_udata_head_gap(g))
+    return 0;  /* Detached candidates still precede this physical suffix head. */
   if (GG->xray_leaf_udata_finalizer != NULL &&
       GG->xray_leaf_udata_finalizer != finalizer)
     return 0;
 
   GG->xray_leaf_udata_finalizer = finalizer;
+  setgcref(ud->scanprev, obj2gco(mainthread(g)));
+  if (gcref(g->gc.udscanprev) == o)
+    setgcref(g->gc.udscanprev, obj2gco(mainthread(g)));
   setgcrefr(mainthread(g)->nextgc, o->gch.nextgc);
   setgcrefr(o->gch.nextgc, g->gc.root);
   setgcref(g->gc.root, o);
@@ -764,6 +770,8 @@ LUA_API int lua_xray_userdata_unmark_leaf(lua_State *L, int idx)
   setgcrefr(o->gch.nextgc, mainthread(g)->nextgc);
   setgcref(mainthread(g)->nextgc, o);
   ud->unused2 = 0;
+  setgcref(ud->scanprev, obj2gco(mainthread(g)));
+  if (g->gc.udscanmode) lj_gc_udata_link(g, o);
   G2GG(g)->xray_leaf_udata_unmarked++;
   return 1;
 }
@@ -1209,6 +1217,39 @@ LUA_API int lua_resume(lua_State *L, int nargs)
 }
 
 /* -- GC and memory management -------------------------------------------- */
+
+LUA_API void lua_gcmetrics(lua_State *L, size_t *total, size_t *threshold, size_t *debt, int *phase)
+{
+  global_State *g = G(L);
+  if (total) *total = g->gc.total;
+  if (threshold) *threshold = g->gc.threshold;
+  if (debt) *debt = g->gc.debt;
+  if (phase) *phase = g->gc.state;
+}
+
+LUA_API void lua_gcincremental(lua_State *L, int enabled)
+{
+  G(L)->gc.incremental = (uint8_t)(enabled != 0);
+}
+
+LUA_API int lua_gc_resume_automatic(lua_State *L)
+{
+  global_State *g = G(L);
+  /* Preserve an active threshold and never restart from inside a finalizer. */
+  if (g->gc.threshold != LJ_MAX_MEM || (g->hookmask & HOOK_GC)) return 0;
+  lua_gc(L, LUA_GCRESTART, -1);
+  return 1;
+}
+
+LUA_API int lua_gcstep_one(lua_State *L, int data)
+{
+  global_State *g = G(L);
+  MSize amount = data > 0 ? (MSize)data << 10 : 0;
+  g->gc.threshold = amount <= g->gc.total ? g->gc.total - amount : 0;
+  return lj_gc_step(L) > 0;
+}
+
+LUA_API const void* lua_vmidentity(lua_State *L) { return G(L); }
 
 LUA_API int lua_gc(lua_State *L, int what, int data)
 {

@@ -6,7 +6,7 @@
 
 namespace dlss
 {
-enum class Quality : unsigned { Off, DLAA, Quality, Balanced, Performance, UltraPerformance };
+enum class Quality : unsigned { Off, DLAA, Quality, Balanced, Performance, UltraPerformance, UltraQuality };
 // NGX Super Resolution preset values. F is deprecated in runtime 310.9.1;
 // reserved presets are deliberately not exposed as working choices.
 enum class Preset : unsigned { Default = 0, J = 10, K = 11, L = 12, M = 13 };

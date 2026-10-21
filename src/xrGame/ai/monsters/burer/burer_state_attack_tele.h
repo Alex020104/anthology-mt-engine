@@ -1,12 +1,40 @@
 #pragma once
 #include "../state.h"
 #include "../../../grenade.h"
+#include "../../../../xrPhysics/iphysicsshellholder.h"
+#include "../../../../xrPhysics/icolisiondamageinfo.h"
 
 
 template <typename Object>
 class CStateBurerAttackTele : public CState<Object>
 {
 	typedef CState<Object> inherited;
+
+    struct SCollisionHitCallback :
+        public ICollisionHitCallback
+    {
+        Object* m_object;
+        bool done;
+
+        SCollisionHitCallback(Object* obj)
+            : m_object(obj), done(false)
+        {}
+
+        void call(CObject*& obj, float min_cs, float max_cs, float& cs, float& hl, ICollisionDamageInfo* di) override
+        {
+            if (done) return;
+            done = true;
+
+            obj = nullptr;
+
+            if (cs > min_cs * 0.5f)
+            {
+                obj = m_object;
+            }
+
+            di->SetInitiated();
+        }
+    };
 
 	xr_vector<CPhysicsShellHolder *> tele_objects;
 	CPhysicsShellHolder* selected_object;
@@ -30,7 +58,19 @@ public:
 	virtual void execute();
 	virtual void finalize();
 	virtual void critical_finalize();
-	virtual void remove_links(CObject* object) { inherited::remove_links(object); }
+	virtual void remove_links(CObject* object)
+	{
+		inherited::remove_links(object);
+
+		if (selected_object == smart_cast<CPhysicsShellHolder*>(object))
+		{
+			selected_object = nullptr;
+			if (m_action == ACTION_TELE_FIRE)
+			{
+				m_action = ACTION_TELE_CONTINUE;
+			}
+		}
+	}
 
 	virtual bool check_start_conditions();
 	virtual bool check_completion();

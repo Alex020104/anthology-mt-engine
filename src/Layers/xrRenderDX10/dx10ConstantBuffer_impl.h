@@ -7,6 +7,9 @@
 
 IC void dx10ConstantBuffer::Store(u16 offset, const void* value, u32 bytes)
 {
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    ++s_stats.typed;
+#endif
 	VERIFY(u32(offset) + bytes <= m_uiBufferSize);
 	// Diagnostic A/B switch; normal launches always use the value cache.
 	static const bool legacy = strstr(Core.Params, "-cb_legacy_uploads") != nullptr;
@@ -18,6 +21,9 @@ IC void dx10ConstantBuffer::Store(u16 offset, const void* value, u32 bytes)
 	}
 	if (StoreConstantBufferValue(static_cast<BYTE*>(m_pBufferData) + offset, value, bytes))
 		m_bChanged = true;
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    else ++s_stats.skipped;
+#endif
 }
 
 IC void dx10ConstantBuffer::StoreMatrix(u16 offset, const Fmatrix& value, u32 rows)
@@ -30,6 +36,9 @@ IC void dx10ConstantBuffer::StoreMatrix(u16 offset, const Fmatrix& value, u32 ro
 
 IC Fvector4* dx10ConstantBuffer::Access(u16 offset)
 {
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    ++s_stats.direct;
+#endif
 	//	TODO: DX10: Implement code which will check if set actually changes code.
 	m_bChanged = true;
 
@@ -138,6 +147,27 @@ IC void dx10ConstantBuffer::seta(R_constant* C, R_constant_load& L, u32 e, const
 	//c_f.dirty	(base,base+1);
 }
 
+IC void dx10ConstantBuffer::set_bytes(R_constant_load& L, const void* data, u32 bytes)
+{
+    R_ASSERT(u32(L.index) <= m_uiBufferSize && L.size <= m_uiBufferSize - L.index);
+    const u32 copied = _min(bytes, L.size);
+    Write(L.index, data, copied);
+    if (copied < L.size)
+    {
+        BYTE* tail = static_cast<BYTE*>(m_pBufferData) + L.index + copied;
+        const u32 count = L.size - copied;
+        for (u32 i = 0; i < count; ++i)
+        {
+            if (tail[i] != 0)
+            {
+                ZeroMemory(tail, count);
+                m_bChanged = true;
+                break;
+            }
+        }
+    }
+}
+
 IC void* dx10ConstantBuffer::AccessDirect(R_constant_load& L, u32 DataSize)
 {
 	//	Check buffer size in client code: don't know if actual data will cross
@@ -154,3 +184,10 @@ IC void* dx10ConstantBuffer::AccessDirect(R_constant_load& L, u32 DataSize)
 }
 
 #endif	//	dx10ConstantBuffer_impl_included
+
+// Preserve Anthology's typed-value cache for bulk writes as well.
+IC void dx10ConstantBuffer::Write(u32 offset, const void* value, u32 size)
+{
+    R_ASSERT(offset <= 0xffff && offset <= m_uiBufferSize && size <= m_uiBufferSize - offset);
+    Store(u16(offset), value, size);
+}

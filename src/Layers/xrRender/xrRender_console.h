@@ -132,6 +132,8 @@ extern ECORE_API float ps_r1_lmodel_lerp;
 extern ECORE_API float ps_r1_dlights_clip;
 extern ECORE_API float ps_r1_pps_u;
 extern ECORE_API float ps_r1_pps_v;
+extern ECORE_API int ps_r1_scope_scene_capture;
+extern ECORE_API int ps_r1_scope_debug;
 
 // R1-specific
 extern ECORE_API int ps_r1_GlowsPerFrame; // r1-only
@@ -281,6 +283,13 @@ extern ECORE_API float ps_r2_tnmp_w; // r2-only
 extern ECORE_API float ps_r2_tnmp_exposure; // r2-only
 extern ECORE_API float ps_r2_tnmp_gamma; // r2-only
 extern ECORE_API float ps_r2_tnmp_onoff; // r2-only
+
+extern ECORE_API float ps_r4_full_detail_distance_scale; // r4-only
+extern ECORE_API int ps_r4_mt_local_shadows;
+extern ECORE_API int ps_r4_smapvis;
+extern ECORE_API int ps_r4_static_light_cache;
+extern ECORE_API int ps_r4_mt_sun_shadows;
+extern ECORE_API int ps_r4_mt_rain_shadows;
 
 /* --- HDR10 parameters --- */
 extern ECORE_API float ps_r4_hdr10_whitepoint_nits; // r4-only
@@ -442,6 +451,12 @@ enum
 
 // demonized:
 extern ECORE_API BOOL occq_debug;
+
+// Texture eviction system
+extern ECORE_API int ps_r__tex_evict_enabled;
+extern ECORE_API int ps_r__tex_evict_age_frames;
+extern ECORE_API int ps_r__tex_evict_batch_size;
+extern ECORE_API int ps_r__tex_evict_interval;
 
 extern void xrRender_initconsole();
 extern BOOL xrRender_test_hw();

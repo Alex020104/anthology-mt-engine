@@ -37,6 +37,8 @@ XRSOUND_API extern float psSoundVFactor;
 XRSOUND_API extern float psSoundVMusic;
 XRSOUND_API extern float psSoundVMusicFactor;
 XRSOUND_API extern float psSoundRolloff;
+XRSOUND_API extern float psSoundMaxDistanceMultiplier;
+XRSOUND_API extern float psSoundMaxAIDistanceMultiplier;
 XRSOUND_API extern float psSoundOcclusionScale;
 XRSOUND_API extern Flags32 psSoundFlags;
 XRSOUND_API extern int psSoundTargets;
@@ -45,6 +47,7 @@ XRSOUND_API extern float psSpeedOfSound;
 XRSOUND_API extern int psSoundCacheSizeMB;
 XRSOUND_API extern xr_token* snd_devices_token;
 XRSOUND_API extern xr_string snd_device_name;
+XRSOUND_API extern xrCriticalSection sound_frontend_lock;
 
 // reverb overwrite
 extern BOOL reverb_overwrite;
@@ -145,11 +148,12 @@ public:
 
 	u32 dwBytesTotal;
 	float fTimeTotal;
+	u64 async_voice = 0; // Private audio-owner copies only.
 public:
 	ref_sound_data();
 	ref_sound_data(LPCSTR fName, esound_type sound_type, int game_type);
 	virtual ~ref_sound_data();
-	float get_length_sec() const { return fTimeTotal; };
+	float get_length_sec() const;
 };
 
 typedef resptr_core<ref_sound_data, resptr_base<ref_sound_data>> ref_sound_data_ptr;
@@ -205,6 +209,7 @@ public:
 	IC void clone(const ref_sound& from, esound_type sound_type, int game_type);
 
 	IC void destroy();
+    IC void destroy_deferred();
 
 	IC void play(CObject* O, u32 flags = 0, float delay = 0.f);
 	IC void play_at_pos(CObject* O, const Fvector& pos, u32 flags = 0, float delay = 0.f);
@@ -257,15 +262,19 @@ namespace soundSmoothingParams {
 class XRSOUND_API CSound_params
 {
 public:
-	CSound_params() :
-		set(false)
+	CSound_params() : CSound_params(true) {}
+	explicit CSound_params(bool varyPitch) :
+		set(false), base_volume(1.f), volume(1.f), freq(1.f),
+		min_distance(1.f), max_distance(300.f), max_ai_distance(300.f), pitch_variation(0.f)
 		{
 			position.set(0.0f, 0.0f, 0.0f);
 			velocity.set(0.0f, 0.0f, 0.0f);
+			curVelocity.set(0.f, 0.f, 0.f);
+			prevVelocity.set(0.f, 0.f, 0.f);
 			accVelocity.set(0.f, 0.f, 0.f);
 
 			// demonized: add pitch variation
-			pitch_variation = 0.02 * Random.randF(-1.f, 1.f) * soundSmoothingParams::pitchVariationPower;
+			pitch_variation = varyPitch ? 0.02f * Random.randF(-1.f, 1.f) * soundSmoothingParams::pitchVariationPower : 0.f;
 		}
 
 private:
@@ -306,8 +315,10 @@ public:
 
 	IC virtual void update_velocity(const float dt)
 	{
-		float a = soundSmoothingParams::getTimeDeltaSmoothing();
-		int p = soundSmoothingParams::power;
+		update_velocity_snapshot(dt, soundSmoothingParams::getTimeDeltaSmoothing(), soundSmoothingParams::power);
+	}
+	IC void update_velocity_snapshot(const float dt, float a, float p)
+	{
 		accVelocity.x = soundSmoothingParams::getSmoothedValue(curVelocity.x * p / dt, accVelocity.x, a);
 		accVelocity.y = soundSmoothingParams::getSmoothedValue(curVelocity.y * p / dt, accVelocity.y, a);
 		accVelocity.z = soundSmoothingParams::getSmoothedValue(curVelocity.z * p / dt, accVelocity.z, a);
@@ -410,6 +421,7 @@ public:
 	virtual void attach_tail(ref_sound& S, LPCSTR fName) = 0;
 	virtual void clone(ref_sound& S, const ref_sound& from, esound_type sound_type, int game_type) = 0;
 	virtual void destroy(ref_sound& S) = 0;
+    virtual void destroy_deferred(ref_sound& S) { destroy(S); }
 	virtual void stop_emitters() = 0;
 	virtual int pause_emitters(bool val) = 0;
 
@@ -432,11 +444,17 @@ public:
 
 	virtual void object_relcase(CObject* obj) = 0;
 	virtual const Fvector& listener_position() = 0;
+	virtual void set_async(bool) {}
+	virtual void publish_device_state(bool allowStreaming = false) {}
+	virtual void wait_for_streaming() {}
+    virtual float get_length_sec(const ref_sound_data& data) { return data.fTimeTotal; }
+	virtual int request_pause_emitters(bool value) { return pause_emitters(value); }
 	virtual void source_prefetch_start() = 0;
 	virtual void source_prefetch_pause() = 0;
 	virtual void source_prefetch_prepare(const xr_vector<xr_string>& sources) = 0;
 	virtual void source_prefetch_stop() = 0;
 	virtual void source_prefetch_poll() = 0;
+    virtual void source_prefetch_finish() {}
 #ifdef __BORLANDC__
 	virtual SoundEnvironment_LIB*	get_env_library			()																						= 0;
 	virtual void					refresh_env_library		()																						= 0;
@@ -449,6 +467,14 @@ public:
 
 extern XRSOUND_API CSound_manager_interface* Sound;
 
+IC float ref_sound_data::get_length_sec() const
+{
+    // Private audio copies already own complete metadata. Never acquire the
+    // frontend lock or wait for asset work from the audio owner.
+    return !async_voice && ::Sound ? ::Sound->get_length_sec(*this) : fTimeTotal;
+}
+
+
 /// ********* Sound ********* (utils, accessors, helpers)
 IC ref_sound_data::ref_sound_data()
 {
@@ -457,6 +483,8 @@ IC ref_sound_data::ref_sound_data()
 	g_type = 0;
 	g_object = 0;
 	s_type = st_Effect;
+	dwBytesTotal = 0;
+	fTimeTotal = 0.f;
 }
 
 IC ref_sound_data::ref_sound_data(LPCSTR fName, esound_type sound_type, int game_type)
@@ -468,36 +496,47 @@ IC ref_sound_data::~ref_sound_data() { ::Sound->_destroy_data(*this); }
 
 IC void ref_sound::create(LPCSTR name, esound_type sound_type, int game_type)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	::Sound->create(*this, name, sound_type, game_type);
 }
 
 IC void ref_sound::attach_tail(LPCSTR name)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	::Sound->attach_tail(*this, name);
 }
 
 IC void ref_sound::clone(const ref_sound& from, esound_type sound_type, int game_type)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	::Sound->clone(*this, from, sound_type, game_type);
 }
 
 IC void ref_sound::destroy()
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	::Sound->destroy(*this);
 }
 
+IC void ref_sound::destroy_deferred()
+{
+    ::Sound->destroy_deferred(*this);
+}
+
 IC void ref_sound::play(CObject* O, u32 flags, float d)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	::Sound->play(*this, O, flags, d);
 }
 
 IC void ref_sound::play_at_pos(CObject* O, const Fvector& pos, u32 flags, float d)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	::Sound->play_at_pos(*this, O, pos, flags, d);
 }
@@ -505,12 +544,14 @@ IC void ref_sound::play_at_pos(CObject* O, const Fvector& pos, u32 flags, float 
 IC void ref_sound::play_no_feedback(CObject* O, u32 flags, float d, Fvector* pos, float* vol, float* freq,
                                     Fvector2* range)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	::Sound->play_no_feedback(*this, O, flags, d, pos, vol, freq, range);
 }
 
 IC void ref_sound::set_position(const Fvector& pos)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	VERIFY(_feedback());
 	_feedback()->set_position(pos);
@@ -518,42 +559,49 @@ IC void ref_sound::set_position(const Fvector& pos)
 
 IC void ref_sound::set_frequency(float freq)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback()) _feedback()->set_frequency(freq);
 }
 
 IC void ref_sound::set_range(float min, float max)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback()) _feedback()->set_range(min, max);
 }
 
 IC void ref_sound::set_volume(float vol)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback()) _feedback()->set_volume(vol);
 }
 
 IC void ref_sound::set_priority(float p)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback()) _feedback()->set_priority(p);
 }
 
 IC void ref_sound::stop()
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback()) _feedback()->stop(FALSE);
 }
 
 IC void ref_sound::stop_deffered()
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback()) _feedback()->stop(TRUE);
 }
 
 IC const CSound_params* ref_sound::get_params()
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback()) return _feedback()->get_params();
 	else return NULL;
@@ -561,6 +609,7 @@ IC const CSound_params* ref_sound::get_params()
 
 IC void ref_sound::set_params(CSound_params* p)
 {
+	xrCriticalSection::raii guard(&sound_frontend_lock);
 	VERIFY(!::Sound->i_locked());
 	if (_feedback())
 	{

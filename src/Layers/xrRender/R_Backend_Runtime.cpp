@@ -7,21 +7,32 @@
 #pragma warning(pop)
 
 #include "../../xrCDB/frustum.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "FTreeVisual.h"
+#endif
 
 #if defined(USE_DX10) || defined(USE_DX11)
 #include "../xrRenderDX10/StateManager/dx10StateManager.h"
+#include "../xrRenderDX10/StateManager/dx10SamplerStateCache.h"
 #include "../xrRenderDX10/StateManager/dx10ShaderResourceStateCache.h"
 #endif	USE_DX10
 
 void CBackend::OnFrameEnd()
 {
+#if defined(USE_DX11) && RENDER == R_R4
+    { PROF_EVENT("Render.Shadow.TreeStats"); FTreeVisual::ProfileShadowStats(); }
+#endif
+#if defined(USE_DX11) || defined(USE_DX10)
+    { PROF_EVENT("Render.Constants.Stats"); dx10ConstantBuffer::ProfileStats(); }
+    { PROF_EVENT("Render.Samplers.Stats"); SSManager.ProfileStats(); }
+#endif
 	//#ifndef DEDICATED_SERVER
 #ifndef _EDITOR
 	if (!g_dedicated_server)
 #endif
 	{
 #if defined(USE_DX10) || defined(USE_DX11)
-		HW.pContext->ClearState();
+		RenderDeviceContext()->ClearState();
 		Invalidate();
 #else	//	USE_DX10
 
@@ -39,6 +50,13 @@ void CBackend::OnFrameEnd()
 
 void CBackend::OnFrameBegin()
 {
+#if defined(USE_DX11) && RENDER == R_R4
+    FTreeVisual::ResetShadowStats();
+#endif
+#if defined(USE_DX11) || defined(USE_DX10)
+    dx10ConstantBuffer::ResetStats();
+    SSManager.ResetStats();
+#endif
 	//#ifndef DEDICATED_SERVER
 #ifndef _EDITOR
 	if (!g_dedicated_server)
@@ -62,6 +80,10 @@ void CBackend::OnFrameBegin()
 
 void CBackend::Invalidate()
 {
+#if defined(USE_DX11) && RENDER == R_R4
+    skeleton_snapshot = nullptr;
+    recording_object = nullptr;
+#endif
 	pRT[0] = NULL;
 	pRT[1] = NULL;
 	pRT[2] = NULL;
@@ -86,6 +108,7 @@ void CBackend::Invalidate()
 	cs = 0;
 #endif
 	ctable = NULL;
+    ++ctable_serial;
 
 	T = NULL;
 	M = NULL;
@@ -206,6 +229,24 @@ void CBackend::set_ClipPlanes(u32 _enable, Fmatrix* _xform /*=NULL */, u32 fmask
 	set_ClipPlanes(_enable, F.planes, F.p_count);
 }
 
+void CBackend::BindTexture(CTexture* surface, u32 stage)
+{
+#if defined(USE_DX11) && RENDER == R_R4
+    if (RenderContextId())
+    {
+        auto* view = TextureView(surface, ContextTextureView(surface));
+        if (stage < CTexture::rstVertex) SRVSManager.SetPSResource(stage, view);
+        else if (stage < CTexture::rstGeometry) SRVSManager.SetVSResource(stage - CTexture::rstVertex, view);
+        else if (stage < CTexture::rstHull) SRVSManager.SetGSResource(stage - CTexture::rstGeometry, view);
+        else if (stage < CTexture::rstDomain) SRVSManager.SetHSResource(stage - CTexture::rstHull, view);
+        else if (stage < CTexture::rstCompute) SRVSManager.SetDSResource(stage - CTexture::rstDomain, view);
+        else SRVSManager.SetCSResource(stage - CTexture::rstCompute, view);
+        return;
+    }
+#endif
+    surface->Bind(stage);
+}
+
 void CBackend::set_Textures(STextureList* _T)
 {
 	PROF_EVENT("set_Textures");
@@ -251,7 +292,7 @@ void CBackend::set_Textures(STextureList* _T)
 				if (load_surf)
 				{
 					PGO(Msg("PGO:tex%d:%s",load_id,load_surf->cName.c_str()));
-					load_surf->Bind(load_id);
+					BindTexture(load_surf, load_id);
 					//					load_surf->Apply	(load_id);
 				}
 			}
@@ -276,7 +317,7 @@ void CBackend::set_Textures(STextureList* _T)
 				if (load_surf)
 				{
 					PGO(Msg("PGO:tex%d:%s",load_id,load_surf->cName.c_str()));
-					load_surf->Bind(load_id);
+					BindTexture(load_surf, load_id);
 					//					load_surf->Apply	(load_id);
 				}
 			}
@@ -299,7 +340,7 @@ void CBackend::set_Textures(STextureList* _T)
 					if (load_surf)
 					{
 						PGO(Msg("PGO:tex%d:%s",load_id,load_surf->cName.c_str()));
-						load_surf->Bind(load_id);
+						BindTexture(load_surf, load_id);
 						//					load_surf->Apply	(load_id);
 					}
 				}
@@ -322,7 +363,7 @@ void CBackend::set_Textures(STextureList* _T)
 					if (load_surf)
 					{
 						PGO(Msg("PGO:tex%d:%s",load_id,load_surf->cName.c_str()));
-						load_surf->Bind(load_id);
+						BindTexture(load_surf, load_id);
 						//					load_surf->Apply	(load_id);
 					}
 				}
@@ -344,7 +385,7 @@ void CBackend::set_Textures(STextureList* _T)
 					if (load_surf)
 					{
 						PGO(Msg("PGO:tex%d:%s",load_id,load_surf->cName.c_str()));
-						load_surf->Bind(load_id);
+						BindTexture(load_surf, load_id);
 						//					load_surf->Apply	(load_id);
 					}
 				}
@@ -366,7 +407,7 @@ void CBackend::set_Textures(STextureList* _T)
 					if (load_surf)
 					{
 						PGO(Msg("PGO:tex%d:%s",load_id,load_surf->cName.c_str()));
-						load_surf->Bind(load_id);
+						BindTexture(load_surf, load_id);
 						//					load_surf->Apply	(load_id);
 					}
 				}

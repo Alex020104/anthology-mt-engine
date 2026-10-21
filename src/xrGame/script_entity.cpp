@@ -28,6 +28,7 @@
 #include "movement_manager.h"
 #include "script_callback_ex.h"
 #include "game_object_space.h"
+#include "profiler.h"
 
 void __stdcall ActionCallback(IKinematics* tpKinematics);
 
@@ -770,7 +771,8 @@ void CScriptEntity::process_sound_callbacks()
 	xr_vector<CSavedSound>::const_iterator E = m_saved_sounds.end();
 	for (; I != E; ++I)
 	{
-		PROF_EVENT("suund_lua_call");
+		PROF_EVENT("Sound: deferred Lua hearing callback");
+        const u64 callback_start = Device.LuaGCAlwaysActive() ? CPU::QPC() : 0;
 		object().callback(GameObject::eSound)(
 			object().lua_game_object(),
 			(*I).m_game_object_id,
@@ -778,6 +780,7 @@ void CScriptEntity::process_sound_callbacks()
 			(*I).m_position,
 			(*I).m_sound_power
 		);
+        if (callback_start) Device.LuaGCAllocationSafePoint(CPU::QPC() - callback_start);
 	}
 
 	m_saved_sounds.clear();

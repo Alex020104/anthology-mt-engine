@@ -580,6 +580,7 @@ BOOL lua_use_functor_cache = FALSE;
 
 void CScriptStorage::reinit()
 {
+    PROF_EVENT("Lua.CreateState");
 	if (m_virtual_machine)
 		lua_close(m_virtual_machine);
 	
@@ -901,6 +902,14 @@ bool CScriptStorage::parse_namespace(LPCSTR caNamespaceName, LPSTR b, u32 const 
 	return (true);
 }
 
+// Keep scoped profiling outside load_buffer(), which uses SEH for stack overflow.
+static int LoadLuaBuffer(lua_State* L, LPCSTR buffer, size_t size, LPCSTR name)
+{
+    PROF_EVENT("Lua.Compile");
+    PROF_TAG("Script", name);
+    return luaL_loadbuffer(L, buffer, size, name);
+}
+
 bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LPCSTR caScriptName,
                                  LPCSTR caNameSpaceName)
 {
@@ -949,7 +958,7 @@ bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LP
 		xr_strcpy(script, total_size, insert);
 		CopyMemory(script + str_len, caBuffer, u32(tSize));
 
-		l_iErrorCode = luaL_loadbuffer(L, script, tSize + str_len, caScriptName);
+		l_iErrorCode = LoadLuaBuffer(L, script, tSize + str_len, caScriptName);
 
 		if (dynamic_allocation)
 			xr_free(script);
@@ -958,7 +967,7 @@ bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LP
 	{
 		//		try
 		{
-			l_iErrorCode = luaL_loadbuffer(L, caBuffer, tSize, caScriptName);
+			l_iErrorCode = LoadLuaBuffer(L, caBuffer, tSize, caScriptName);
 		}
 		//		catch(...) {
 		//			l_iErrorCode= LUA_ERRSYNTAX;
@@ -1009,6 +1018,8 @@ static bool unlocalRegex(xr_set<xr_string>& unlocals, xr_string& s, const std::r
 
 bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 {
+    PROF_EVENT("Lua.LoadScript");
+    PROF_TAG("Script", caScriptName);
 	if (!unlocalizerPassed) {
 		auto file_list = FS.file_list_open("$game_config$", "unlocalizers\\", FS_RootOnly | FS_ListFiles);
 		if (!file_list) {
@@ -1209,7 +1220,12 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 
 	// because that's the first and the only call of the main chunk - there is no point to compile it
 	//	luaJIT_setmode	(lua(),0,LUAJIT_MODE_ENGINE|LUAJIT_MODE_OFF);						// Oles
-	int l_iErrorCode = lua_pcall(lua(), 0, 0, (-1 == errFuncId) ? 0 : errFuncId); // new_Andy
+    int l_iErrorCode;
+    {
+        PROF_EVENT("Lua.ExecuteScript");
+        PROF_TAG("Script", caScriptName);
+        l_iErrorCode = lua_pcall(lua(), 0, 0, (-1 == errFuncId) ? 0 : errFuncId); // new_Andy
+    }
 	//	luaJIT_setmode	(lua(),0,LUAJIT_MODE_ENGINE|LUAJIT_MODE_ON);						// Oles
 
 #ifdef USE_DEBUGGER
@@ -1305,6 +1321,19 @@ bool CScriptStorage::namespace_loaded(LPCSTR N, bool remove_from_stack)
 bool CScriptStorage::object(LPCSTR identifier, int type)
 {
 	int start = lua_gettop(lua());
+
+    // Direct lookup instead of iterating the whole table
+    if (lua_istable(lua(), -1))
+    {
+        lua_pushstring(lua(), identifier);
+        lua_rawget(lua(), -2);
+        const bool found = (lua_type(lua(), -1) == type);
+        lua_pop(lua(), 2);
+        VERIFY(lua_gettop(lua()) == start - 1);
+        return (found);
+    }
+
+    //Original behavior
 	lua_pushnil(lua());
 	while (lua_next(lua(), -2))
 	{

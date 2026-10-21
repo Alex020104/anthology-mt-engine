@@ -11,7 +11,6 @@
 #include "x_ray.h"
 #include "../../Include/xrRender/Kinematics.h"
 
-BOOL mt_Scheduler = TRUE;
 BOOL mt_FrameProfile = FALSE;
 BOOL mt_FrameProfileDetailed = FALSE;
 
@@ -143,7 +142,7 @@ void XRay::Engine::PreRenderThread()
 		g_pGamePersistent->pEnvironment->eff_Rain->UpdateItems();
 	}
 
-	if (g_pGamePersistent && Device.ParticleWorkerCallback)
+	if (psDeviceFlags.test(mtParticles) && g_pGamePersistent && Device.ParticleWorkerCallback)
 	{
 		PROF_EVENT("Process Particles");
 		Device.ParticleWorkerCallback();
@@ -275,13 +274,9 @@ void XRay::Engine::GameThread()
 
 	if (!Device.Paused())
 	{
-		if (mt_Scheduler)
-		{
-			CFrameTaskTimer scheduler_profile(FrameTaskGameScheduler);
-			PROF_EVENT("Sheduler Deferred");
-			::Engine.Sheduler.UpdateDeferred();
-			::Engine.Sheduler.UpdateFinalize();
-		}
+		CFrameTaskTimer scheduler_profile(FrameTaskGameScheduler);
+		PROF_EVENT("Sheduler Deferred");
+		::Engine.Sheduler.Update();
 	}
 
 	{
@@ -310,7 +305,7 @@ void XRay::Engine::GameThread()
 	// single secondary worker touches the LuaJIT VM. The main thread can keep
 	// preparing/rendering the frame, and the frame-time/budget guards prevent
 	// ordinary propagation work from extending past that overlap window.
-	if (psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
+	if (!Device.LuaGCAlwaysActive() && psLua_ParallelGC && Device.LuaGC && !EngineShouldDeferFullLuaGC())
 	{
 		if (EnginePostLoadGCCooldownActive(static_cast<u32>(psLua_ParallelGC_PostLoadDelayMs)))
 		{

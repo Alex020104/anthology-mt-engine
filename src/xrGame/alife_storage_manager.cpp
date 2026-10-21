@@ -200,6 +200,8 @@ void CALifeStorageManager::save(LPCSTR save_name_no_check, bool update_name)
 
 void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR file_name)
 {
+    PROF_EVENT("LoadGame.Deserialize");
+    PROF_TAG("Save", file_name);
 	CTimer load_part_timer;
 	load_part_timer.Start();
 
@@ -207,25 +209,49 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 #ifdef ENGINE_LUA_ALIFE_STORAGE_MANAGER_CALLBACKS
 	::luabind::functor<void> funct;
 	if (ai().script_engine().functor("alife_storage_manager.CALifeStorageManager_load", funct))
+    {
+        PROF_EVENT("LoadGame.StorageCallback");
 		funct(file_name);
+    }
 #endif
 	//-Alundaio
 	const u32 callback_ms = load_part_timer.GetElapsed_ms();
 
 	IReader source(buffer, buffer_size);
-	header().load(source);
+
+	{
+        PROF_EVENT("LoadGame.HeaderAndTime");
+        header().load(source);
 	time_manager().load(source);
+    }
 	u32 phase_started = load_part_timer.GetElapsed_ms();
-	spawns().load(source, file_name);
+
+
+	{
+        PROF_EVENT("LoadGame.SpawnRegistry");
+        spawns().load(source, file_name);
+    }
 	const u32 spawns_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
 	phase_started = load_part_timer.GetElapsed_ms();
-	graph().on_load();
+
+
+	{
+        PROF_EVENT("LoadGame.GraphRegistry");
+        graph().on_load();
+    }
 	const u32 graph_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
 	phase_started = load_part_timer.GetElapsed_ms();
-	objects().load(source);
+
+
+	{
+        PROF_EVENT("LoadGame.ObjectRegistry");
+        objects().load(source);
+    }
 	const u32 objects_ms = load_part_timer.GetElapsed_ms() - phase_started;
+	spawns().remap_legacy(objects().objects());
+
 
 	VERIFY(can_register_objects());
 	can_register_objects(false);
@@ -246,6 +272,7 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 	const u32 level_prepare_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
 	phase_started = load_part_timer.GetElapsed_ms();
+
 	for (I = B; I != E; ++I)
 	{
 		ALife::_OBJECT_ID id = (*I).second->ID;
@@ -255,13 +282,20 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 	}
 	const u32 register_ms = load_part_timer.GetElapsed_ms() - phase_started;
 
+
 	phase_started = load_part_timer.GetElapsed_ms();
-	registry().load(source);
+
+	{
+        PROF_EVENT("LoadGame.RegistryContainer");
+        registry().load(source);
+    }
 	const u32 registry_ms = load_part_timer.GetElapsed_ms() - phase_started;
+
 
 	can_register_objects(true);
 
 	phase_started = load_part_timer.GetElapsed_ms();
+
 	for (I = B; I != E; ++I)
 		(*I).second->on_register();
 	const u32 on_register_ms = load_part_timer.GetElapsed_ms() - phase_started;
@@ -271,6 +305,7 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 		callback_ms, spawns_ms, graph_ms, objects_ms, level_prepare_ms, register_ms, registry_ms, on_register_ms,
 		load_part_timer.GetElapsed_ms(), static_cast<u32>(objects().objects().size()));
 
+
 	if (!g_pGameLevel)
 		return;
 
@@ -279,6 +314,8 @@ void CALifeStorageManager::load(void* buffer, const u32& buffer_size, LPCSTR fil
 
 bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 {
+    PROF_EVENT("LoadGame.ReadSave");
+    PROF_TAG("Save", save_name_no_check);
 	LPCSTR game_saves_path = FS.get_path("$game_saves$")->m_Path;
 
 	string_path save_name;
@@ -327,6 +364,7 @@ bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 	unload();
 	reload(m_section);
 
+
 	if (prepared)
 	{
 		g_prepared_save.wait();
@@ -346,6 +384,7 @@ bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 	}
 
 	groups().on_after_game_load();
+
 
 	VERIFY(graph().actor());
 

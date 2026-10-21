@@ -1,7 +1,9 @@
 #include "stdafx.h"
+#include "RenderDimensions.h"
 
 void CRenderTarget::phase_nightvision()
 {
+    PROF_EVENT("RenderTarget.NightVision");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -68,6 +70,7 @@ void CRenderTarget::phase_nightvision()
 //crookr
 void CRenderTarget::phase_fakescope()
 {
+    PROF_EVENT("RenderTarget.FakeScope");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -171,6 +174,7 @@ void CRenderTarget::phase_fakescope()
 //--DSR-- HeatVision_start
 void CRenderTarget::phase_heatvision()
 {
+    PROF_EVENT("RenderTarget.HeatVision");
 	//Constants
 	u32 Offset = 0;
 	u32 C = color_rgba(0, 0, 0, 255);
@@ -196,6 +200,9 @@ void CRenderTarget::phase_heatvision()
 	//Set MSAA/NonMSAA rendertarget
 #if defined(USE_DX10) || defined(USE_DX11)
 	#ifdef USE_DX11
+    // Heat was an MRT in the scene/forward pass. Release its output binding
+    // before the thermal shader binds it for reading, including the first frame.
+    unbind_svp_resources();
     ref_rt& dest_rt = PostprocessColor();
 #else
     ref_rt& dest_rt = RImplementation.o.dx10_msaa ? rt_Generic : rt_Color;

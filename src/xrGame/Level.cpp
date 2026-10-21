@@ -78,12 +78,25 @@ void XRayReportLuaGCAtomicProfile(lua_State* lua)
 	lua_XRayGCAtomicProfile profile{};
 	if (!lua_xray_gc_atomic_profile_snapshot(lua, &profile))
 		return;
-	if (!mt_FrameProfile || !CPU::qpc_freq)
+	if (!CPU::qpc_freq)
 		return;
 
 	const double ticks_to_ms = 1000.0 / double(CPU::qpc_freq);
 	const double total_ms = profile.total_ticks * ticks_to_ms;
-	if (total_ms < 10.0)
+	{
+		PROF_EVENT("LuaGC.Atomic.Breakdown");
+		PROF_TAG("Atomic total ms", float(total_ms));
+		PROF_TAG("Atomic roots ms", float(profile.roots_ticks * ticks_to_ms));
+		PROF_TAG("Atomic grayagain ms", float(profile.grayagain_ticks * ticks_to_ms));
+		PROF_TAG("Atomic separate userdata ms", float(profile.separateudata_ticks * ticks_to_ms));
+		PROF_TAG("Atomic mark userdata ms", float(profile.mmudata_ticks * ticks_to_ms));
+		PROF_TAG("Atomic weak sweep ms", float(profile.weak_sweep_ticks * ticks_to_ms));
+		PROF_TAG("Atomic marked leaf userdata", u64(profile.leaf_udata_marked));
+		PROF_TAG("Atomic unmarked leaf userdata", u64(profile.leaf_udata_unmarked));
+		PROF_TAG("Atomic scanned userdata", u64(profile.userdata_scanned));
+		PROF_TAG("Atomic candidate userdata", u64(profile.userdata_candidates));
+	}
+	if (!mt_FrameProfile || total_ms < 10.0)
 		return;
 
 	Msg("* [Lua GC/xray-atomic] sequence=%llu total=%.2f ms "
@@ -359,6 +372,13 @@ extern CAI_Space* g_ai_space;
 
 CLevel::~CLevel()
 {
+    Device.ResetLuaGCState();
+    Device.remove_from_seq_parallel(xr_make_delegate(this, &CLevel::update_script_calls));
+    Device.LuaGC.clear();
+    Device.LuaGCFull.clear();
+    Device.LuaGCDebug.clear();
+    Device.LuaGCPrepare.clear();
+    Device.LuaGCReadInfo.clear();
     PROF_EVENT("CLevel::~CLevel");
     //crash_saving::save_impl = nullptr; // CLevel not available, disable crash save
     xr_delete(g_player_hud);
@@ -948,9 +968,9 @@ void CLevel::ProcessSpawnEvents()
             if (spawn_data_it->second.hasAlifeObject)
             {
                 auto obj = ai().alife().objects().object(obj_id);
-				if (!obj)
+				if (!obj || !obj->m_bOnline)
 				{
-					if (spawn_antifreeze_debug) Msg("![ProcessSpawnEvents] object was in alife, but now is not, do not spawn, section %s, obj_id %d, parent_id %d, event_id %d", section.c_str(), obj_id, parent_id, dest);
+					if (spawn_antifreeze_debug) Msg("![ProcessSpawnEvents] object absent or offline, do not spawn, section %s, obj_id %d, parent_id %d, event_id %d", section.c_str(), obj_id, parent_id, dest);
 					if (prepared && prepared->entity)
 						F_entity_Destroy(prepared->entity);
 					continue;
@@ -1283,7 +1303,6 @@ void CLevel::MakeReconnect()
 	}
 }
 
-BOOL mt_ph_commander = FALSE;
 BOOL mt_TaskManager = FALSE;
 void CLevel::OnFrame()
 {
@@ -1406,6 +1425,9 @@ void CLevel::OnFrame()
 		make_NetCorrectionPrediction();
 	if (!g_dedicated_server)
 	{
+		// the map update may run on the parallel thread so removals are reported to script from here
+		MapManager().FlushRemovedNotify();
+
 		if (g_mt_config.test(mtMap))
 			Device.add_to_seq_parallel(
 				xr_make_delegate(m_map_manager, &CMapManager::Update), "map.update");
@@ -1523,18 +1545,10 @@ void CLevel::OnFrame()
 		post_ticks = now - phase_started_at;
 		phase_started_at = now;
 	}
-	if (!mt_ph_commander)
-	{
-		PROF_EVENT("m_ph_commander");
-		const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
-		const u64 script_started_at = measure_precache ? CPU::QPC() : 0;
-		ai().script_engine().script_process(ScriptEngine::eScriptProcessorLevel)->update();
-
-		m_ph_commander->update();
-		m_ph_commander_scripts->update();
-		if (measure_precache)
-			pApp->LoadSessionRecordPrecacheUpdate(0, 0, CPU::QPC() - script_started_at);
-	}
+	if (bReady && !Device.dwPrecacheFrame && (!pApp || !pApp->LoadSessionActive()))
+		Device.add_to_seq_parallel(xr_make_delegate(this, &CLevel::update_script_calls), "level.script_calls");
+	else
+		update_script_calls();
 	if (measure_detail)
 	{
 		const u64 now = CPU::QPC();
@@ -1654,20 +1668,21 @@ extern int psLua_ParallelGC_PostLoadDelayMs;
 int psLua_ParallelGCPause = 200;
 int psLua_ParallelGCStepMul = 200;
 
+void CLevel::update_script_calls()
+{
+	PROF_EVENT("m_ph_commander");
+	const bool measure_precache = pApp && pApp->LoadSessionMeasurePrecache();
+	const u64 script_started_at = measure_precache ? CPU::QPC() : 0;
+	ai().script_engine().script_process(ScriptEngine::eScriptProcessorLevel)->update();
+	m_ph_commander->update();
+	m_ph_commander_scripts->update();
+	if (measure_precache)
+		pApp->LoadSessionRecordPrecacheUpdate(0, 0, CPU::QPC() - script_started_at);
+}
+
 void CLevel::script_gc()
 {
-	if (mt_ph_commander)
-	{
-		PROF_EVENT("m_ph_commander");
-		ai().script_engine().script_process(ScriptEngine::eScriptProcessorLevel)->update();
-
-		m_ph_commander->update();
-		m_ph_commander_scripts->update();
-	}
-
-	// The parallel mode is executed by GameThread only after seqFrameMT has
-	// completed. This owner-thread fallback remains for the regular mode.
-	if (!(psLua_ParallelGC && Device.LuaGC))
+	if (!Device.LuaGCAlwaysActive() && !(psLua_ParallelGC && Device.LuaGC))
 	{
 		PROF_EVENT("CLevel::script_gc");
 		const u64 profile_started_at = XRay::Engine::BeginLuaGCTaskProfile();
@@ -1694,25 +1709,76 @@ bool CLevel::Load(u32 dwNum)
 		psLua_ParallelGC_Adaptive, psLua_ParallelGC_FrameBudgetUs,
 		psLua_ParallelGC_PostLoadDelayMs);
     Msg("Device.LuaGC bind");
-    Device.LuaGC.bind(&CLevel::LuaGC);
     Device.LuaGCFull.bind(&CLevel::LuaGCFull);
-    Device.LuaGCDebug.bind(&CLevel::LuaGCDebug);
+    RestoreLuaGCBindings();
     return true;
 }
 
 // demonized: called from Device, via Device.LuaGC pointer
+static u32 lua_gc_completed_cycles = 0;
+static u32 lua_gc_seen_generation = 0;
+
+bool CLevel::RestoreLuaGCBindings()
+{
+    if (!Device.LuaGC) Device.LuaGC.bind(&CLevel::LuaGC);
+    if (!Device.LuaGCDebug) Device.LuaGCDebug.bind(&CLevel::LuaGCDebug);
+    if (!Device.LuaGCPrepare) Device.LuaGCPrepare.bind(&CLevel::LuaGCPrepare);
+    if (!Device.LuaGCReadInfo) Device.LuaGCReadInfo.bind(&CLevel::LuaGCReadInfo);
+    return Device.LuaGC && Device.LuaGCReadInfo && Device.LuaGCPrepare;
+}
+
+void CLevel::LuaGCPrepare(bool always)
+{
+    if (g_dedicated_server) return;
+    lua_State* state = ai().script_engine().lua();
+    if (!state) return;
+    lua_gcincremental(state, always ? 1 : 0);
+    lua_gc(state, always ? LUA_GCSTOP : LUA_GCRESTART, 0);
+}
+
+LuaGCInfo CLevel::LuaGCReadInfo()
+{
+    if (lua_gc_seen_generation != Device.LuaGCGeneration())
+    {
+        lua_gc_seen_generation = Device.LuaGCGeneration();
+        lua_gc_completed_cycles = 0;
+    }
+    LuaGCInfo info;
+    if (!g_dedicated_server)
+    {
+        lua_State* state = ai().script_engine().lua();
+        if (!state) return info;
+        info.vm = lua_vmidentity(state);
+        lua_gcmetrics(state, &info.heap_bytes, nullptr, nullptr, &info.phase);
+        info.cycles = lua_gc_completed_cycles;
+    }
+    return info;
+}
+
 int CLevel::LuaGC()
 {
-	lua_State* const lua = ai().script_engine().lua();
-	const int result = lua_gc(lua, LUA_GCSTEP, psLua_ParallelGCStep);
-	XRayReportLuaGCAtomicProfile(lua);
-	return result;
+    lua_State* state = ai().script_engine().lua();
+    if (!state)
+        return -1;
+    if (!Device.LuaGCAlwaysActive())
+    {
+        const int result = lua_gc(state, LUA_GCSTEP, psLua_ParallelGCStep);
+        XRayReportLuaGCAtomicProfile(state);
+        return result;
+    }
+    R_ASSERT(Device.IsGameLogicThread());
+    const int result = lua_gcstep_one(state, 1);
+    lua_gc(state, LUA_GCSTOP, 0);
+    if (result)
+        ++lua_gc_completed_cycles;
+    XRayReportLuaGCAtomicProfile(state);
+    return result;
 }
 void CLevel::LuaGCFull()
 {
-	lua_State* const lua = ai().script_engine().lua();
-	lua_gc(lua, LUA_GCCOLLECT, 0);
-	XRayReportLuaGCAtomicProfile(lua);
+    lua_State* const lua = ai().script_engine().lua();
+    lua_gc(lua, LUA_GCCOLLECT, 0);
+    XRayReportLuaGCAtomicProfile(lua);
 }
 void CLevel::LuaGCDebug()
 {
@@ -1737,6 +1803,7 @@ extern int ps_r4_hdr10_pda; // NOTE: this is a hack to avoid double HDR tonemapp
 
 void CLevel::OnRender()
 {
+    PROF_EVENT("CLevel::OnRender");
 	// PDA
 	if (game && CurrentGameUI() && psActorFlags.test(AF_3D_PDA) &&
 		CurrentGameUI()->GetPdaMenu().IsShown())
@@ -1744,6 +1811,7 @@ void CLevel::OnRender()
 		// The PDA is rendered before the main HUD pass. Its hints share the
 		// same text buffers with the UI worker and need the same frame fence.
 		HUD().WaitForUIUpdate();
+		Device.WaitForGameLogic();
 		xrCriticalSectionGuard guard(ui_lock);
 		CUIPdaWnd* pda = &CurrentGameUI()->GetPdaMenu();
 		if (pda->IsShown())
@@ -1800,6 +1868,7 @@ void CLevel::OnRender()
 		}
 	}
 
+    Device.ResumeLuaGCForRender();
 	inherited::OnRender();
 	if (!game)
 		return;

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Kernel">
@@ -84,6 +84,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="profiler.cpp">
+      <Filter>Kernel</Filter>
+    </ClCompile>
     <ClCompile Include="FTimer.cpp">
       <Filter>Kernel</Filter>
     </ClCompile>
@@ -223,6 +226,9 @@
       <Filter>Debug core\BlackBox</Filter>
     </ClCompile>
     <ClCompile Include="crc32.cpp">
+      <Filter>shared memory/string library</Filter>
+    </ClCompile>
+    <ClCompile Include="ShaderSourceCRC.cpp">
       <Filter>shared memory/string library</Filter>
     </ClCompile>
     <ClCompile Include="xr_shared.cpp">
@@ -593,6 +599,9 @@
     </ClInclude>
     <ClInclude Include="ScopeLock.hpp">
       <Filter>Threading</Filter>
+    </ClInclude>
+    <ClInclude Include="ShaderSourceCRC.h">
+      <Filter>shared memory/string library</Filter>
     </ClInclude>
     <ClInclude Include="..\3rd party\stackwalker\include\StackWalker.h">
       <Filter>Debug core</Filter>

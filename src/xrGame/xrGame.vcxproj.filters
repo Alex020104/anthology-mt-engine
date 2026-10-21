@@ -4755,6 +4755,18 @@
     <ClInclude Include="game_graph_inline.h">
       <Filter>AI\ANavigation\GameGraph</Filter>
     </ClInclude>
+    <ClInclude Include="game_graph_builder.h">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClInclude>
+    <ClInclude Include="spawn_overlays.h">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClInclude>
+    <ClInclude Include="spawn_packs.h">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClInclude>
+    <ClInclude Include="spawn_templates.h">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClInclude>
     <ClInclude Include="..\xrServerEntities\game_graph_space.h">
       <Filter>AI\ANavigation\GameGraph</Filter>
     </ClInclude>
@@ -5152,6 +5164,9 @@
       <Filter>AI\AScript\ScriptClasses\ScriptFS</Filter>
     </ClInclude>
     <ClInclude Include="console_registrator.h">
+      <Filter>AI\AScript\ScriptClasses\Console</Filter>
+    </ClInclude>
+    <ClInclude Include="shader_bus_script.h">
       <Filter>AI\AScript\ScriptClasses\Console</Filter>
     </ClInclude>
     <ClInclude Include="base_client_classes.h">
@@ -6042,6 +6057,9 @@
     <ClInclude Include="CarLights.h">
       <Filter>Core\Client\Objects\vehicles\Car</Filter>
     </ClInclude>
+    <ClInclude Include="CarDrone.h">
+      <Filter>Core\Client\Objects\vehicles\Car\CarDrone</Filter>
+    </ClInclude>
     <ClInclude Include="CarWeapon.h">
       <Filter>Core\Client\Objects\vehicles\Car\CarWeapon</Filter>
     </ClInclude>
@@ -6835,6 +6853,9 @@
       <Filter>UI\UIWindows\ProgressBar</Filter>
     </ClInclude>
     <ClInclude Include="ui\UITabButton.h">
+      <Filter>UI\UIWindows\TabControl</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\UITabScrollArrows.h">
       <Filter>UI\UIWindows\TabControl</Filter>
     </ClInclude>
     <ClInclude Include="ui\UITabControl.h">
@@ -8540,6 +8561,18 @@
     <ClCompile Include="game_graph_script.cpp">
       <Filter>AI\ANavigation\GameGraph</Filter>
     </ClCompile>
+    <ClCompile Include="game_graph_builder.cpp">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClCompile>
+    <ClCompile Include="spawn_overlays.cpp">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClCompile>
+    <ClCompile Include="spawn_packs.cpp">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClCompile>
+    <ClCompile Include="spawn_templates.cpp">
+      <Filter>AI\ANavigation\GameGraph</Filter>
+    </ClCompile>
     <ClCompile Include="level_graph.cpp">
       <Filter>AI\ANavigation\LevelGraph</Filter>
     </ClCompile>
@@ -8748,6 +8781,9 @@
       <Filter>AI\AScript\ScriptClasses\ScriptFS</Filter>
     </ClCompile>
     <ClCompile Include="console_registrator_script.cpp">
+      <Filter>AI\AScript\ScriptClasses\Console</Filter>
+    </ClCompile>
+    <ClCompile Include="shader_bus_script.cpp">
       <Filter>AI\AScript\ScriptClasses\Console</Filter>
     </ClCompile>
     <ClCompile Include="base_client_classes_script.cpp">
@@ -9686,6 +9722,9 @@
     <ClCompile Include="DBG_Car.cpp">
       <Filter>Core\Client\Objects\vehicles\Car</Filter>
     </ClCompile>
+    <ClCompile Include="CarDrone.cpp">
+      <Filter>Core\Client\Objects\vehicles\Car\CarDrone</Filter>
+    </ClCompile>
     <ClCompile Include="CarWeapon.cpp">
       <Filter>Core\Client\Objects\vehicles\Car\CarWeapon</Filter>
     </ClCompile>
@@ -10509,6 +10548,12 @@
       <Filter>UI\UIWindows\TabControl</Filter>
     </ClCompile>
     <ClCompile Include="ui\UITabControl.cpp">
+      <Filter>UI\UIWindows\TabControl</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\UITabControl_scroll.cpp">
+      <Filter>UI\UIWindows\TabControl</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\UITabScrollArrows.cpp">
       <Filter>UI\UIWindows\TabControl</Filter>
     </ClCompile>
     <ClCompile Include="ui\UITabControl_script.cpp">

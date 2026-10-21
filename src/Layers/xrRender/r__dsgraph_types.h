@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../xrCore/fixedmap.h"
+#include "RenderContext.h"
 
 //#ifndef USE_MEMORY_MONITOR
 //#	define USE_DOUG_LEA_ALLOCATOR_FOR_RENDER
@@ -63,11 +64,23 @@ using render_allocator = xr_allocator;
 
 class dxRender_Visual;
 struct SPass;
+struct SkeletonRenderSnapshot;
 
 // #define	USE_RESOURCE_DEBUGGER
 
 namespace R_dsgraph
 {
+#if RENDER == R_R1 || RENDER == R_R2
+    struct ScopeHeatItem
+    {
+        float ssa;
+        dxRender_Visual* visual;
+        Fmatrix transform;
+        ShaderElement* shader;
+        float temperature;
+    };
+#endif
+
 	template<typename T, bool Reverse>
 	struct DSGraphItem
 	{
@@ -138,6 +151,17 @@ namespace R_dsgraph
 
 	struct RenderPacket
 	{
+#if defined(USE_DX11) && RENDER == R_R4
+        const SPass* source_pass = nullptr;
+        void* static_batch = nullptr;
+        u32 static_first_index = 0;
+        u32 shadow_ticket = 0;
+        bool local_shadow_eligible = false;
+        bool local_shadow_hidden = false, parallel_shadow = false;
+        u32 local_shadow_index = u32(-1);
+        std::shared_ptr<const SkeletonRenderSnapshot> shadow_pose;
+        RenderObjectSnapshot shadow_object;
+#endif
 		// Sorting key
         RenderPacketSortKey sortKey;
 
@@ -167,6 +191,9 @@ namespace R_dsgraph
 
         RenderPacket(const DSGraphItem<u32, false>& _item, const SPass& pass) : item(_item)
         {
+            #if defined(USE_DX11) && RENDER == R_R4
+            source_pass = &pass;
+#endif
             // Extract resource pointers from shader pass (previously used as map keys)
 #if defined(USE_DX10) || defined(USE_DX11)
             pVS = &*pass.vs;
@@ -250,9 +277,11 @@ namespace R_dsgraph
 		mapSorted<float, true, false, false, false> mapCamAttachedSorted;
 		mapDSGraphItems<float, false> mapWater;
 #ifdef USE_DX11
-		// PDA screens and wearable screen glass held outside the temporal scene.
-		mapDSGraphItems<float, true> mapHUDNativeUi;
-		bool hasNativeHudAttachments = false;
+        // PDA and wearable screen glass are drawn after reconstruction.
+        mapDSGraphItems<float, true> mapHUDNativeUi;
+        bool hasNativeHudAttachments = false;
+#endif
+#if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 		mapDSGraphItems<float, true> mapScopeHUDSorted;
 		mapDSGraphItems<float, false> mapScopeHUD;
 #endif
@@ -333,7 +362,9 @@ namespace R_dsgraph
 				mapCamAttachedSorted.Distort.clear_and_free();
 
 #ifdef USE_DX11
-				mapHUDNativeUi.clear_and_free();
+                mapHUDNativeUi.clear_and_free();
+#endif
+#if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 				mapScopeHUD.clear_and_free();
 				mapScopeHUDSorted.clear_and_free();
 #endif
@@ -352,7 +383,9 @@ namespace R_dsgraph
 				mapCamAttachedSorted.Distort.clear();
 
 #ifdef USE_DX11
-				mapHUDNativeUi.clear();
+                mapHUDNativeUi.clear();
+#endif
+#if defined(USE_DX11) || RENDER == R_R1 || RENDER == R_R2
 				mapScopeHUD.clear();
 				mapScopeHUDSorted.clear();
 #endif

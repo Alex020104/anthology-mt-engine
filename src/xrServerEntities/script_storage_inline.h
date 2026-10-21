@@ -7,9 +7,11 @@
 ////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+#include <luabind/detail/pcall.hpp>
 
 IC lua_State* CScriptStorage::lua()
 {
+    luabind::detail::prepare_lua_call(m_virtual_machine);
 	return (m_virtual_machine);
 }
 

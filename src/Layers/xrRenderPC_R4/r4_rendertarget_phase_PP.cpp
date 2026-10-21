@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "r4_rendertarget.h"
 #include "UpscalerRuntime.h"
+#include "../../xrEngine/CustomHUD.h"
 
 void CRenderTarget::u_calc_tc_noise(Fvector2& p0, Fvector2& p1)
 {
@@ -121,6 +122,7 @@ struct TL_2c3uv
 
 void CRenderTarget::phase_pp(bool upscaledSource)
 {
+    PROF_EVENT("RenderTarget.Postprocess");
 	// combination/postprocess
 	u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	RImplementation.rmNormal();

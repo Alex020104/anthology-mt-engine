@@ -113,6 +113,7 @@ bool file_handle_internal(LPCSTR file_name, u32& size, int& hFile)
 #else // EDITOR
 static errno_t open_internal(LPCSTR fn, int& handle)
 {
+	PROF_EVENT("VFS.CRT.Open");
 	return (
 		_sopen_s(
 			&handle,
@@ -133,36 +134,35 @@ bool file_handle_internal(LPCSTR file_name, u32& size, int& file_handle)
 			return (false);
 	}
 
-	size = _filelength(file_handle);
+	{
+		PROF_EVENT("VFS.CRT.FileSize");
+		size = _filelength(file_handle);
+	}
 	return (true);
 }
 #endif // EDITOR
 
 void* FileDownload(LPCSTR file_name, const int& file_handle, u32& file_size)
 {
-	void* buffer = Memory.mem_alloc(
+	void* buffer;
+	{
+		PROF_EVENT("VFS.CRT.Allocate");
+		buffer = Memory.mem_alloc(
 		file_size
 #ifdef DEBUG_MEMORY_NAME
         , "FILE in memory"
 #endif // DEBUG_MEMORY_NAME
-	);
-
-	int r_bytes = _read(file_handle, buffer, file_size);
-	R_ASSERT3(
-		// !file_size ||
-		// (r_bytes && (file_size >= (u32)r_bytes)),
-		file_size == (u32)r_bytes,
-		"can't read from file : ",
-		file_name
-	);
-
-	// file_size = r_bytes;
-
-	R_ASSERT3(
-		!_close(file_handle),
-		"can't close file : ",
-		file_name
-	);
+		);
+	}
+	{
+		PROF_EVENT("VFS.CRT.Read");
+		int r_bytes = _read(file_handle, buffer, file_size);
+		R_ASSERT3(file_size == (u32)r_bytes, "can't read from file : ", file_name);
+	}
+	{
+		PROF_EVENT("VFS.CRT.Close");
+		R_ASSERT3(!_close(file_handle), "can't close file : ", file_name);
+	}
 
 	return (buffer);
 }
@@ -591,16 +591,26 @@ CVirtualFileRW::~CVirtualFileRW()
 CVirtualFileReader::CVirtualFileReader(const char* cFileName)
 {
 	// Open the file
-	hSrcFile = CreateFile(cFileName, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
-	R_ASSERT3(hSrcFile != INVALID_HANDLE_VALUE, cFileName, Debug.error2string(GetLastError()));
-	Size = (int)GetFileSize(hSrcFile, NULL);
-	R_ASSERT3(Size, cFileName, Debug.error2string(GetLastError()));
-
-	hSrcMap = CreateFileMapping(hSrcFile, 0, PAGE_READONLY, 0, 0, 0);
-	R_ASSERT3(hSrcMap != INVALID_HANDLE_VALUE, cFileName, Debug.error2string(GetLastError()));
-
-	data = (char*)MapViewOfFile(hSrcMap, FILE_MAP_READ, 0, 0, 0);
-	R_ASSERT3(data, cFileName, Debug.error2string(GetLastError()));
+	{
+		PROF_EVENT("VFS.MappedOpen");
+		hSrcFile = CreateFile(cFileName, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
+		R_ASSERT3(hSrcFile != INVALID_HANDLE_VALUE, cFileName, Debug.error2string(GetLastError()));
+	}
+	{
+		PROF_EVENT("VFS.MappedFileSize");
+		Size = (int)GetFileSize(hSrcFile, NULL);
+		R_ASSERT3(Size, cFileName, Debug.error2string(GetLastError()));
+	}
+	{
+		PROF_EVENT("VFS.MappedCreateMapping");
+		hSrcMap = CreateFileMapping(hSrcFile, 0, PAGE_READONLY, 0, 0, 0);
+		R_ASSERT3(hSrcMap != INVALID_HANDLE_VALUE, cFileName, Debug.error2string(GetLastError()));
+	}
+	{
+		PROF_EVENT("VFS.MappedMapView");
+		data = (char*)MapViewOfFile(hSrcMap, FILE_MAP_READ, 0, 0, 0);
+		R_ASSERT3(data, cFileName, Debug.error2string(GetLastError()));
+	}
 
 #ifdef FS_DEBUG
     register_file_mapping(data, Size, cFileName);

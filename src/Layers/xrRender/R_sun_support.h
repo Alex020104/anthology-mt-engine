@@ -194,7 +194,8 @@ public:
 
 				if (plane.classify(P) > max_dist)
 				{
-					max_dist = 0.f;
+					// Omit a near plane that cuts into the forward view rays.
+					max_dist = -1000.f;
 					break;
 				}
 			}

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "RenderDimensions.h"
 
 void CRenderTarget::phase_lut()
 {

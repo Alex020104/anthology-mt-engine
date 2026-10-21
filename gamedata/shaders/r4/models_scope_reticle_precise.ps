@@ -644,8 +644,11 @@ if (RETICLE_TYPE == RT_DFP)
 	} else if ((IMAGE_TYPE == IT_THERMAL || IMAGE_TYPE == IT_THERMAL_COLOR) && markswitch_current.x < 2) {
 		float pixelate = SETTING(SETTINGS, ST_THERMAL_PIXELATION) ? int(current_zoom) : 1;
 		scope_tc = (floor(scope_tc * screen_res.xy / pixelate) * pixelate + 0.5) / screen_res.xy;
-		gbuffer_data gbd = gbuffer_load_data(scope_tc, scope_tc * screen_res.xy, 0);
-		back = infrared(gbd, scope_tc * screen_res.xy, scope_tc);
+        float2 thermal_size = thermal_position_size();
+        float2 thermal_tc = clamp(scope_tc + scope_lense_live_effects.yz, 0.5 / thermal_size, 1.0 - 0.5 / thermal_size);
+        float2 thermal_pixel = thermal_tc * thermal_size;
+        gbuffer_data gbd = gbuffer_load_data(thermal_tc, thermal_pixel, 0);
+        back = infrared(gbd, thermal_pixel, thermal_tc);
 		if (markswitch_current.x == 1) {
 			back = 1 - back;
 		}

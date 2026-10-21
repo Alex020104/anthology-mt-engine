@@ -4,6 +4,7 @@
 #include "SoundRender_Environment.h"
 #include "SoundRender_Cache.h"
 #include "SoundRender_Source.h"
+#include "SoundRuntimeSettings.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -13,6 +14,7 @@ class CNotificationClient;
 
 class CSoundRender_Core : public CSound_manager_interface
 {
+	friend class AsyncSound;
 	enum class ESourcePrefetchState : u8
 	{
 		Queued,
@@ -64,13 +66,17 @@ class CSoundRender_Core : public CSound_manager_interface
 	u64 source_prefetch_hash_locked() const;
 
 	volatile BOOL bLocked;
+    xrCriticalSection deferred_destroy_lock;
+    xr_vector<ref_sound_data_ptr> deferred_destroy_queue;
+    void drain_deferred_destroy();
 protected:
 	virtual void _create_data(ref_sound_data& S, LPCSTR fName, esound_type sound_type, int game_type);
 	virtual void _destroy_data(ref_sound_data& S);
 	CNotificationClient* pSysNotification = nullptr;
 public:
-	volatile BOOL bPendingDefaultDeviceSwitch = FALSE;
-	volatile BOOL bPendingDeviceListRefresh = FALSE;
+	void wait_for_streaming() override;
+	std::atomic_bool bPendingDefaultDeviceSwitch{false};
+	std::atomic_bool bPendingDeviceListRefresh{false};
 protected:
 	BOOL bListenerMoved;
 
@@ -114,6 +120,7 @@ protected:
 public:
 	// Cache
 	CSoundRender_Cache cache;
+	SoundRuntimeSettings runtime;
 	u32 cache_bytes_per_line;
 
 public:
@@ -134,6 +141,7 @@ public:
 
 	virtual void clone(ref_sound& S, const ref_sound& from, esound_type sound_type, int game_type);
 	virtual void destroy(ref_sound& S);
+    void destroy_deferred(ref_sound& S) override;
 	virtual void stop_emitters();
 	virtual void restart_emitters();
 	virtual int pause_emitters(bool val);

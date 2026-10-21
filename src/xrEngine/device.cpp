@@ -20,7 +20,7 @@
 #include "discord\discord.h"
 #include "render.h"
 #include "irenderable.h"
-#include <chrono>
+#include "renderdoc_integration.h"
 
 // must be defined before include of FS_impl.h
 #define INCLUDE_FROM_ENGINE
@@ -33,10 +33,15 @@
 
 #include "xrSash.h"
 #include "igame_persistent.h"
+#include "shader_bus.h"
 
 #include "CustomHUD.h"
 #include "EngineThreading.h"
 #include "CameraManager.h"
+#if XRCORE_PROFILER == PROFILER_OPTICK
+#include <shellapi.h>
+#include <evntrace.h>
+#endif
 #include "IGame_Level.h"
 
 #include "Rain.h"
@@ -281,11 +286,13 @@ ENGINE_API xr_atomic_bool g_bRendering = false;
 extern ENGINE_API float psHUD_FOV;
 
 BOOL g_bLoaded = FALSE;
+extern ENGINE_API BOOL g_appLoaded;
 ref_light precache_light = 0;
 
 BOOL mt_calc_bones = TRUE;
 BOOL psLua_ParallelGC = TRUE;
 BOOL psLua_ParallelGC_debug = FALSE;
+BOOL psLuaGCAlways = TRUE;
 
 extern discord::Core* discord_core;
 extern bool use_discord;
@@ -308,7 +315,8 @@ BOOL CRenderDevice::Begin()
 		break;
 
 	case IRenderDeviceRender::dsLost:
-		// If the device was lost, do not render until we get it back
+        ResetFramePacing();
+            // If the device was lost, do not render until we get it back
 		Sleep(33);
 		return FALSE;
 		break;
@@ -528,24 +536,232 @@ void GetMonitorPosition(int& x, int& y)
 	}
 }
 
-float GetMonitorRefresh()
-{
-	DEVMODE lpDevMode;
-	memset(&lpDevMode, 0, sizeof(DEVMODE));
-	lpDevMode.dmSize = sizeof(DEVMODE);
-	lpDevMode.dmDriverExtra = 0;
+extern u32 g_screenmode;
 
-	if (EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &lpDevMode) == 0)
-	{
-		return 1.f / 60.f;
-	}
-	else
-		return 1.f / lpDevMode.dmDisplayFrequency;
+#if XRCORE_PROFILER == PROFILER_OPTICK
+int psOptickCaptureFrames = 0;
+static u32 optickCaptureFramesLeft = 0;
+static string_path optickCapturePath = {};
+static bool optickCaptureSavePending = false;
+static bool optickStartupCapturing = false;
+static u32 optickStartupMenuFrame = u32(-1);
+static s64 optickStartupEntryTime = 0;
+static double optickStartupPreEntryMs = 0;
+static bool optickLoadGameEnabled = false;
+static DWORD optickLoadGameMainThread = 0;
+static bool optickLoadGameCapturing = false;
+static u32 optickLoadGameNumber = 0;
+static u32 optickLoadGameRenderedFrame = u32(-1);
+static s64 optickLoadGameBeginTime = 0;
+static s64 optickLoadGameStagesEndTime = 0;
+
+static void SetOptickCapturePath(LPCSTR name)
+{
+    if (FS.path_exist("$logs$"))
+        FS.update_path(optickCapturePath, "$logs$", name);
+    else
+        xr_strcpy(optickCapturePath, name);
 }
 
-extern int ps_framelimiter;
-extern int ps_menu_framelimiter;
-extern u32 g_screenmode;
+void OptickStartupBegin(s64 entryTime, s64 earlyInitFinish)
+{
+    optickLoadGameMainThread = GetCurrentThreadId();
+    // Core.Params (including commandline.txt) is initialized too late for this capture.
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv)
+        return;
+    bool requested = false;
+    bool traceRequested = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        requested |= lstrcmpiW(argv[i], L"-optickstartup") == 0;
+        traceRequested |= lstrcmpiW(argv[i], L"-optickstartuptrace") == 0;
+        optickLoadGameEnabled |= lstrcmpiW(argv[i], L"-optickloadgame") == 0;
+    }
+    LocalFree(argv);
+    if (!requested && !traceRequested)
+        return;
+
+    Optick::RegisterThread("X-RAY Primary thread");
+    auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
+    ULONG traceQueryStatus = ERROR_WMI_INSTANCE_NOT_FOUND;
+    if (traceRequested)
+    {
+        struct
+        {
+            EVENT_TRACE_PROPERTIES properties;
+            WCHAR loggerName[1024];
+            WCHAR logFileName[MAX_PATH];
+        } query{};
+        query.properties.Wnode.BufferSize = sizeof(query);
+        query.properties.LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
+        query.properties.LogFileNameOffset = sizeof(EVENT_TRACE_PROPERTIES) + sizeof(query.loggerName);
+        traceQueryStatus = QueryTraceW(0, KERNEL_LOGGER_NAMEW, &query.properties);
+        // Optick's ETW backend stops an existing kernel logger before retrying.
+        // Preserve other tracing sessions by requesting ETW only when none exists.
+        if (traceQueryStatus == ERROR_WMI_INSTANCE_NOT_FOUND)
+            mode = static_cast<Optick::Mode::Type>(mode | Optick::Mode::AUTOSAMPLING |
+                Optick::Mode::SWITCH_CONTEXT | Optick::Mode::SYS_CALLS);
+    }
+    if (!Optick::StartCapture(mode, traceRequested ? 250 : 1000, false))
+        return;
+    // Apply the request now, rather than waiting for the first on_idle().
+    Optick::Update();
+    Optick::BeginFrame(Optick::FrameType::CPU, entryTime);
+    optickStartupCapturing = true;
+    optickStartupEntryTime = entryTime;
+
+    if (traceRequested)
+    {
+        string_path traceSummary;
+        if (traceQueryStatus == ERROR_WMI_INSTANCE_NOT_FOUND)
+            xr_strcpy(traceSummary, "Requested: CPU stacks at 250 Hz, context switches and system calls");
+        else if (traceQueryStatus == ERROR_SUCCESS)
+            xr_strcpy(traceSummary, "Skipped: another NT Kernel Logger session is active");
+        else
+            xr_sprintf(traceSummary, "Skipped: NT Kernel Logger query failed (%lu)", traceQueryStatus);
+        Optick::AttachSummary("Startup kernel trace", traceSummary);
+    }
+
+    // Preserve LuaJIT's first-allocation rule; record its measured interval afterwards.
+    Optick::EventStorage* storage = *Optick::GetEventStorageSlotForCurrentThread();
+    Optick::Event::Add(storage, Optick::EventDescription::Create("Startup.LuaJITReserve", __FILE__, __LINE__), entryTime, earlyInitFinish);
+    Optick::Event::Add(storage, Optick::EventDescription::Create("Startup.OptickInitialize", __FILE__, __LINE__), earlyInitFinish, Optick::GetHighPrecisionTime());
+
+    FILETIME creation, exit, kernel, user, now;
+    if (GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user))
+    {
+        GetSystemTimeAsFileTime(&now);
+        const s64 measuredAt = Optick::GetHighPrecisionTime();
+        ULARGE_INTEGER creationTime, currentTime;
+        creationTime.LowPart = creation.dwLowDateTime;
+        creationTime.HighPart = creation.dwHighDateTime;
+        currentTime.LowPart = now.dwLowDateTime;
+        currentTime.HighPart = now.dwHighDateTime;
+        const double sinceEntryMs = double(measuredAt - entryTime) * 1000.0 / Optick::GetHighPrecisionFrequency();
+        optickStartupPreEntryMs = double(s64(currentTime.QuadPart) - s64(creationTime.QuadPart)) / 10000.0 - sinceEntryMs;
+        if (optickStartupPreEntryMs < 0)
+            optickStartupPreEntryMs = 0;
+        string64 value;
+        xr_sprintf(value, "%.3f", optickStartupPreEntryMs);
+        Optick::AttachSummary("Startup before WinMain (approx. ms)", value);
+    }
+}
+
+void OptickStartupMenuRendered()
+{
+    if (optickStartupCapturing && !g_pGameLevel)
+        optickStartupMenuFrame = Device.dwFrame;
+}
+
+void OptickStartupFramePresented()
+{
+    if (!optickStartupCapturing || g_pGameLevel || optickStartupMenuFrame != Device.dwFrame)
+        return;
+    PROF_EVENT("Startup.FirstMenuPresent");
+    const double entryToMenuMs = double(Optick::GetHighPrecisionTime() - optickStartupEntryTime) * 1000.0 / Optick::GetHighPrecisionFrequency();
+    string64 value;
+    xr_sprintf(value, "%.3f", entryToMenuMs);
+    Optick::AttachSummary("Startup WinMain to first menu Present (ms)", value);
+    xr_sprintf(value, "%.3f", optickStartupPreEntryMs + entryToMenuMs);
+    Optick::AttachSummary("Startup process to first menu Present (approx. ms)", value);
+    optickStartupCapturing = false;
+    // Save at the next frame boundary, after scopes and secondary tasks have finished.
+    optickCaptureSavePending = true;
+}
+
+void OptickLoadGameBegin(LPCSTR saveName)
+{
+    // Script commands may arrive on an MT task; their main-thread start/quickload event also calls here.
+    if (!optickLoadGameEnabled || GetCurrentThreadId() != optickLoadGameMainThread || optickLoadGameCapturing)
+        return;
+    if (optickStartupCapturing || optickCaptureFramesLeft || optickCaptureSavePending || Optick::IsActive())
+    {
+        Msg("! [OPTICK] Cannot capture save loading: another capture is already active or pending save");
+        return;
+    }
+
+    const s64 begin = Optick::GetHighPrecisionTime();
+    const auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
+    if (!Optick::StartCapture(mode, 1000, false))
+        return;
+    Optick::Update();
+    Optick::BeginFrame(Optick::FrameType::CPU, begin);
+    optickLoadGameCapturing = true;
+    optickLoadGameBeginTime = begin;
+    optickLoadGameStagesEndTime = 0;
+    optickLoadGameRenderedFrame = u32(-1);
+
+    string64 captureName;
+    xr_sprintf(captureName, "MT_optick_loadgame_p%lu_n%u_t%u.opt", GetCurrentProcessId(), ++optickLoadGameNumber, Device.TimerAsync());
+    SetOptickCapturePath(captureName);
+    // The menu's start command also passes /single/alife/load after the save name.
+    string_path name;
+    strncpy_s(name, sizeof(name), saveName, _TRUNCATE);
+    if (LPSTR options = strchr(name, '/'))
+        *options = 0;
+    Optick::AttachSummary("LoadGame save", name);
+    PROF_EVENT("LoadGame.Request");
+    PROF_TAG("Save", name);
+    Msg("* [OPTICK] Capturing save loading through precache and first ready Present: %s", optickCapturePath);
+}
+
+void OptickLoadGameStagesFinished()
+{
+    if (GetCurrentThreadId() != optickLoadGameMainThread || !optickLoadGameCapturing || optickLoadGameStagesEndTime)
+        return;
+    optickLoadGameStagesEndTime = Optick::GetHighPrecisionTime();
+    PROF_EVENT("LoadGame.StagesFinished");
+    Optick::Event::Add(*Optick::GetEventStorageSlotForCurrentThread(),
+        Optick::EventDescription::Create("LoadGame.LoadStages", __FILE__, __LINE__),
+        optickLoadGameBeginTime, optickLoadGameStagesEndTime);
+}
+
+static void OptickLoadGameFinish(LPCSTR result)
+{
+    const s64 finish = Optick::GetHighPrecisionTime();
+    Optick::EventStorage* storage = *Optick::GetEventStorageSlotForCurrentThread();
+    Optick::Event::Add(storage, Optick::EventDescription::Create("LoadGame.Total", __FILE__, __LINE__),
+        optickLoadGameBeginTime, finish);
+    if (optickLoadGameStagesEndTime)
+        Optick::Event::Add(storage, Optick::EventDescription::Create("LoadGame.PrecacheAndFirstFrame", __FILE__, __LINE__),
+            optickLoadGameStagesEndTime, finish);
+    string64 value;
+    xr_sprintf(value, "%.3f", double(finish - optickLoadGameBeginTime) * 1000.0 / Optick::GetHighPrecisionFrequency());
+    Optick::AttachSummary("LoadGame request to finish (ms)", value);
+    Optick::AttachSummary("LoadGame result", result);
+    optickLoadGameCapturing = false;
+    // Match startup: dump only after frame scopes and secondary tasks have finished.
+    optickCaptureSavePending = true;
+}
+
+void OptickLoadGameLevelRendered()
+{
+    if (optickLoadGameCapturing && optickLoadGameStagesEndTime && g_appLoaded && g_loading_events.empty() &&
+        !Device.dwPrecacheFrame && g_pGameLevel && g_pGameLevel->bReady &&
+        g_pGameLevel->CurrentViewEntity() && !IsMainMenuActive())
+        optickLoadGameRenderedFrame = Device.dwFrame;
+}
+
+void OptickLoadGameFramePresented()
+{
+    if (!optickLoadGameCapturing || optickLoadGameRenderedFrame != Device.dwFrame)
+        return;
+    PROF_EVENT("LoadGame.FirstReadyPresent");
+    // A keypress prompt may still cover the ready scene; do not include the user's wait.
+    Optick::AttachSummary("LoadGame endpoint", "First ready level Present after precache; excludes keypress wait");
+    OptickLoadGameFinish("Loaded");
+}
+
+void OptickLoadGameCancel(LPCSTR reason)
+{
+    if (!optickLoadGameCapturing)
+        return;
+    PROF_EVENT("LoadGame.Cancelled");
+    OptickLoadGameFinish(reason);
+}
+#endif
 
 CTimer FreezeTimer;
 void mt_FreezeThread(void *ptr) {
@@ -579,14 +795,60 @@ void CRenderDevice::on_idle()
 {
 
 	FreezeTimer.Start();
+    frame_pacer_in_frame = false; // FrameMove may present a loading screen.
 
 	if (!b_is_Ready)
 	{
-		Sleep(100);
+        ResetFramePacing();
+            Sleep(100);
 		return;
 	}
 
-	PROF_FRAME("Main Thread");
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    if (optickStartupCapturing && !optickCapturePath[0])
+    {
+        string64 captureName;
+        xr_sprintf(captureName, "MT_optick_startup_p%lu_t%u.opt", GetCurrentProcessId(), TimerAsync());
+        SetOptickCapturePath(captureName);
+        Msg("* [OPTICK] Capturing startup to first main menu Present: %s", optickCapturePath);
+    }
+
+    if (!optickStartupCapturing && !optickLoadGameCapturing && optickCaptureFramesLeft == 0 && !optickCaptureSavePending && psOptickCaptureFrames > 0)
+    {
+        const u32 frameCount = u32(psOptickCaptureFrames);
+        psOptickCaptureFrames = 0;
+
+        string64 captureName;
+        xr_sprintf(captureName, "MT_optick_f%u_t%u_%u_frames.opt", dwFrame + 1, TimerAsync(), frameCount);
+        const auto mode = static_cast<Optick::Mode::Type>(Optick::Mode::INSTRUMENTATION | Optick::Mode::TAGS);
+        if (Optick::StartCapture(mode, 1000, false))
+        {
+            SetOptickCapturePath(captureName);
+            optickCaptureFramesLeft = frameCount;
+            Msg("* [OPTICK] Capturing %u frames to %s", frameCount, optickCapturePath);
+        }
+        else
+            Msg("! [OPTICK] Cannot start optick_do: another capture is already active");
+    }
+
+    if (optickCaptureSavePending)
+        PROF_STOP_CAPTURE(false);
+#endif
+
+    // End the completed frame and apply StopCapture before dumping its event storage.
+    PROF_FRAME("X-RAY Primary thread");
+
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    if (optickCaptureSavePending)
+    {
+        PROF_SAVE_CAPTURE(optickCapturePath);
+        optickCaptureSavePending = false;
+        Msg("* [OPTICK] Capture saved: %s", optickCapturePath);
+    }
+    // Loading frames may return early; save only at the next frame boundary.
+    if (optickCaptureFramesLeft > 0 && --optickCaptureFramesLeft == 0)
+        optickCaptureSavePending = true;
+#endif
 
 #ifdef DEDICATED_SERVER
     u32 FrameStartTime = TimerGlobal.GetElapsed_ms();
@@ -626,8 +888,21 @@ void CRenderDevice::on_idle()
 
 	{
 		PROF_EVENT("seqParallelBeforRender");
-		for (auto& it : Device.seqParallelBeforRender)
-			it();
+		xrCriticalSectionGuard guard(&Device.seqParallelBeforRenderCS);
+
+		// A callback invoked here can destroy an object that owns a particle
+		// group, and PS::CParticleGroup::SItem::~SItem cancels its own pending
+		// entry in this very vector. That cancellation clears the entry in
+		// place instead of erasing it, so the vector never changes size while
+		// we walk it. Skip the cleared entries; the clear() below drops them.
+		// Index by position and copy each delegate before invoking it, so an
+		// entry appended by a callback is still handled safely.
+		for (size_t it = 0; it < Device.seqParallelBeforRender.size(); ++it)
+		{
+			auto Callback = Device.seqParallelBeforRender[it];
+			if (Callback)
+				Callback();
+		}
 
 		Device.seqParallelBeforRender.clear();
 	}
@@ -644,6 +919,12 @@ void CRenderDevice::on_idle()
 	u64 seq_render_ticks = 0;
 	u64 end_ticks = 0;
 	u64 mt_seq_render_ticks = 0;
+    BeginLuaGCFrame();
+    if (dwPrecacheFrame || !g_loading_events.empty() || load_screen_renderer.IsActive() ||
+        (pApp && pApp->LoadSessionActive()))
+        ResetFramePacing();
+    else
+        BeginFramePacing();
 
     if (!svp_render_only_frame && g_pGamePersistent != nullptr)
     {
@@ -830,71 +1111,11 @@ void CRenderDevice::on_idle()
 	}
 
 	Device.isRendering = true;
-	if (!svp_render_only_frame)
-		secondary_tasks.run(&XRay::Engine::GameThread);
+    Device.LuaGCDone = false;
+    Device.LuaGCCount = 0;
+    if (!svp_render_only_frame) StartGameLogic();
 	
-#ifdef ECO_RENDER // ECO_RENDER START
-	{
-		PROF_EVENT("Eco Render");
-		using limiter_clock = std::chrono::steady_clock;
-		static limiter_clock::time_point previous_frame = limiter_clock::now();
-		static bool limiter_armed = false;
 
-		const bool loading = Device.dwPrecacheFrame || !g_loading_events.empty() ||
-			load_screen_renderer.IsActive() || (pApp && pApp->LoadSessionActive());
-		const bool menu_limit_active = !loading && IsMainMenuActive() && ps_menu_framelimiter > 0;
-		const int target_fps = ps_framelimiter > 0 ? ps_framelimiter :
-			(menu_limit_active ? ps_menu_framelimiter : 0);
-		float target_seconds = target_fps > 0 ? 1.f / float(target_fps) : 0.f;
-
-		// Preserve the old paused-game eco behaviour without throttling an active
-		// load. Menu limiting is explicit and defaults to 60 FPS.
-		if (!loading && target_seconds <= 0.f && Device.Paused())
-		{
-			if (refresh_rate == 0)
-				refresh_rate = GetMonitorRefresh();
-			target_seconds = refresh_rate;
-		}
-
-		// A lens capture is not presented. Rate-limit only main frames, otherwise
-		// a 60 FPS limit becomes 30 displayed FPS at the native PiP cadence.
-		if (target_seconds > 0.f && !svp_frame)
-		{
-			const auto now = limiter_clock::now();
-			if (!limiter_armed)
-			{
-				previous_frame = now;
-				limiter_armed = true;
-			}
-			else
-			{
-				const auto target = previous_frame +
-					std::chrono::duration_cast<limiter_clock::duration>(std::chrono::duration<float>(target_seconds));
-				auto current = now;
-				auto remaining = target - current;
-				const auto one_ms = std::chrono::milliseconds(1);
-
-				// Give the CPU to the OS for the coarse part, then yield only for
-				// the short remainder. This avoids the old full-frame busy spin.
-				if (remaining > std::chrono::milliseconds(2))
-				{
-					const auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(remaining) - one_ms;
-					Sleep(static_cast<DWORD>(sleep_ms.count()));
-				}
-				while ((current = limiter_clock::now()) < target)
-					SwitchToThread();
-
-				// Do not accumulate a catch-up burst after a long external stall.
-				const auto frame_period = target - previous_frame;
-				previous_frame = current - target > frame_period ? current : target;
-			}
-		}
-		else if (target_seconds <= 0.f)
-		{
-			limiter_armed = false;
-		}
-	}
-#endif // ECO_RENDER END
 
 #ifndef DEDICATED_SERVER
 	Statistic->RenderTOTAL_Real.FrameStart();
@@ -937,10 +1158,13 @@ void CRenderDevice::on_idle()
 	Statistic->RenderTOTAL.accum = Statistic->RenderTOTAL_Real.accum;
 #endif 
 	Device.isRendering = false;
+    StopLuaGCWindow(LuaGCStopReason::FrameBarrier);
 
 	const bool measure_secondary_wait = measure_precache_frame || measure_mt_frame;
 	const u64 secondary_wait_started_at = measure_secondary_wait ? CPU::QPC() : 0;
-	secondary_tasks.wait();
+	JoinGameLogic();
+    secondary_tasks.wait();
+    FinishLuaGCFrame();
 	const u64 frame_finished_at = measure_secondary_wait ? CPU::QPC() : 0;
 	if (measure_precache_frame)
 	{
@@ -1177,6 +1401,9 @@ void mt_DiscordThread(void*)
 
 void CRenderDevice::Run()
 {
+    // Retain main-thread registration when PPL executes a nested task during wait().
+    PROF_THREAD("X-RAY Primary thread");
+    START_PROFILE("Startup.MainLoopInitialize");
 	// DUMP_PHASE;
 	g_bLoaded = FALSE;
 	Log("Starting engine...");
@@ -1204,11 +1431,24 @@ void CRenderDevice::Run()
 
 	//m_pRender->ClearTarget();
 	SetForegroundWindow(m_hWnd);
+    STOP_PROFILE;
 	message_loop();
 
+    ShutdownLuaGCWorker();
+	secondary_tasks.wait();
 	seqAppEnd.Process(rp_AppEnd);
 
 	secondary_tasks.wait();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+    OptickLoadGameCancel("Quit");
+    if (optickCaptureSavePending)
+    {
+        PROF_STOP_CAPTURE();
+        PROF_SAVE_CAPTURE(optickCapturePath);
+        optickCaptureSavePending = false;
+        Msg("* [OPTICK] Capture saved: %s", optickCapturePath);
+    }
+#endif
 	ParticleWorkerCallback.clear();
 }
 
@@ -1218,12 +1458,14 @@ u32 app_inactive_time_start = 0;
 void CRenderDevice::FrameMove()
 {
 	PROF_EVENT("Render: Frame Move");
+	if (::Sound) ::Sound->publish_device_state(g_pGameLevel && g_pGameLevel->bReady && !dwPrecacheFrame && !pApp->LoadSessionActive());
 
 	if (InterlockedExchange(&g_monitor_list_dirty, 0))
 		refresh_vid_monitor_list();
 
 	dwFrame++;
 	Core.dwFrame = dwFrame;
+	renderdoc_poll_captures();
 	dwTimeContinual = TimerMM.GetElapsed_ms() - app_inactive_time;
 	svp_render_only_frame = false;
 	static const bool legacy_pip_tick = strstr(Core.Params, "-pip_legacy_tick") != nullptr;
@@ -1312,6 +1554,8 @@ void CRenderDevice::FrameMove()
 
 	// Frame move
 	Statistic->EngineTOTAL.Begin();
+
+	ShaderBus::frame_latch();
 
 	START_PROFILE("Process seqFrame");
 	const bool measure_precache_callbacks = pApp && pApp->LoadSessionMeasurePrecache();
@@ -1408,6 +1652,10 @@ bool CRenderDevice::Paused()
 
 void CRenderDevice::OnWM_Activate(WPARAM wParam, LPARAM lParam)
 {
+	// Window activation messages can arrive before input creation or after its destruction.
+	if (!pInput)
+		return;
+
 	u16 fActive = LOWORD(wParam);
 	BOOL fMinimized = (BOOL)HIWORD(wParam);
 	BOOL bActive = ((fActive != WA_INACTIVE) && (!fMinimized)) ? TRUE : FALSE;

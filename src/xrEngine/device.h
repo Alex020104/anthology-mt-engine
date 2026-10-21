@@ -8,9 +8,12 @@
 //class ENGINE_API CGammaControl;
 
 #include "pure.h"
+#include "../xrCore/xrSyncronize.h"
 //#include "hw.h"
 #include "../xrcore/ftimer.h"
 #include "stats.h"
+#include "LuaGCController.h"
+#include "FramePacer.h"
 //#include "shader.h"
 //#include "R_Backend.h"
 
@@ -309,6 +312,12 @@ public:
 	xr_vector<xr_delegate<void()>> seqParallelRender;
 	xr_vector<xr_delegate<void()>> seqParallelBeforRender;
 
+	// seqParallelBeforRender is filled from the particle worker thread
+	// (CParticleGroup::SItem::OnFrame) and drained on the main thread in
+	// CRenderDevice::on_idle(). Guard every access with this section.
+	// Same pattern as CEventAPI::CS and CEffect_Rain::rainCS.
+	xrCriticalSection seqParallelBeforRenderCS;
+
 	xr_delegate<void()> ParticleWorkerCallback;
 	xr_delegate<void()> ModelDefferClear;
 
@@ -320,6 +329,9 @@ public:
     xr_delegate<int()> LuaGC;
     xr_delegate<void()> LuaGCFull;
     xr_delegate<void()> LuaGCDebug;
+    xr_delegate<void(bool)> LuaGCPrepare;
+    xr_delegate<LuaGCInfo()> LuaGCReadInfo;
+    u32 LuaGCUsec = 0;
 
 	// Dependent classes
 	//CResourceManager* Resources;
@@ -535,6 +547,62 @@ public:
 		seqParallel.push_back(delegate);
 		seqParallelNames.push_back(name ? name : "legacy");
 	}
+
+    // AOE Present pacing, shared by all renderer backends.
+    void ResetFramePacing();
+    void BeginFramePacing();
+    bool HasPresentSlack() const;
+    void BeforePresent();
+    void AfterPresent(bool accepted);
+
+    void StartGameLogic();
+    void WaitForGameLogic();
+    void JoinGameLogic(LuaGCStopReason reason = LuaGCStopReason::FrameBarrier);
+    bool IsGameLogicThread() const;
+    bool CanContinueGameLogicWork() const;
+    bool IsMainThread() const { return GetCurrentThreadId() == frame_main_thread; }
+    void BeginLuaGCFrame();
+    void FinishLuaGCFrame();
+    void StopLuaGCWindow(LuaGCStopReason reason);
+    void ResumeLuaGCForRender();
+    void ResetLuaGCState();
+    void ShutdownLuaGCWorker();
+    void LuaGCAllocationSafePoint(u64 callback_ticks);
+    bool LuaGCAlwaysActive() const;
+    bool LuaGCAutomaticAllowed() const;
+    u32 LuaGCGeneration() const { return lua_gc_generation; }
+
+private:
+    FramePacerClock frame_pacer;
+    FramePacerWait frame_pacer_wait;
+    FramePacerClock::Sample frame_pacer_sample;
+    FramePacerWait::Sample frame_pacer_wait_sample;
+    u64 frame_pacer_wait_start = 0, frame_pacer_present_start = 0, frame_pacer_target = 0;
+    unsigned frame_pacer_menu_rate = 0;
+    HMONITOR frame_pacer_menu_monitor = nullptr;
+    bool frame_pacer_in_frame = false;
+
+    const DWORD frame_main_thread = GetCurrentThreadId();
+    alignas(8) NativeWorkerPool native_gc_pool{1};
+    alignas(8) LuaGCFrameWorker game_logic_worker;
+    std::atomic_bool game_logic_pending{false};
+    std::atomic_bool lua_gc_working{false};
+    LuaGCWindow lua_gc_window;
+    LuaGCHealthPolicy lua_gc_health;
+    LuaGCEmergencyPolicy lua_gc_policy;
+    LuaGCPressurePolicy lua_gc_pressure_policy;
+    bool lua_gc_always_frame = false;
+    bool lua_gc_render_resumed = false;
+    bool game_logic_gc_only = false;
+    bool lua_gc_emergency_work = false;
+    bool lua_gc_pressure_work = false;
+    bool lua_gc_readers_joined = false;
+    u64 lua_gc_pressure_deadline = 0;
+    u32 lua_gc_generation = 1;
+    static void RunGameLogicWork(void* context);
+    void RunLuaGCSteps();
+    void JoinLuaGCReaders();
+public:
 
 	ICF void remove_from_seq_parallel(const xr_delegate<void()>& delegate)
 	{

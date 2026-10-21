@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/RenderContext.h"
+#endif
 #pragma hdrstop
 
 #pragma warning(push)
@@ -7,11 +10,13 @@
 #pragma warning(pop)
 
 #include "ResourceManager.h"
+#include "RenderDimensions.h"
 #include "blenders\Blender_Recorder.h"
 #include "blenders\Blender.h"
 
 #include "../../xrEngine/igame_persistent.h"
 #include "../../xrEngine/environment.h"
+#include "../../xrEngine/shader_bus.h"
 
 #include "dxRenderDeviceRender.h"
 #include "xrRender_console.h"
@@ -20,9 +25,15 @@
 #include "../xrRenderPC_R4/UpscalerRuntime.h"
 #endif
 
+class NativeConstantSetup : public R_constant_setup
+{
+public:
+    bool parallel_safe() const override { return true; }
+};
+
 // matrices
 #define	BIND_DECLARE(xf)	\
-class cl_xform_##xf	: public R_constant_setup {	virtual void setup (R_constant* C) { RCache.xforms.set_c_##xf (C); } }; \
+class cl_xform_##xf	: public NativeConstantSetup {	virtual void setup (R_constant* C) { RCache.xforms.set_c_##xf (C); } }; \
 	static cl_xform_##xf	binder_##xf
 BIND_DECLARE(w);
 BIND_DECLARE(invw);
@@ -31,6 +42,17 @@ BIND_DECLARE(p);
 BIND_DECLARE(wv);
 BIND_DECLARE(vp);
 BIND_DECLARE(wvp);
+#if defined(USE_DX11) && RENDER == R_R4
+bool IsNativeParticleMatrix(R_constant* constant, bool vp)
+{
+    return constant && constant->handler == (vp ? static_cast<R_constant_setup*>(&binder_vp) : &binder_wvp);
+}
+
+bool IsNativeShadowMatrix(R_constant* constant)
+{
+    return constant && constant->handler == &binder_wvp && constant->name == "m_WVP";
+}
+#endif
 
 BIND_DECLARE(v_prev);
 BIND_DECLARE(p_prev);
@@ -39,7 +61,7 @@ BIND_DECLARE(vp_prev);
 BIND_DECLARE(wvp_prev);
 
 #define DECLARE_TREE_BIND(c)	\
-	class cl_tree_##c: public R_constant_setup	{virtual void setup(R_constant* C) {RCache.tree.set_c_##c(C);} };	\
+	class cl_tree_##c: public NativeConstantSetup	{virtual void setup(R_constant* C) {RCache.tree.set_c_##c(C);} };	\
 	static cl_tree_##c	tree_binder_##c
 
 DECLARE_TREE_BIND(m_xform_v);
@@ -50,29 +72,42 @@ DECLARE_TREE_BIND(wind);
 DECLARE_TREE_BIND(c_scale);
 DECLARE_TREE_BIND(c_bias);
 DECLARE_TREE_BIND(c_sun);
+#if defined(USE_DX11) && RENDER == R_R4
+bool NativeShadowHandlers(const R_constant_table* table)
+{
+    if (!table) return true;
+    R_constant_setup* pure[] = {&binder_w, &binder_invw, &binder_v, &binder_p, &binder_wv, &binder_vp, &binder_wvp,
+        &binder_v_prev, &binder_p_prev, &binder_wv_prev, &binder_vp_prev, &binder_wvp_prev,
+        &tree_binder_m_xform_v, &tree_binder_m_xform, &tree_binder_consts, &tree_binder_wave, &tree_binder_wind,
+        &tree_binder_c_scale, &tree_binder_c_bias, &tree_binder_c_sun};
+    for (const auto& constant : table->table)
+        if (constant->handler && std::find(std::begin(pure), std::end(pure), constant->handler) == std::end(pure)) return false;
+    return true;
+}
+#endif
 
-class cl_hemi_cube_pos_faces : public R_constant_setup
+class cl_hemi_cube_pos_faces : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C) { RCache.hemi.set_c_pos_faces(C); }
 };
 
 static cl_hemi_cube_pos_faces binder_hemi_cube_pos_faces;
 
-class cl_hemi_cube_neg_faces : public R_constant_setup
+class cl_hemi_cube_neg_faces : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C) { RCache.hemi.set_c_neg_faces(C); }
 };
 
 static cl_hemi_cube_neg_faces binder_hemi_cube_neg_faces;
 
-class cl_material : public R_constant_setup
+class cl_material : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C) { RCache.hemi.set_c_material(C); }
 };
 
 static cl_material binder_material;
 
-class cl_texgen : public R_constant_setup
+class cl_texgen : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -108,7 +143,7 @@ class cl_texgen : public R_constant_setup
 
 static cl_texgen binder_texgen;
 
-class cl_VPtexgen : public R_constant_setup
+class cl_VPtexgen : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -146,18 +181,20 @@ static cl_VPtexgen binder_VPtexgen;
 
 // fog
 #ifndef _EDITOR
-class cl_fog_plane : public R_constant_setup
+class cl_fog_plane : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			// Plane
 			Fvector4 plane;
-			Fmatrix& M = Device.mFullTransform;
+#if defined(USE_DX11) && RENDER == R_R4
+            const Fmatrix& M = RenderCameraFullTransform();
+#else
+            const Fmatrix& M = Device.mFullTransform;
+#endif
 			plane.x = -(M._14 + M._13);
 			plane.y = -(M._24 + M._23);
 			plane.z = -(M._34 + M._33);
@@ -177,14 +214,12 @@ class cl_fog_plane : public R_constant_setup
 static cl_fog_plane binder_fog_plane;
 
 // fog-params
-class cl_fog_params : public R_constant_setup
+class cl_fog_params : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			// Near/Far
 			float n = g_pGamePersistent->Environment().CurrentEnv->fog_near;
@@ -199,14 +234,12 @@ class cl_fog_params : public R_constant_setup
 static cl_fog_params binder_fog_params;
 
 // fog-color
-class cl_fog_color : public R_constant_setup
+class cl_fog_color : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			CEnvDescriptor& desc = *g_pGamePersistent->Environment().CurrentEnv;
 			result.set(desc.fog_color.x, desc.fog_color.y, desc.fog_color.z, desc.fog_density);
@@ -217,14 +250,12 @@ class cl_fog_color : public R_constant_setup
 
 static cl_fog_color binder_fog_color;
 
-static class cl_wind_params : public R_constant_setup
+static class cl_wind_params : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			CEnvDescriptor& E = *g_pGamePersistent->Environment().CurrentEnv;
 			result.set(E.wind_direction, E.wind_velocity, 0.0f, 0.0f);
@@ -237,7 +268,7 @@ static class cl_wind_params : public R_constant_setup
 
 
 // times
-class cl_times : public R_constant_setup
+class cl_times : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -249,7 +280,7 @@ class cl_times : public R_constant_setup
 static cl_times binder_times;
 
 // game time
-class cl_game_times : public R_constant_setup
+class cl_game_times : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -261,7 +292,7 @@ class cl_game_times : public R_constant_setup
 static cl_game_times binder_game_times;
 
 // eye-params
-class cl_eye_P : public R_constant_setup
+class cl_eye_P : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -290,7 +321,7 @@ class cl_eye_PL : public R_constant_setup
 static cl_eye_PL binder_eye_PL;
 
 // eye-params
-class cl_eye_D : public R_constant_setup
+class cl_eye_D : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -315,7 +346,7 @@ class cl_eye_DL : public R_constant_setup
 static cl_eye_DL binder_eye_DL;
 
 // eye-params
-class cl_eye_N : public R_constant_setup
+class cl_eye_N : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -332,7 +363,7 @@ extern float scope_outerblur;
 extern float scope_innerblur;
 extern float scope_scrollpower;
 extern float scope_brightness;
-class cl_fakescope_params : public R_constant_setup
+class cl_fakescope_params : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -345,7 +376,7 @@ extern float scope_ca;
 extern float scope_fog_attack;
 extern float scope_fog_mattack;
 //extern float scope_fog_travel;
-class cl_fakescope_ca : public R_constant_setup
+class cl_fakescope_ca : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -358,7 +389,7 @@ extern float scope_radius;
 extern float scope_fog_radius;
 extern float scope_fog_sharp;
 //extern float scope_drift_amount;
-class cl_fakescope_params3 : public R_constant_setup
+class cl_fakescope_params3 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -372,7 +403,7 @@ extern int ps_markswitch_current;
 extern int ps_markswitch_count;
 extern Fvector4 ps_markswitch_color;
 
-static class markswitch_current : public R_constant_setup
+static class markswitch_current : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -380,7 +411,7 @@ static class markswitch_current : public R_constant_setup
 	}
 }    markswitch_current;
 
-static class markswitch_count : public R_constant_setup
+static class markswitch_count : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -388,7 +419,7 @@ static class markswitch_count : public R_constant_setup
 	}
 }    markswitch_count;
 
-static class markswitch_color : public R_constant_setup
+static class markswitch_color : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -402,7 +433,7 @@ extern Fvector4 ps_s3ds_param_2;
 extern Fvector4 ps_s3ds_param_3;
 extern Fvector4 ps_s3ds_param_4;
 
-static class s3ds_param_1 : public R_constant_setup
+static class s3ds_param_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -410,7 +441,7 @@ static class s3ds_param_1 : public R_constant_setup
 	}
 }    s3ds_param_1;
 
-static class s3ds_param_2 : public R_constant_setup
+static class s3ds_param_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -418,7 +449,7 @@ static class s3ds_param_2 : public R_constant_setup
 	}
 }    s3ds_param_2;
 
-static class s3ds_param_3 : public R_constant_setup
+static class s3ds_param_3 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -426,7 +457,7 @@ static class s3ds_param_3 : public R_constant_setup
 	}
 }    s3ds_param_3;
 
-static class s3ds_param_4 : public R_constant_setup
+static class s3ds_param_4 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -434,8 +465,244 @@ static class s3ds_param_4 : public R_constant_setup
 	}
 }    s3ds_param_4;
 
+// Lightweight scope constants: choose channel roles on the CPU, keeping ps_2_0 small.
+static float scope_zoom_part()
+{
+    const Fvector4& fov = g_pGamePersistent->m_pGShaderConstants->hud_fov_params;
+    const float minFov = fov.y * 0.75f;
+    const float maxFov = fov.x * 0.75f;
+    return fis_zero(maxFov - minFov) ? 0.f :
+        clampr((Device.fFOV - minFov) / (maxFov - minFov), 0.f, 1.f);
+}
+
+static float scope_light_level()
+{
+    // R1 has no HDR exposure target; approximate daylight with the existing environment colors.
+    const CEnvDescriptor& env = *g_pGamePersistent->Environment().CurrentEnv;
+    return clampr((env.ambient.x + env.ambient.y + env.ambient.z +
+        env.hemi_color.x + env.hemi_color.y + env.hemi_color.z +
+        env.sun_color.x + env.sun_color.y + env.sun_color.z) / 3.f, 0.f, 1.f);
+}
+
+static class scope_lens_params : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float aim = clampr(g_pGamePersistent->m_pGShaderConstants->hud_params.x, 0.f, 1.f);
+        const float factor = _max(ps_s3ds_param_2.w, 1.f);
+        const float part = int(ps_s3ds_param_2.z) ? scope_zoom_part() : 1.f;
+        const float zoom = 1.f + (0.2f * factor - 0.2f) * aim * part;
+        const float shift = (0.8f * factor - 0.8f) * aim * part;
+        const float aspect = float(RDEVICE.dwHeight) / _max(float(RDEVICE.dwWidth), 1.f);
+        RCache.set_c(C, 1.f / zoom, shift * aspect, shift, 0.f);
+    }
+} binder_scope_lens_params;
+
+static class scope_reticle_mode : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const int type = int(ps_s3ds_param_3.y);
+        float rgb = 1.f, led = 0.f, alpha = 1.f, over = 1.f;
+        if (type == 1 || type == 5)
+        {
+            rgb = 0.f;
+            led = 1.f;
+        }
+        else if (type == 2 || type == 3 || type == 4 || type == 9)
+        {
+            rgb = 0.f;
+            alpha = 0.f;
+        }
+        else if (type == 7)
+            over = 0.f;
+        RCache.set_c(C, rgb, led, alpha, over);
+    }
+} binder_scope_reticle_mode;
+
+static class scope_reticle_masks : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const int type = int(ps_s3ds_param_3.y);
+        float black = 0.f, green = 0.f, blue = 0.f, text = 0.f;
+        if (type == 2 || type == 3 || type == 9)
+        {
+            black = green = 1.f;
+            text = type == 3 ? 1.f : 0.f;
+        }
+        else if (type == 4)
+        {
+            black = 1.f;
+            green = ps_markswitch_current == 1 ? 1.f : 0.f;
+            blue = ps_markswitch_current == 2 ? 1.f : 0.f;
+        }
+        RCache.set_c(C, black, green, blue, text);
+    }
+} binder_scope_reticle_masks;
+
+static class scope_reticle_projection : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const int type = int(ps_s3ds_param_3.y);
+        const Fvector4& fov = g_pGamePersistent->m_pGShaderConstants->hud_fov_params;
+        const float minFov = fov.y * 0.75f;
+        const float maxFov = fov.x * 0.75f;
+        const float currentFov = Device.fFOV;
+        const float zoom = currentFov > EPS_S ? _max(minFov / currentFov, 1.f) : 1.f;
+        const bool ffp = int(ps_s3ds_param_1.w) != 0 || type == 5 || type == 9;
+        const float inverseSize = 1.f / _max(ps_s3ds_param_1.x, 0.001f);
+        float cosine = 1.f, sine = 0.f;
+        if (type == 5)
+        {
+            const float part = fis_zero(maxFov - minFov) ? 0.f :
+                clampr((currentFov - minFov) / (maxFov - minFov), 0.f, 1.f);
+            const float angle = -PI * (part + 0.053f) / 1.053f;
+            cosine = _cos(angle);
+            sine = _sin(angle);
+        }
+        RCache.set_c(C, inverseSize / (ffp ? zoom : 1.f), inverseSize, cosine, sine);
+    }
+} binder_scope_reticle_projection;
+
+static class scope_shadow_params : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float aim = clampr(g_pGamePersistent->m_pGShaderConstants->hud_params.x, 0.f, 1.f);
+        const int settings = int(ps_s3ds_param_4.w);
+        const int type = int(ps_s3ds_param_3.y);
+        const float pupil = _max(ps_s3ds_param_1.z * ((settings & 4) ? 1.f : aim), 0.001f);
+        const float minFov = g_pGamePersistent->m_pGShaderConstants->hud_fov_params.y * 0.75f;
+        const float zoom = Device.fFOV > EPS_S ? _max(minFov / Device.fFOV, 1.f) : 1.f;
+        const float opacity = type == 6 || type == 8 ? 0.f : ((settings & 2) ? 1.f : 1.f - aim);
+        RCache.set_c(C, ps_s3ds_param_1.y, 1.f / pupil, 1.f / (0.15f + 0.02f * (zoom - 1.f)), opacity);
+    }
+} binder_scope_shadow_params;
+
+static class scope_reticle_color : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float aim = clampr(g_pGamePersistent->m_pGShaderConstants->hud_params.x, 0.f, 1.f);
+        const float fade = (int(ps_s3ds_param_4.w) & 4) ? 1.f : aim;
+        const bool acog = int(ps_s3ds_param_3.y) == 3;
+        const float light = acog ? scope_light_level() : 1.f;
+        const float led = fade * (acog ? _max(0.2f, light * 2.f) : 1.f);
+        RCache.set_c(C, ps_markswitch_color.x * led, ps_markswitch_color.y * led,
+            ps_markswitch_color.z * led, 0.3f * light * fade);
+    }
+} binder_scope_reticle_color;
+
+static class scope_reticle_optics : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float minFov = g_pGamePersistent->m_pGShaderConstants->hud_fov_params.y * 0.75f;
+        const float zoom = Device.fFOV > EPS_S ? _max(minFov / Device.fFOV, 1.f) : 1.f;
+        const bool flat = int(ps_s3ds_param_3.y) == 8;
+        const float aim = clampr(g_pGamePersistent->m_pGShaderConstants->hud_params.x, 0.f, 1.f);
+        const float fade = (int(ps_s3ds_param_4.w) & 4) ? 1.f : aim;
+        RCache.set_c(C, flat ? 0.f : 10.f, flat ? 0.f : 3.f / zoom, fade, 0.f);
+    }
+} binder_scope_reticle_optics;
+
+static class scope_lens_color : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float nvg = int(ps_s3ds_param_3.x) == 1 && ps_markswitch_current == 0 ? 1.f : 0.f;
+        RCache.set_c(C, ps_s3ds_param_4.x, ps_s3ds_param_4.y, ps_s3ds_param_4.z, nvg);
+    }
+} binder_scope_lens_color;
+
+#if RENDER == R_R1 || RENDER == R_R2
+static class r1_laser_distance : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        // ponytail: use the existing camera pick; per-pixel surface distance needs a position buffer.
+        const float distance = g_pGamePersistent->m_pGShaderConstants->hud_target_distance;
+        RCache.set_c(C, _valid(distance) && distance > EPS_S ? distance : 100.f, 0.f, 0.f, 0.f);
+    }
+} binder_r1_laser_distance;
+
+static class scope_thermal_params : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float minFov = g_pGamePersistent->m_pGShaderConstants->hud_fov_params.y * 0.75f;
+        const float zoom = Device.fFOV > EPS_S ? _max(minFov / Device.fFOV, 1.f) : 1.f;
+        const float pixel = (int(ps_s3ds_param_4.w) & 8) ? _max(floorf(zoom), 1.f) : 1.f;
+        RCache.set_c(C, ps_markswitch_current == 1 ? 1.f : 0.f,
+            int(ps_s3ds_param_3.x) == 3 ? 1.f : 0.f, pixel, 0.f);
+    }
+} binder_scope_thermal_params;
+#endif
+
+static class scope_transition : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float part = scope_zoom_part();
+        const float smooth = part * part * (3.f - 2.f * part);
+        RCache.set_c(C, smooth, int(ps_s3ds_param_3.y) == 4 ? 1.f : 0.f, 0.5f + smooth * 3.f, -2.5f + smooth * 3.f);
+    }
+} binder_scope_transition;
+
+static class scope_surface_params : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const int type = int(ps_s3ds_param_3.y);
+        const float inside = type != 3 && type != 4 && type != 6 && type != 8 && !int(ps_s3ds_param_1.w) ? 1.f : 0.f;
+        RCache.set_c(C, inside, clampr(ps_s3ds_param_3.z, 0.f, 1.f), 1.5f * scope_light_level(), 0.f);
+    }
+} binder_scope_surface_params;
+
+static class scope_surface_light : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        const float light = scope_light_level();
+        RCache.set_c(C, light * 2.f, light * 2.f, light * 2.f, light);
+    }
+} binder_scope_surface_light;
+
+static void set_reticle_atlas(R_constant* C, bool enabled)
+{
+    int sides = 1, index = 0;
+    if (enabled)
+    {
+        const int count = _max(ps_markswitch_count, 1);
+        while (sides * sides < count)
+            ++sides;
+        index = clampr(ps_markswitch_current, 0, count - 1);
+    }
+    const float scale = 1.f / sides;
+    RCache.set_c(C, scale, scale, (index % sides) * scale, (index / sides) * scale);
+}
+
+static class scope_reticle_atlas : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        // ms_count usually counts color choices. Only type 10 selects an atlas cell.
+        set_reticle_atlas(C, int(ps_s3ds_param_3.y) == 10);
+    }
+} binder_scope_reticle_atlas;
+
+static class reflex_reticle_atlas : public NativeConstantSetup
+{
+    virtual void setup(R_constant* C)
+    {
+        set_reticle_atlas(C, true);
+    }
+} binder_reflex_reticle_atlas;
+
 //--DSR-- SilencerOverheat_start
-static class cl_silencer_glowing : public R_constant_setup
+static class cl_silencer_glowing : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -481,7 +748,7 @@ static class cl_heatvision_hotness : public R_constant_setup
 	}
 } binder_heatvision_hotness;
 
-static class cl_heatvision_steps : public R_constant_setup
+static class cl_heatvision_steps : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -489,7 +756,7 @@ static class cl_heatvision_steps : public R_constant_setup
 	}
 } binder_heatvision_params1;
 
-static class cl_heatvision_blurring : public R_constant_setup
+static class cl_heatvision_blurring : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -505,7 +772,7 @@ static class cl_heatvision_blurring : public R_constant_setup
 	}
 } binder_heatvision_params2;
 
-static class cl_heatvision_args1 : public R_constant_setup
+static class cl_heatvision_args1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -521,7 +788,7 @@ static class cl_heatvision_args1 : public R_constant_setup
 	}
 } binder_heatvision_args1;
 
-static class cl_heatvision_args2 : public R_constant_setup
+static class cl_heatvision_args2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -540,14 +807,12 @@ static class cl_heatvision_args2 : public R_constant_setup
 
 #ifndef _EDITOR
 // D-Light0
-class cl_sun0_color : public R_constant_setup
+class cl_sun0_color : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			CEnvDescriptor& desc = *g_pGamePersistent->Environment().CurrentEnv;
 			#if RENDER==R_R1 //Lumscale control for R1
@@ -562,14 +827,12 @@ class cl_sun0_color : public R_constant_setup
 
 static cl_sun0_color binder_sun0_color;
 
-class cl_sun0_dir_w : public R_constant_setup
+class cl_sun0_dir_w : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			CEnvDescriptor& desc = *g_pGamePersistent->Environment().CurrentEnv;
 			result.set(desc.sun_dir.x, desc.sun_dir.y, desc.sun_dir.z, 0);
@@ -580,18 +843,20 @@ class cl_sun0_dir_w : public R_constant_setup
 
 static cl_sun0_dir_w binder_sun0_dir_w;
 
-class cl_sun0_dir_e : public R_constant_setup
+class cl_sun0_dir_e : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			Fvector D;
 			CEnvDescriptor& desc = *g_pGamePersistent->Environment().CurrentEnv;
-			Device.mView.transform_dir(D, desc.sun_dir);
+#if defined(USE_DX11) && RENDER == R_R4
+            RenderCameraView().transform_dir(D, desc.sun_dir);
+#else
+            Device.mView.transform_dir(D, desc.sun_dir);
+#endif
 			D.normalize();
 			result.set(D.x, D.y, D.z, 0);
 		}
@@ -602,14 +867,12 @@ class cl_sun0_dir_e : public R_constant_setup
 static cl_sun0_dir_e binder_sun0_dir_e;
 
 //
-class cl_amb_color : public R_constant_setup
+class cl_amb_color : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			CEnvDescriptorMixer& desc = *g_pGamePersistent->Environment().CurrentEnv;
 			result.set(desc.ambient.x, desc.ambient.y, desc.ambient.z, desc.weight);
@@ -620,14 +883,12 @@ class cl_amb_color : public R_constant_setup
 
 static cl_amb_color binder_amb_color;
 
-class cl_hemi_color : public R_constant_setup
+class cl_hemi_color : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			CEnvDescriptor& desc = *g_pGamePersistent->Environment().CurrentEnv;
 			result.set(desc.hemi_color.x, desc.hemi_color.y, desc.hemi_color.z, desc.hemi_color.w);
@@ -638,14 +899,12 @@ class cl_hemi_color : public R_constant_setup
 
 static cl_hemi_color binder_hemi_color;
 
-class cl_sky_color : public R_constant_setup
+class cl_sky_color : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
-		if (marker != Device.dwFrame)
+        Fvector4 result;
 		{
 			CEnvDescriptor& desc = *g_pGamePersistent->Environment().CurrentEnv;
 			result.set(desc.sky_color.x, desc.sky_color.y, desc.sky_color.z, desc.sky_rotation);
@@ -656,10 +915,15 @@ class cl_sky_color : public R_constant_setup
 static cl_sky_color binder_sky_color;
 #endif
 
-static class cl_screen_res : public R_constant_setup
+static class cl_screen_res : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
+#if defined(USE_DX11) && RENDER == R_R4
+        Fvector4 value;
+        if (ContextScreenResolution(value)) { RCache.set_c(C, value); return; }
+#endif
+
 		float width = (float)RDEVICE.dwWidth;
 		float height = (float)RDEVICE.dwHeight;
 
@@ -686,12 +950,12 @@ static class cl_screen_res : public R_constant_setup
 	}
 } binder_screen_res;
 
-static class cl_screen_params : public R_constant_setup
+static class cl_screen_params : public NativeConstantSetup
 {
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
+        Fvector4 result;
 		float fov = float(Device.fFOV);
 		float aspect = float(Device.fASPECT);
 		result.set(fov, aspect, tan(deg2rad(fov) / 2), g_pGamePersistent->Environment().CurrentEnv->far_plane * 0.75f);
@@ -701,7 +965,7 @@ static class cl_screen_params : public R_constant_setup
 
 static cl_screen_params binder_screen_params;
 
-static class cl_hud_params : public R_constant_setup //--#SM+#--
+static class cl_hud_params : public NativeConstantSetup //--#SM+#--
 {
 	virtual void setup(R_constant* C)
 	{
@@ -709,7 +973,7 @@ static class cl_hud_params : public R_constant_setup //--#SM+#--
 	}
 }	binder_hud_params;
 
-static class cl_hud_fov_params : public R_constant_setup
+static class cl_hud_fov_params : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -717,7 +981,7 @@ static class cl_hud_fov_params : public R_constant_setup
 	}
 }	binder_hud_fov_params;
 
-static class cl_script_params : public R_constant_setup //--#SM+#--
+static class cl_script_params : public NativeConstantSetup //--#SM+#--
 {
 	virtual void setup(R_constant* C)
 	{
@@ -725,18 +989,23 @@ static class cl_script_params : public R_constant_setup //--#SM+#--
 	}
 }	binder_script_params;
 
-static class cl_blend_mode : public R_constant_setup //--#SM+#--
+static class cl_blend_mode : public NativeConstantSetup //--#SM+#--
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, g_pGamePersistent->m_pGShaderConstants->m_blender_mode);
+        const auto& source = g_pGamePersistent->m_pGShaderConstants->m_blender_mode;
+        Fvector4 mode;
+#if RENDER == R_R4
+        if (RenderContextId()) mode.set(source.x, source.y, source.z, RCache.recording_grass ? 1.f : 0.f);
+        else
+#endif
+            mode = source;
+        RCache.set_c(C, mode);
 	}
 }	binder_blend_mode;
 
-static class cl_rain_params : public R_constant_setup
+static class cl_rain_params : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
@@ -747,10 +1016,8 @@ static class cl_rain_params : public R_constant_setup
 	}
 } binder_rain_params;
 
-static class cl_actor_params : public R_constant_setup
+static class cl_actor_params : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
@@ -763,17 +1030,21 @@ static class cl_actor_params : public R_constant_setup
 	}
 } binder_actor_data;
 
-static class cl_inv_v : public R_constant_setup
+static class cl_inv_v : public NativeConstantSetup
 {
 	u32	marker;
 
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, Device.mInvView);
+#if defined(USE_DX11) && RENDER == R_R4
+        RCache.set_c(C, RenderCameraInverseView());
+#else
+        RCache.set_c(C, Device.mInvView);
+#endif
 	}
 } binder_inv_v;
 
-static class pp_image_corrections : public R_constant_setup
+static class pp_image_corrections : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -781,7 +1052,7 @@ static class pp_image_corrections : public R_constant_setup
 	}
 } pp_image_corrections;
 
-static class pp_color_grading : public R_constant_setup
+static class pp_color_grading : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -789,10 +1060,8 @@ static class pp_color_grading : public R_constant_setup
 	}
 } pp_color_grading;
 
-static class cl_pda_params : public R_constant_setup
+static class cl_pda_params : public NativeConstantSetup
 {
-	u32 marker;
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
@@ -804,12 +1073,12 @@ static class cl_pda_params : public R_constant_setup
 
 } binder_pda_params;
 
-static class cl_near_far_plane : public R_constant_setup
+static class cl_near_far_plane : public NativeConstantSetup
 {
-	Fvector4 result;
 
 	virtual void setup(R_constant* C)
 	{
+        Fvector4 result;
 		float nearPlane = float(VIEWPORT_NEAR);
 		float farPlane = g_pGamePersistent->Environment().CurrentEnv->far_plane;
 		result.set(nearPlane, farPlane, 0, 0);
@@ -874,7 +1143,7 @@ extern Fvector4 ps_dev_param_6;
 extern Fvector4 ps_dev_param_7;
 extern Fvector4 ps_dev_param_8;
 
-static class dev_param_1 : public R_constant_setup
+static class dev_param_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -882,7 +1151,7 @@ static class dev_param_1 : public R_constant_setup
 	}
 }    dev_param_1;
 
-static class dev_param_2 : public R_constant_setup
+static class dev_param_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -890,7 +1159,7 @@ static class dev_param_2 : public R_constant_setup
 	}
 }    dev_param_2;
 
-static class dev_param_3 : public R_constant_setup
+static class dev_param_3 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -898,7 +1167,7 @@ static class dev_param_3 : public R_constant_setup
 	}
 }    dev_param_3;
 
-static class dev_param_4 : public R_constant_setup
+static class dev_param_4 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -906,7 +1175,7 @@ static class dev_param_4 : public R_constant_setup
 	}
 }    dev_param_4;
 
-static class dev_param_5 : public R_constant_setup
+static class dev_param_5 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -914,7 +1183,7 @@ static class dev_param_5 : public R_constant_setup
 	}
 }    dev_param_5;
 
-static class dev_param_6 : public R_constant_setup
+static class dev_param_6 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -922,7 +1191,7 @@ static class dev_param_6 : public R_constant_setup
 	}
 }    dev_param_6;
 
-static class dev_param_7 : public R_constant_setup
+static class dev_param_7 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -930,7 +1199,7 @@ static class dev_param_7 : public R_constant_setup
 	}
 }    dev_param_7;
 
-static class dev_param_8 : public R_constant_setup
+static class dev_param_8 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -938,7 +1207,7 @@ static class dev_param_8 : public R_constant_setup
 	}
 }    dev_param_8;
 
-static class ssfx_wpn_dof_1 : public R_constant_setup
+static class ssfx_wpn_dof_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -946,7 +1215,7 @@ static class ssfx_wpn_dof_1 : public R_constant_setup
 	}
 }    ssfx_wpn_dof_1;
 
-static class ssfx_wpn_dof_2 : public R_constant_setup
+static class ssfx_wpn_dof_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -954,7 +1223,7 @@ static class ssfx_wpn_dof_2 : public R_constant_setup
 	}
 }    ssfx_wpn_dof_2;
 
-static class ssfx_blood_decals : public R_constant_setup
+static class ssfx_blood_decals : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -962,7 +1231,7 @@ static class ssfx_blood_decals : public R_constant_setup
 	}
 }    ssfx_blood_decals;
 
-static class ssfx_hud_drops_1 : public R_constant_setup
+static class ssfx_hud_drops_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -970,7 +1239,7 @@ static class ssfx_hud_drops_1 : public R_constant_setup
 	}
 }    ssfx_hud_drops_1;
 
-static class ssfx_hud_drops_2 : public R_constant_setup
+static class ssfx_hud_drops_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -978,7 +1247,7 @@ static class ssfx_hud_drops_2 : public R_constant_setup
 	}
 }    ssfx_hud_drops_2;
 
-static class ssfx_lightsetup_1 : public R_constant_setup
+static class ssfx_lightsetup_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -986,7 +1255,7 @@ static class ssfx_lightsetup_1 : public R_constant_setup
 	}
 }    ssfx_lightsetup_1;
 
-static class ssfx_is_underground : public R_constant_setup
+static class ssfx_is_underground : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -994,7 +1263,7 @@ static class ssfx_is_underground : public R_constant_setup
 	}
 }    ssfx_is_underground;
 
-static class ssfx_wetsurfaces_1 : public R_constant_setup
+static class ssfx_wetsurfaces_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1002,7 +1271,7 @@ static class ssfx_wetsurfaces_1 : public R_constant_setup
 	}
 }    ssfx_wetsurfaces_1;
 
-static class ssfx_wetsurfaces_2 : public R_constant_setup
+static class ssfx_wetsurfaces_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1010,7 +1279,7 @@ static class ssfx_wetsurfaces_2 : public R_constant_setup
 	}
 }    ssfx_wetsurfaces_2;
 
-static class ssfx_gloss : public R_constant_setup
+static class ssfx_gloss : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1018,7 +1287,7 @@ static class ssfx_gloss : public R_constant_setup
 	}
 }    ssfx_gloss;
 
-static class ssfx_florafixes_1 : public R_constant_setup
+static class ssfx_florafixes_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1026,7 +1295,7 @@ static class ssfx_florafixes_1 : public R_constant_setup
 	}
 }    ssfx_florafixes_1;
 
-static class ssfx_florafixes_2 : public R_constant_setup
+static class ssfx_florafixes_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1042,7 +1311,7 @@ static class anthology_flora_style : public R_constant_setup
 	}
 } anthology_flora_style;
 
-static class ssfx_wind_grass : public R_constant_setup
+static class ssfx_wind_grass : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1050,7 +1319,7 @@ static class ssfx_wind_grass : public R_constant_setup
 	}
 }    ssfx_wind_grass;
 
-static class ssfx_wind_trees : public R_constant_setup
+static class ssfx_wind_trees : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1058,7 +1327,7 @@ static class ssfx_wind_trees : public R_constant_setup
 	}
 }    ssfx_wind_trees;
 
-static class ssfx_wind_anim : public R_constant_setup
+static class ssfx_wind_anim : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1066,7 +1335,7 @@ static class ssfx_wind_anim : public R_constant_setup
 	}
 }    ssfx_wind_anim;
 
-static class ssfx_wind_anim_prev : public R_constant_setup
+static class ssfx_wind_anim_prev : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1074,7 +1343,7 @@ static class ssfx_wind_anim_prev : public R_constant_setup
 	}
 }    ssfx_wind_anim_prev;
 
-static class ssfx_lut : public R_constant_setup
+static class ssfx_lut : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1082,7 +1351,7 @@ static class ssfx_lut : public R_constant_setup
 	}
 }    ssfx_lut;
 
-static class ssfx_shadow_bias : public R_constant_setup
+static class ssfx_shadow_bias : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1090,7 +1359,7 @@ static class ssfx_shadow_bias : public R_constant_setup
 	}
 }    ssfx_shadow_bias;
 
-static class ssfx_terrain_offset : public R_constant_setup
+static class ssfx_terrain_offset : public NativeConstantSetup
 {
 	virtual void setup(R_constant * C)
 	{
@@ -1098,7 +1367,7 @@ static class ssfx_terrain_offset : public R_constant_setup
 	}
 }    ssfx_terrain_offset;
 
-static class ssfx_ssr_2 : public R_constant_setup
+static class ssfx_ssr_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant * C)
 	{
@@ -1106,7 +1375,7 @@ static class ssfx_ssr_2 : public R_constant_setup
 	}
 }    ssfx_ssr_2;
 
-static class ssfx_volumetric : public R_constant_setup
+static class ssfx_volumetric : public NativeConstantSetup
 {
 	virtual void setup(R_constant * C)
 	{
@@ -1114,7 +1383,7 @@ static class ssfx_volumetric : public R_constant_setup
 	}
 }    ssfx_volumetric;
 
-static class ssfx_water : public R_constant_setup
+static class ssfx_water : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1122,7 +1391,7 @@ static class ssfx_water : public R_constant_setup
 	}
 }    ssfx_water;
 
-static class ssfx_water_setup1 : public R_constant_setup
+static class ssfx_water_setup1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1130,7 +1399,7 @@ static class ssfx_water_setup1 : public R_constant_setup
 	}
 }    ssfx_water_setup1;
 
-static class ssfx_water_setup2 : public R_constant_setup
+static class ssfx_water_setup2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1138,7 +1407,7 @@ static class ssfx_water_setup2 : public R_constant_setup
 	}
 }    ssfx_water_setup2;
 
-static class ssfx_ao : public R_constant_setup
+static class ssfx_ao : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1146,7 +1415,7 @@ static class ssfx_ao : public R_constant_setup
 	}
 }    ssfx_ao;
 
-static class ssfx_ao_setup1 : public R_constant_setup
+static class ssfx_ao_setup1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1154,7 +1423,7 @@ static class ssfx_ao_setup1 : public R_constant_setup
 	}
 }    ssfx_ao_setup1;
 
-static class ssfx_il : public R_constant_setup
+static class ssfx_il : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1162,7 +1431,7 @@ static class ssfx_il : public R_constant_setup
 	}
 }    ssfx_il;
 
-static class ssfx_il_setup1 : public R_constant_setup
+static class ssfx_il_setup1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1170,7 +1439,7 @@ static class ssfx_il_setup1 : public R_constant_setup
 	}
 }    ssfx_il_setup1;
 
-static class ssfx_hud_hemi : public R_constant_setup
+static class ssfx_hud_hemi : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1178,7 +1447,7 @@ static class ssfx_hud_hemi : public R_constant_setup
 	}
 }    ssfx_hud_hemi;
 
-static class ssfx_issvp : public R_constant_setup
+static class ssfx_issvp : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1348,7 +1617,7 @@ static class scope_lense_quality_setup : public R_constant_setup
 	}
 } scope_lense_quality;
 
-static class ssfx_bloom_1 : public R_constant_setup
+static class ssfx_bloom_1 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1370,7 +1639,7 @@ static class ssfx_bloom_1 : public R_constant_setup
 	}
 }    ssfx_bloom_1;
 
-static class ssfx_bloom_2 : public R_constant_setup
+static class ssfx_bloom_2 : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1378,7 +1647,7 @@ static class ssfx_bloom_2 : public R_constant_setup
 	}
 }    ssfx_bloom_2;
 
-static class ssfx_terrain_pom : public R_constant_setup
+static class ssfx_terrain_pom : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1386,7 +1655,7 @@ static class ssfx_terrain_pom : public R_constant_setup
 	}
 }    ssfx_terrain_pom;
 
-static class ssfx_pom : public R_constant_setup
+static class ssfx_pom : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1465,20 +1734,30 @@ Fvector2 GetPipMainViewJitterNdc()
 }
 #endif
 
-static class ssfx_jitter : public R_constant_setup
+static class ssfx_jitter : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
+#if defined(USE_DX11) && RENDER == R_R4
+        Fvector4 value;
+        if (ContextRenderJitter(value, false)) { RCache.set_c(C, value); return; }
+#endif
+
 		Fvector2 jitter = main_view_jitter_ndc();
         if (g_upscale_reticle_pass) jitter.set(0.f, 0.f);
 		RCache.set_c(C, jitter.x, jitter.y, ps_ssfx_taa.x, ps_ssfx_taa.w);
 	}
 }    ssfx_jitter;
 
-static class dlss_params : public R_constant_setup
+static class dlss_params : public NativeConstantSetup
 {
     virtual void setup(R_constant* C)
     {
+#if defined(USE_DX11) && RENDER == R_R4
+        Fvector4 value;
+        if (ContextUpscalerParameters(value)) { RCache.set_c(C, value); return; }
+#endif
+
         bool active = false;
 #ifdef USE_DX11
         active = g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame() && !g_upscale_reticle_pass &&
@@ -1488,10 +1767,15 @@ static class dlss_params : public R_constant_setup
     }
 } dlss_params;
 
-static class dlss_temporal_jitter : public R_constant_setup
+static class dlss_temporal_jitter : public NativeConstantSetup
 {
     virtual void setup(R_constant* C)
     {
+#if defined(USE_DX11) && RENDER == R_R4
+        Fvector4 value;
+        if (ContextRenderJitter(value, true)) { RCache.set_c(C, value); return; }
+#endif
+
         Fvector4 offset = {};
 #ifdef USE_DX11
         if (g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame())
@@ -1528,11 +1812,11 @@ static class ssfx_fTimeDelta : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
-		RCache.set_c(C, Device.fTimeDelta, 0, 0, 0);
+		RCache.set_c(C, Device.fTimeDelta, (float)Device.dwFrame, 0, 0);
 	}
 }    ssfx_fTimeDelta;
 
-static class ssfx_motionblur : public R_constant_setup
+static class ssfx_motionblur : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1540,7 +1824,7 @@ static class ssfx_motionblur : public R_constant_setup
 	}
 }    ssfx_motionblur;
 
-static class ssfx_fog : public R_constant_setup
+static class ssfx_fog : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1548,7 +1832,7 @@ static class ssfx_fog : public R_constant_setup
 	}
 }    ssfx_fog;
 
-static class ssfx_floravariation : public R_constant_setup
+static class ssfx_floravariation : public NativeConstantSetup
 {
 	virtual void setup(R_constant* C)
 	{
@@ -1601,7 +1885,7 @@ extern float ps_r4_hdr10_sun_dusk_begin;
 extern float ps_r4_hdr10_sun_dusk_end;
 
 #define DECL_BINDER4F(name, x, y, z, w) \
-	static class cl_##name : public R_constant_setup \
+	static class cl_##name : public NativeConstantSetup \
 	{ \
 		virtual void setup(R_constant* C) \
 		{ \
@@ -1690,13 +1974,107 @@ DECL_BINDER4F( binder_hdr10_parameters10,
 /* --- HDR10 Parameters --- */
 
 extern Fvector4 ps_vignette_control;
-static class vignette_control : public R_constant_setup
+static class vignette_control : public NativeConstantSetup
 {
 	virtual void setup(R_constant *C)
 	{
 		RCache.set_c(C, ps_vignette_control.x, ps_vignette_control.y, ps_vignette_control.z, ps_vignette_control.w);
 	}
 } vignette_control;
+
+class bus_binder : public NativeConstantSetup
+{
+    bool parallel_safe() const override { return false; }
+	ShaderBus::lane* lane;
+
+public:
+	bus_binder(ShaderBus::lane* l) : lane(l)
+	{
+	}
+
+	virtual void setup(R_constant* C)
+	{
+		lane->bound_frame = Device.dwFrame;
+		RCache.set_c(C, lane->bound.x, lane->bound.y, lane->bound.z, lane->bound.w);
+	}
+};
+
+// one binder per lane so the pass table dedup, which compares handler pointers, still matches
+static xr_vector<bus_binder*> bus_binders;
+
+// writes the lane's value on a table switch, each drawn object then writes its own
+class bus_object_binder : public NativeConstantSetup
+{
+    bool parallel_safe() const override { return false; }
+	ShaderBus::lane* lane;
+
+public:
+	bus_object_binder(ShaderBus::lane* l) : lane(l)
+	{
+	}
+
+	virtual void setup(R_constant* C)
+	{
+		lane->bound_frame = Device.dwFrame;
+		RCache.bus_object.map(C, lane);
+	}
+};
+
+static xr_vector<bus_object_binder*> bus_object_binders;
+
+#if defined(USE_DX10) || defined(USE_DX11)
+// copies every bound row, the setter zeroes declared rows past the last one set
+class bus_row_binder : public NativeConstantSetup
+{
+    bool parallel_safe() const override { return false; }
+	ShaderBus::lane* lane;
+
+public:
+	bus_row_binder(ShaderBus::lane* l) : lane(l)
+	{
+	}
+
+	virtual void setup(R_constant* C)
+	{
+		lane->bound_frame = Device.dwFrame;
+		if (lane->rows_bound.empty())
+			RCache.set_c_bytes(C, &lane->bound, sizeof(Fvector4));
+		else
+			RCache.set_c_bytes(C, &lane->rows_bound.front(), u32(lane->rows_bound.size() * sizeof(Fvector4)));
+	}
+};
+
+static xr_vector<bus_row_binder*> bus_row_binders;
+#endif
+
+static const u32 bus_stages[] = { RC_dest_pixel, RC_dest_vertex, RC_dest_geometry, RC_dest_hull, RC_dest_domain, RC_dest_compute };
+
+// declared size in 16 byte rows, the largest over every stage
+static u32 bus_rows(R_constant* C)
+{
+	u32 rows = 1;
+	for (u32 i = 0; i < sizeof(bus_stages) / sizeof(bus_stages[0]); ++i)
+		if (C->destination & bus_stages[i])
+			rows = _max(rows, (C->get_load(bus_stages[i]).size + 15) / 16);
+	return rows;
+}
+
+// the vector binder serves a constant only where every stage declares one float to float4
+static bool bus_fits_vector(R_constant* C)
+{
+	for (u32 i = 0; i < sizeof(bus_stages) / sizeof(bus_stages[0]); ++i)
+	{
+		if (!(C->destination & bus_stages[i]))
+			continue;
+
+		const R_constant_load& L = C->get_load(bus_stages[i]);
+		if (L.cls != RC_1x1 && L.cls != RC_1x2 && L.cls != RC_1x3 && L.cls != RC_1x4)
+			return false;
+		if (L.size > sizeof(Fvector4))
+			return false;
+	}
+	return true;
+}
 
 // Standart constant-binding
 void CBlender_Compile::SetMapping()
@@ -1872,6 +2250,31 @@ void CBlender_Compile::SetMapping()
 	r_Constant("s3ds_param_2", &s3ds_param_2);
 	r_Constant("s3ds_param_3", &s3ds_param_3);
 	r_Constant("s3ds_param_4", &s3ds_param_4);
+    r_Constant("scope_reticle_mode", &binder_scope_reticle_mode);
+    r_Constant("scope_lens_params", &binder_scope_lens_params);
+    r_Constant("scope_reticle_masks", &binder_scope_reticle_masks);
+    r_Constant("scope_reticle_projection", &binder_scope_reticle_projection);
+    r_Constant("scope_reticle_atlas", &binder_scope_reticle_atlas);
+    r_Constant("reflex_reticle_atlas", &binder_reflex_reticle_atlas);
+    r_Constant("scope_shadow_params", &binder_scope_shadow_params);
+    r_Constant("scope_reticle_color", &binder_scope_reticle_color);
+    r_Constant("scope_reticle_optics", &binder_scope_reticle_optics);
+    r_Constant("scope_lens_color", &binder_scope_lens_color);
+#if RENDER == R_R1 || RENDER == R_R2
+    r_Constant("r1_laser_distance", &binder_r1_laser_distance);
+    r_Constant("scope_thermal_params", &binder_scope_thermal_params);
+#endif
+    r_Constant("scope_transition", &binder_scope_transition);
+    r_Constant("scope_surface_params", &binder_scope_surface_params);
+    r_Constant("scope_surface_light", &binder_scope_surface_light);
+    static class cl_r1_scope_debug : public NativeConstantSetup
+    {
+        virtual void setup(R_constant* C)
+        {
+            RCache.set_c(C, float(ps_r1_scope_debug), 0.0f, 0.0f, 0.0f);
+        }
+    } binder_r1_scope_debug;
+    r_Constant("r1_scope_debug", &binder_r1_scope_debug);
 
 	// crookr
 	r_Constant("fakescope_params1", &binder_fakescope_params);
@@ -1883,6 +2286,88 @@ void CBlender_Compile::SetMapping()
 	{
 		std::pair<shared_str, R_constant_setup*> cs = DEV->v_constant_setup[it];
 		r_Constant(*cs.first, cs.second);
+	}
+
+	u32 object_lanes = 0;
+	for (u32 it = 0; it < ctable.table.size(); it++)
+	{
+		R_constant* C = &*ctable.table[it];
+		LPCSTR cname = C->name.c_str();
+		if (!cname || 0 != strncmp(cname, "bus_", 4))
+			continue;
+
+		if (C->type != RC_float && C->type != RC_uint)
+		{
+			if (C->type == RC_int || C->type == RC_bool)
+				ShaderBus::refuse(cname, "is an int or bool, a lane binds float or uint only");
+			continue;
+		}
+		// uint lanes always take the byte copy so the raw bits arrive unchanged
+		const bool fits = C->type == RC_float && bus_fits_vector(C);
+		const u32 rows = bus_rows(C);
+
+		// an obj_ lane takes its value from the drawn object
+		const bool object = 0 == strncmp(cname, "bus_obj_", 8);
+		if (object && !fits)
+		{
+			ShaderBus::refuse(cname, "is an object lane, which binds one float to float4 only");
+			continue;
+		}
+		if (object && object_lanes == ShaderBus::max_object_lanes)
+		{
+			ShaderBus::refuse(cname, "is past the 16 object lanes one pass binds");
+			continue;
+		}
+#if defined(USE_DX10) || defined(USE_DX11)
+		if (rows > ShaderBus::max_rows)
+		{
+			ShaderBus::refuse(cname, "is larger than the 4096 rows a lane allows");
+			continue;
+		}
+#else
+		if (!fits)
+		{
+			ShaderBus::refuse(cname, "is an array or matrix, a lane binds one float to float4 only on this renderer");
+			continue;
+		}
+#endif
+
+		ShaderBus::lane* lane = ShaderBus::declare(cname, rows,
+			C->type == RC_uint ? ShaderBus::kind_uint : ShaderBus::kind_float);
+		if (!lane)
+			continue;
+
+		if (object)
+		{
+			++object_lanes;
+			if (bus_object_binders.size() <= lane->index)
+				bus_object_binders.resize(lane->index + 1, nullptr);
+			if (!bus_object_binders[lane->index])
+				bus_object_binders[lane->index] = xr_new<bus_object_binder>(lane);
+
+			C->handler = bus_object_binders[lane->index];
+			continue;
+		}
+
+#if defined(USE_DX10) || defined(USE_DX11)
+		if (!fits)
+		{
+			if (bus_row_binders.size() <= lane->index)
+				bus_row_binders.resize(lane->index + 1, nullptr);
+			if (!bus_row_binders[lane->index])
+				bus_row_binders[lane->index] = xr_new<bus_row_binder>(lane);
+
+			C->handler = bus_row_binders[lane->index];
+			continue;
+		}
+#endif
+
+		if (bus_binders.size() <= lane->index)
+			bus_binders.resize(lane->index + 1, nullptr);
+		if (!bus_binders[lane->index])
+			bus_binders[lane->index] = xr_new<bus_binder>(lane);
+
+		C->handler = bus_binders[lane->index];
 	}
 
 
@@ -1909,3 +2394,28 @@ void CBlender_Compile::SetMapping()
 
 	r_Constant("vignette_control", &vignette_control);
 }
+
+#if defined(USE_DX11) && RENDER == R_R4
+Fvector4 CalculateRenderJitter()
+{
+    Fvector2 jitter = main_view_jitter_ndc();
+    if (g_upscale_reticle_pass) jitter.set(0.f, 0.f);
+    return Fvector4().set(jitter.x, jitter.y, ps_ssfx_taa.x, ps_ssfx_taa.w);
+}
+Fvector4 CalculateUpscalerParameters()
+{
+    const bool active = g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame() && !g_upscale_reticle_pass;
+    return Fvector4().set(active ? 1.f : 0.f, g_main_taa_render_size.x, g_main_taa_render_size.y, 0.f);
+}
+Fvector4 CalculateUpscalerTemporalJitter()
+{
+    Fvector4 value = {};
+    if (g_main_temporal_upscaler_active && !Device.m_SecondViewport.IsSVPFrame())
+    {
+        const auto previous = g_AnthologyUpscaler.PreviousJitterPixels();
+        const float w = _max(1.f, g_main_taa_render_size.x), h = _max(1.f, g_main_taa_render_size.y);
+        value.set(g_main_taa_jitter_pixels.x / w, g_main_taa_jitter_pixels.y / h, previous.x / w, previous.y / h);
+    }
+    return value;
+}
+#endif

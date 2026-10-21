@@ -4,6 +4,7 @@
 #include "SoundRender_Emitter.h"
 #include "SoundRender_Core.h"
 #include "SoundRender_Source.h"
+#include "SoundRender_Target.h"
 
 //#define MEASURE_PROCESSING_TIME
 
@@ -28,6 +29,7 @@ inline u32 calc_cursor(const float& fTimeStarted, float& fTime, const float& fTi
 
 void CSoundRender_Emitter::update(float dt)
 {
+	PROF_EVENT("CSoundRender_Emitter::update");
 	float fTime = SoundRender->fTimer_Value;
 	float fDeltaTime = SoundRender->fTimer_Delta;
     refresh_season_source();
@@ -58,6 +60,7 @@ void CSoundRender_Emitter::update(float dt)
 	// Don't apply delay to already delayed sounds, they are most likely already handled in respective parts of code and scripts
 	if (need_preplay_update && m_current_state < stPlaying && starting_delay == 0.f)
 	{
+		PROF_EVENT("Sound: distance delay");
 		if (_valid(p_source.position) && !p_source.position.similar(Fvector().set(0.f, 0.f, 0.f)) && owner_data && source() && source()->channels_num() == 1)
 		{
 			//Smooth Ramp Using Hermite(Smootherstep)
@@ -80,19 +83,21 @@ void CSoundRender_Emitter::update(float dt)
 			float speedOfSound = 343.f;
 			float oldDelay = starting_delay;
 			auto oldState = m_current_state;
-			auto delay = CalculateSmoothSoundDelay(p_source.position.distance_to(SoundRender->listener_position()), speedOfSound, soundSmoothingParams::distanceBasedDelayMinDistance, 60);
+			auto delay = CalculateSmoothSoundDelay(p_source.position.distance_to(SoundRender->listener_position()), speedOfSound, SoundRender->runtime.delayMinDistance, 60);
 
 			// clamp delay in case of strange result
 			delay = std::clamp(delay, 0.f, 3.5f);
 
 			// apply cvar power
-			delay *= soundSmoothingParams::distanceBasedDelayPower;
+			delay *= SoundRender->runtime.delayPower;
 			if (delay > 0.f)
 			{
 				if (m_current_state == stStarting || m_current_state == stStartingLooped)
 				{
 					starting_delay = delay;
 					m_current_state = m_current_state == stStarting ? stStartingDelayed : stStartingLoopedDelayed;
+					// Match explicit delays: start AI propagation from now, not from zero.
+					fTimeToPropagade = fTime;
 				}
 				else
 				{
@@ -114,26 +119,39 @@ void CSoundRender_Emitter::update(float dt)
 		need_preplay_update = false;
 	}
 
+	if (!iPaused && target && !target->get_Rendering() &&
+		(m_current_state == stPlaying || m_current_state == stPlayingLooped))
+	{
+		// Preserve the onset of a cold short sound instead of expiring before
+		// its first decoded buffer. AI propagation keeps the original interval.
+		fTimeStarted += fDeltaTime;
+		if (m_current_state == stPlaying) fTimeToStop += fDeltaTime;
+		resource_wait += fDeltaTime;
+	}
+
 	switch (m_current_state)
 	{
 	case stStopped:
 		break;
 	case stStartingDelayed:
+	{
+		PROF_EVENT("Sound: delayed start");
 		if (iPaused) break;
 		starting_delay -= dt;
 		if (starting_delay <= 0)
 			m_current_state = stStarting;
 		break;
+	}
 	case stStarting:
 		if (iPaused) break;
 		fTimeStarted = fTime;
-		fTimeToStop = fTime + (get_length_sec() / psSpeedOfSound); 
+		fTimeToStop = fTime + (get_length_sec() / SoundRender->runtime.psSpeedOfSound);
 		fTimeToPropagade = fTime;
 		fade_volume = 1.f;
 		occluder_volume = SoundRender->get_occlusion(p_source.position, .2f, occluder);
 		smooth_volume = p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect
-			                                                          ? psSoundVEffects * psSoundVFactor
-			                                                          : psSoundVMusic * psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
+			                                                          ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor
+			                                                          : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
 		if (update_culling(dt))
 		{
 			m_current_state = stPlaying;
@@ -144,11 +162,14 @@ void CSoundRender_Emitter::update(float dt)
 			m_current_state = stSimulating;
 		break;
 	case stStartingLoopedDelayed:
+	{
+		PROF_EVENT("Sound: delayed looped start");
 		if (iPaused) break;
 		starting_delay -= dt;
 		if (starting_delay <= 0)
 			m_current_state = stStartingLooped;
 		break;
+	}
 	case stStartingLooped:
 		if (iPaused) break;
 		fTimeStarted = fTime;
@@ -157,8 +178,8 @@ void CSoundRender_Emitter::update(float dt)
 		fade_volume = 1.f;
 		occluder_volume = SoundRender->get_occlusion(p_source.position, .2f, occluder);
 		smooth_volume = p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect
-			                                                          ? psSoundVEffects * psSoundVFactor
-			                                                          : psSoundVMusic * psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
+			                                                          ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor
+			                                                          : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) * (b2D ? 1.f : occluder_volume);
 		if (update_culling(dt))
 		{
 			m_current_state = stPlayingLooped;
@@ -299,7 +320,8 @@ void CSoundRender_Emitter::update(float dt)
 	bMoved = FALSE;
 	if (m_current_state != stStopped)
 	{
-		if (fTime >= fTimeToPropagade)
+		if (fTime >= fTimeToPropagade &&
+			((m_current_state != stPlaying && m_current_state != stSimulating) || fTime < fTimeToStop - resource_wait))
 			Event_Propagade();
 	}
 	else if (owner_data)
@@ -339,6 +361,7 @@ IC void volume_lerp(float& c, float t, float s, float dt)
 
 BOOL CSoundRender_Emitter::update_culling(float dt)
 {
+	PROF_EVENT("CSoundRender_Emitter::update_culling");
 	float volume_att = 1.f;
 
 	if (b2D)
@@ -363,7 +386,7 @@ BOOL CSoundRender_Emitter::update_culling(float dt)
 		volume_att = (p_source.max_distance - dist) / min_max;
 		clamp(volume_att, 0.f, p_source.volume);
 
-		float fade_scale = bStopping || (p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect ? psSoundVEffects * psSoundVFactor : psSoundVMusic * psSoundVMusicFactor) < psSoundCull) ? -1.f : 1.f;
+		float fade_scale = bStopping || (p_source.base_volume * p_source.volume * (owner_data->s_type == st_Effect ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) < SoundRender->runtime.psSoundCull) ? -1.f : 1.f;
 		fade_volume += dt * 10.f * fade_scale;
 		//LostAlphaRus out
 
@@ -381,10 +404,10 @@ BOOL CSoundRender_Emitter::update_culling(float dt)
 
 	// Update smoothing
 	//LostAlphaRus in
-	smooth_volume = (p_source.base_volume * volume_att * (owner_data->s_type == st_Effect ? psSoundVEffects * psSoundVFactor : psSoundVMusic * psSoundVMusicFactor) * occluder_volume * fade_volume);
+	smooth_volume = (p_source.base_volume * volume_att * (owner_data->s_type == st_Effect ? SoundRender->runtime.psSoundVEffects * SoundRender->runtime.psSoundVFactor : SoundRender->runtime.psSoundVMusic * SoundRender->runtime.psSoundVMusicFactor) * occluder_volume * fade_volume);
 	//LostAlphaRus out
 
-	if (smooth_volume < psSoundCull)
+	if (smooth_volume < SoundRender->runtime.psSoundCull)
 		return FALSE;	// allow volume to go up
 
 	// Here we has enought "PRIORITY" to be soundable
@@ -404,7 +427,7 @@ float CSoundRender_Emitter::priority()
 
 	if (b2D)
 	{
-		volume_att = p_source.min_distance / (psSoundRolloff * dist);
+		volume_att = p_source.min_distance / (SoundRender->runtime.psSoundRolloff * dist);
 		clamp(volume_att, 0.f, 1.f);
 	}
 	else
@@ -420,6 +443,6 @@ float CSoundRender_Emitter::priority()
 void CSoundRender_Emitter::update_environment(float dt)
 {
 	if (bMoved) {
-		p_source.update_velocity(dt);
+		p_source.update_velocity_snapshot(_max(dt, EPS_S), SoundRender->runtime.velocityAlpha, SoundRender->runtime.velocityPower);
 	}
 }

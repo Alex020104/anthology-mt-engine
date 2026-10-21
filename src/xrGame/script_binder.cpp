@@ -138,6 +138,13 @@ BOOL CScriptBinder::net_Spawn(CSE_Abstract* DC)
 {
 	PROF_EVENT("CScriptBinder::net_Spawn");
 	CGameObject* const game_object = smart_cast<CGameObject*>(this);
+#if XRCORE_PROFILER == PROFILER_OPTICK
+	if (Optick::IsActive() && game_object && game_object->cast_actor())
+	{
+		PROF_TAG("Actor id", u32(game_object->ID()));
+		PROF_TAG("Actor section", game_object->cNameSect().c_str());
+	}
+#endif
 	const bool profile_actor_load = pApp && pApp->LoadSessionActive() && game_object &&
 		!xr_strcmp(game_object->cNameSect().c_str(), "actor");
 	const u64 profile_started_at = profile_actor_load ? CPU::QPC() : 0;

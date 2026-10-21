@@ -35,12 +35,12 @@ static D3DVERTEXELEMENT9 particleMotionDecl[] =
     {0, 24, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 1},
     D3DDECL_END()
 };
-static bool ParticleMotionActive(const CParticleEffect& effect)
+static bool ParticleMotionActive(const CParticleEffect::EffectFrame& state)
 {
     static const bool disabled = strstr(Core.Params, "-particle_motion_off") != nullptr;
     return !disabled && g_main_temporal_upscaler_active &&
         !Device.m_SecondViewport.IsSVPFrame() && RImplementation.phase == CRender::PHASE_NORMAL &&
-        !effect.m_RT_Flags.is(CParticleEffect::flRT_HUDmode);
+        !state.runtime_flags.is(CParticleEffect::flRT_HUDmode);
 }
 #else
 using ParticleRenderVertex = FVF::LIT;
@@ -207,28 +207,21 @@ void CParticleEffect::OnFrame(u32 frame_dt)
 				if (m_Def->m_Flags.is(CPEDef::dfCollision))
 					m_Def->ExecuteCollision(particles, p_cnt, fDT_STEP, this, m_CollisionCallback);
 				
+				ParticleManager()->GetParticles(m_HandleEffect, particles, p_cnt);
 				//-move action
 				if (p_cnt)
 				{
-					vis.box.invalidate();
+					simulation_bounds.invalidate();
 					float p_size = 0.f;
 					for (u32 i = 0; i < p_cnt; i++)
 					{
 						Particle& m = particles[i];
-						if(!RImplementation.ViewBase.testSphere_dirty(vis.sphere.P, vis.sphere.R))
-						{
-							m.posI.set(m.pos);
-							m.rotI.set(m.rot);
-							m.velI.set(m.vel);
-							m.sizeI.set(m.size);
-						}
-						vis.box.modify((Fvector&)m.pos);
+						simulation_bounds.modify((Fvector&)m.pos);
 						if (m.size.x > p_size) p_size = m.size.x;
 						if (m.size.y > p_size) p_size = m.size.y;
 						if (m.size.z > p_size) p_size = m.size.z;
 					}
-					vis.box.grow(p_size*(m_SeasonSnow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f));
-					vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+					simulation_bounds.grow(p_size*(m_SeasonSnow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f));
 				}
 				if (m_RT_Flags.is(flRT_DefferedStop) && (0 == p_cnt))
 				{
@@ -239,9 +232,8 @@ void CParticleEffect::OnFrame(u32 frame_dt)
 		}
 		else
 		{
-			vis.box.set(m_InitialPosition, m_InitialPosition);
-			vis.box.grow(EPS_L);
-			vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+			simulation_bounds.set(m_InitialPosition, m_InitialPosition);
+			simulation_bounds.grow(EPS_L);
 		}
 	}
 	else
@@ -257,21 +249,21 @@ void CParticleEffect::OnFrame(u32 frame_dt)
 				m_Def->ExecuteAnimate(particles, p_cnt, Device.fTimeDelta);
 			if (m_Def->m_Flags.is(CPEDef::dfCollision))
 				m_Def->ExecuteCollision(particles, p_cnt, Device.fTimeDelta, this, m_CollisionCallback);
+			ParticleManager()->GetParticles(m_HandleEffect, particles, p_cnt);
 			if (p_cnt)
 			{
-				vis.box.invalidate();
+				simulation_bounds.invalidate();
 				float p_size = 0.f;
 				for (u32 i = 0; i < p_cnt; i++)
 				{
 					Particle& m = particles[i];
 					if (!_valid(m.pos)) continue;
-					vis.box.modify(Fvector(m.pos));
+					simulation_bounds.modify(Fvector(m.pos));
 					if (m.size.x > p_size) p_size = m.size.x;
 					if (m.size.y > p_size) p_size = m.size.y;
 					if (m.size.z > p_size) p_size = m.size.z;
 				}
-				vis.box.grow(p_size*(m_SeasonSnow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f));
-				vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+				simulation_bounds.grow(p_size*(m_SeasonSnow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f));
 			}
 			
 			bool deffered_stop = true;
@@ -293,11 +285,86 @@ void CParticleEffect::OnFrame(u32 frame_dt)
 		}
 		else
 		{
-			vis.box.set(m_InitialPosition, m_InitialPosition);
-			vis.box.grow(EPS_L);
-			vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+			simulation_bounds.set(m_InitialPosition, m_InitialPosition);
+			simulation_bounds.grow(EPS_L);
 		}
 	}
+#ifdef _EDITOR
+    PublishRenderState(CaptureRenderState());
+#endif
+}
+
+IParticleCustom::RenderStatePtr CParticleEffect::CaptureRenderState()
+{
+    PROF_EVENT("Particles.Effect.Snapshot");
+    auto& slot = frame_buffers[next_frame_buffer++ % 2];
+    if (!slot || slot.use_count() != 1) slot = std::make_shared<EffectFrame>();
+    slot->bounds = simulation_bounds;
+    PAPI::Particle* particles;
+    u32 count;
+    ParticleManager()->GetParticles(m_HandleEffect, particles, count);
+    if (count) slot->particles.assign(particles, particles + count);
+    else slot->particles.clear();
+    slot->runtime_flags = m_RT_Flags;
+    slot->transform = m_XFORM;
+    slot->render_shader = m_Def ? m_Def->m_CachedShader : ref_shader();
+    slot->season_snow = m_SeasonSnow;
+    slot->flags.zero();
+    if (m_Def)
+    {
+        slot->flags = m_Def->m_Flags;
+        slot->frame = m_Def->m_Frame;
+        slot->velocity_scale = m_Def->m_VelocityScale;
+        slot->default_rotation = m_Def->m_APDefaultRotation;
+    }
+    return slot;
+}
+
+void CParticleEffect::PublishRenderState(const RenderStatePtr& state)
+{
+    published_frame = std::static_pointer_cast<const EffectFrame>(state);
+    render_scratch = published_frame->particles;
+    const bool continuous = last_render_frame + 1 >= RDEVICE.dwFrame;
+    for (auto& particle : render_scratch)
+    {
+        const auto found = render_indices.find(particle.render_id);
+        if (continuous && found != render_indices.end())
+        {
+            const auto& previous = render_particles[found->second];
+            particle.posI = previous.posI;
+            particle.rotI = previous.rotI;
+            particle.velI = previous.velI;
+            particle.sizeI = previous.sizeI;
+            particle.renderHistory = previous.renderHistory;
+        }
+        else
+        {
+            particle.posI = particle.pos;
+            particle.rotI = particle.rot;
+            particle.velI = particle.vel;
+            particle.sizeI = particle.size;
+            particle.renderHistory.Reset();
+        }
+    }
+    render_particles.swap(render_scratch);
+    for (u32 i = 0; i < render_particles.size(); ++i)
+        render_indices[render_particles[i].render_id] = i;
+    for (auto it = render_indices.begin(); it != render_indices.end();)
+        if (it->second >= render_particles.size() || render_particles[it->second].render_id != it->first)
+            it = render_indices.erase(it);
+        else ++it;
+    vis.box = published_frame->bounds;
+    // Interpolated corners can lag behind simulation; keep the published bounds conservative.
+    const float size_scale = published_frame->season_snow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f;
+    for (const auto& particle : render_particles)
+    {
+        Fbox interpolated;
+        interpolated.set(particle.posI, particle.posI);
+        interpolated.grow(_max(particle.sizeI.x, _max(particle.sizeI.y, particle.sizeI.z)) * size_scale);
+        vis.box.merge(interpolated);
+    }
+    vis.box.getsphere(vis.sphere.P, vis.sphere.R);
+    shader = published_frame->render_shader;
 }
 
 BOOL CParticleEffect::Compile(CPEDef* def)
@@ -554,9 +621,19 @@ __forceinline void magnitude_sse(Fvector& vec, float& res)
 	_mm_store_ss((float*)&res, tv);
 }
 
-bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * particles, CParticleEffect * pPE)
+bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * particles, const CParticleEffect::EffectFrame& state,
+    u32& emitted, const CFrustum* clip = nullptr)
 {
-    const float snowSize=pPE->m_SeasonSnow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f;
+    const float snowSize=state.season_snow ? anthology::snow::Get(anthology::snow::FlakeSize) : 1.f;
+    PROF_EVENT("Render.Particles.SpriteStream");
+    emitted = 0;
+    float clip_scale = 1.f;
+    if (clip && state.runtime_flags.is(CParticleEffect::flRT_XFORM))
+    {
+        const Fmatrix& t = state.transform;
+        clip_scale = _max(1.f, _sqrt(t._11*t._11+t._12*t._12+t._13*t._13+
+            t._21*t._21+t._22*t._22+t._23*t._23+t._31*t._31+t._32*t._32+t._33*t._33));
+    }
 	float sina = 0.0f, cosa = 0.0f;
 	// Xottab_DUTY: changed angle to be float instead of DWORD
 	// But it must be 0xFFFFFFFF or otherwise some particles won't play
@@ -564,7 +641,7 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
 #ifdef USE_DX11
     ParticleRenderVertex* output = pv;
     ParticleRenderVertex vertices[4];
-    const bool motionActive = ParticleMotionActive(*pPE);
+    const bool motionActive = ParticleMotionActive(state);
 #endif
 
 
@@ -578,7 +655,7 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
         ParticleRenderVertex* quad = vertices;
 #endif
 		{
-			if (pPE->m_RT_Flags.is(CParticleEffect::flRT_LiveUpdate))
+			if (state.runtime_flags.is(CParticleEffect::flRT_LiveUpdate))
 			{
 				m.posI.set(m.pos);
 				m.rotI.set(m.rot);
@@ -597,7 +674,7 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
 		}
 
 		Fvector wp_eff;
-		pPE->m_XFORM.transform_tiny(wp_eff, m.posI);
+		state.transform.transform_tiny(wp_eff, m.posI);
 
 		if (Device.vCameraPosition.distance_to_sqr(wp_eff) > _sqr(g_pGamePersistent->Environment().CurrentEnv->fog_distance))
 		{
@@ -615,33 +692,44 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
 			cosa = std::cosf(angle);
 		}
 
-		if (pPE->m_Def->m_Flags.is(CPEDef::dfFramed))
-			pPE->m_Def->m_Frame.CalculateTC(iFloor(float(m.frame) / 255.f), lt, rb);
+		if (state.flags.is(CPEDef::dfFramed))
+			state.frame.CalculateTC(iFloor(float(m.frame) / 255.f), lt, rb);
 
 		float r_x = m.sizeI.x * (0.5f*snowSize);
 		float r_y = m.sizeI.y * (0.5f*snowSize);
 		float speed = 0.f;
 		bool speed_calculated = false;
 
-		if (pPE->m_Def->m_Flags.is(CPEDef::dfVelocityScale))
+		if (state.flags.is(CPEDef::dfVelocityScale))
 		{
 			magnitude_sse(m.velI, speed);
 			speed_calculated = true;
-			r_x += speed * pPE->m_Def->m_VelocityScale.x;
-			r_y += speed * pPE->m_Def->m_VelocityScale.y;
+			r_x += speed * state.velocity_scale.x;
+			r_y += speed * state.velocity_scale.y;
 		}
 
-		if (pPE->m_Def->m_Flags.is(CPEDef::dfAlignToPath))
+        if (clip)
+        {
+            Fvector center = m.posI;
+            float radius = _sqrt(r_x * r_x + r_y * r_y);
+            if (state.runtime_flags.is(CParticleEffect::flRT_XFORM))
+            {
+                center = wp_eff;
+                radius *= clip_scale;
+            }
+            if (_valid(center) && _valid(radius) && !clip->testSphere_dirty(center, radius + EPS_L)) continue;
+        }
+		if (state.flags.is(CPEDef::dfAlignToPath))
 		{
 			if (!speed_calculated)
 				magnitude_sse(m.velI, speed);
-			if ((speed < EPS_S) && pPE->m_Def->m_Flags.is(CPEDef::dfWorldAlign))
+			if ((speed < EPS_S) && state.flags.is(CPEDef::dfWorldAlign))
 			{
 				Fmatrix M;
-				M.setXYZ(pPE->m_Def->m_APDefaultRotation);
-				if (pPE->m_RT_Flags.is(CParticleEffect::flRT_XFORM))
+				M.setXYZ(state.default_rotation);
+				if (state.runtime_flags.is(CParticleEffect::flRT_XFORM))
 				{
-					M.mulA_43(pPE->m_XFORM);
+					M.mulA_43(state.transform);
 					FillSprite(pv, M.k, M.i, wp_eff, lt, rb, r_x, r_y, color_rgba_f(m.colorR, m.colorG, m.colorB, m.colorA), sina, cosa);
 				}
 				else
@@ -649,7 +737,7 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
 					FillSprite(pv, M.k, M.i, m.posI, lt, rb, r_x, r_y, color_rgba_f(m.colorR, m.colorG, m.colorB, m.colorA), sina, cosa);
 				}
 			}
-			else if ((speed >= EPS_S) && pPE->m_Def->m_Flags.is(CPEDef::dfFaceAlign))
+			else if ((speed >= EPS_S) && state.flags.is(CPEDef::dfFaceAlign))
 			{
 				Fmatrix M;
 				M.identity();
@@ -661,9 +749,9 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
 				M.i.normalize();
 				M.j.crossproduct(M.k, M.i);
 				M.j.normalize();
-				if (pPE->m_RT_Flags.is(CParticleEffect::flRT_XFORM))
+				if (state.runtime_flags.is(CParticleEffect::flRT_XFORM))
 				{
-					M.mulA_43(pPE->m_XFORM);
+					M.mulA_43(state.transform);
 					FillSprite(pv, M.j, M.i, wp_eff, lt, rb, r_x, r_y, color_rgba_f(m.colorR, m.colorG, m.colorB, m.colorA), sina, cosa);
 				}
 				else
@@ -677,11 +765,11 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
 				if (speed >= EPS_S)
 					dir.div(m.velI, speed);
 				else
-					dir.setHP(-pPE->m_Def->m_APDefaultRotation.y, -pPE->m_Def->m_APDefaultRotation.x);
-				if (pPE->m_RT_Flags.is(CParticleEffect::flRT_XFORM))
+					dir.setHP(-state.default_rotation.y, -state.default_rotation.x);
+				if (state.runtime_flags.is(CParticleEffect::flRT_XFORM))
 				{
 					Fvector d;
-					pPE->m_XFORM.transform_dir(d, dir);
+					state.transform.transform_dir(d, dir);
 					FillSprite(pv, wp_eff, d, lt, rb, r_x, r_y, color_rgba_f(m.colorR, m.colorG, m.colorB, m.colorA), sina, cosa);
 				}
 				else
@@ -692,7 +780,7 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
 		}
 		else
 		{
-			if (pPE->m_RT_Flags.is(CParticleEffect::flRT_XFORM))
+			if (state.runtime_flags.is(CParticleEffect::flRT_XFORM))
 			{
 				FillSprite(pv, RDEVICE.vCameraTop, RDEVICE.vCameraRight, wp_eff, lt, rb, r_x, r_y, color_rgba_f(m.colorR, m.colorG, m.colorB, m.colorA), sina, cosa);
 			}
@@ -724,31 +812,55 @@ bool ParticleRenderStream(ParticleRenderVertex* pv, u32 count, PAPI::Particle * 
         CopyMemory(output, vertices, sizeof(vertices));
         output += 4;
 #endif
-
+        emitted += 4;
 	}
+    PROF_TAG("Input sprites", count);
+    PROF_TAG("Emitted sprites", emitted / 4);
 	return false;
 }
 
 void CParticleEffect::Render(float)
 {
+    const auto frame = published_frame;
+    if (!frame) return;
+    last_render_frame = RDEVICE.dwFrame;
 #ifdef _GPA_ENABLED
 		TAL_SCOPED_TASK_NAMED( "CParticleEffect::Render()" );
 #endif // _GPA_ENABLED
 
 	u32 dwOffset, dwCount;
 	// Get a pointer to the particles in gp memory
-	PAPI::Particle* particles;
-	u32 p_cnt;
-	ParticleManager()->GetParticles(m_HandleEffect, particles, p_cnt);
+	PAPI::Particle* particles = render_particles.data();
+	const u32 p_cnt = u32(render_particles.size());
 
 	if (p_cnt > 0)
 	{
-		if (m_Def && m_Def->m_Flags.is(CPEDef::dfSprite))
+		if (frame->flags.is(CPEDef::dfSprite))
 		{
-			ParticleRenderVertex* pv_start = (ParticleRenderVertex*)RCache.Vertex.Lock(p_cnt * 4, geom->vb_stride, dwOffset);
-			bool NeedExit = ParticleRenderStream(pv_start, p_cnt, particles, this);
-
-			dwCount = p_cnt << 2;
+			CFrustum frustum;
+            const CFrustum* clip = nullptr;
+#if defined(USE_DX11) && RENDER == R_R4
+            extern bool IsNativeParticleMatrix(R_constant*, bool);
+            if (shader && !frame->season_snow)
+                for (const auto& element : shader->E)
+                    if (element)
+                        for (const auto& pass : element->passes)
+                            if (pass && pass->vs && pass->ps && pass->vs->particle_position_safe &&
+                                pass->ps->static_draw_safe && RCache.matches_native_particle_pass(*pass) && pass->constants &&
+                                IsNativeParticleMatrix(pass->constants->get(pass->vs->particle_uses_vp ? "m_VP" : "m_WVP"), pass->vs->particle_uses_vp))
+                            {
+                                Fmatrix view = RCache.xforms.m_vp;
+                                if (frame->runtime_flags.is(flRT_HUDmode)) view.mul(Device.mProjectHud, RCache.xforms.m_v);
+                                if (_valid(view))
+                                {
+                                    frustum.CreateFromMatrix(view, FRUSTUM_P_LRTB | FRUSTUM_P_NEAR | FRUSTUM_P_FAR);
+                                    clip = &frustum;
+                                }
+                            }
+#endif
+            ParticleRenderVertex* pv_start = (ParticleRenderVertex*)RCache.Vertex.Lock(p_cnt * 4, geom->vb_stride, dwOffset);
+            bool NeedExit = ParticleRenderStream(pv_start, p_cnt, particles, *frame, dwCount, clip);
+            R_ASSERT(dwCount <= p_cnt * 4 && (dwCount & 3u) == 0);
 
 			RCache.Vertex.Unlock(dwCount, geom->vb_stride);
 
@@ -759,7 +871,7 @@ void CParticleEffect::Render(float)
 			{
 #ifndef _EDITOR
 				CHudInitializer initalizer(false);
-				if (GetHudMode())
+				if (frame->runtime_flags.is(flRT_HUDmode))
 				{
 					initalizer.SetHudMode();
 					RImplementation.rmNear();
@@ -770,13 +882,13 @@ void CParticleEffect::Render(float)
 				RCache.set_xform_world(Fidentity);
 				RCache.set_Geometry(geom);
 
-				RCache.set_CullMode(m_Def->m_Flags.is(CPEDef::dfCulling)
-					                    ? (m_Def->m_Flags.is(CPEDef::dfCullCCW) ? CULL_CCW : CULL_CW)
+				RCache.set_CullMode(frame->flags.is(CPEDef::dfCulling)
+					                    ? (frame->flags.is(CPEDef::dfCullCCW) ? CULL_CCW : CULL_CW)
 					                    : CULL_NONE);
 				RCache.Render(D3DPT_TRIANGLELIST, dwOffset, 0, dwCount, 0, dwCount / 2);
 				RCache.set_CullMode(CULL_CCW);
 #ifndef _EDITOR
-				if (GetHudMode())
+				if (frame->runtime_flags.is(flRT_HUDmode))
 				{
 					RImplementation.rmNormal();
 					initalizer.SetDefaultMode();

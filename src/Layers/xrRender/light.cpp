@@ -3,6 +3,11 @@
 
 #include "QueryHelper.h"
 #include "../../xrEngine/IGame_Level.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/LocalLightDebug.h"
+#endif
+
+extern int ps_r2_shadow_omnipart_vischeck;
 
 extern int ps_r2_shadow_omnipart_vischeck;
 
@@ -72,6 +77,10 @@ light::light(bool publish)
 
 light::~light()
 {
+#if defined(USE_DX11) && RENDER == R_R4
+    LocalLightDebug::Forget(this);
+    if (RImplementation.local_light_shadows) RImplementation.local_light_shadows->Forget(this);
+#endif
 	m_parent = nullptr;
 #if (RENDER==R_R2) || (RENDER==R_R3) || (RENDER==R_R4)
 	if (m_published)
@@ -151,6 +160,9 @@ void light::reset_for_cache()
 	vis.frame2test = 0;
 	vis.visible = true;
 	vis.pending = false;
+#if defined(USE_DX11) && RENDER == R_R4
+    vis.query_view_valid = false;
+#endif
 	vis.smap_ID = 0;
 	vis.distance = 0.f;
 	m_xform_frame = 0;
@@ -679,7 +691,7 @@ void light::export_()
 						L->vis.pending = vis.pending;
 						L->vis.visible = vis.visible;
 					}
-					if (L->vis.pending)
+					if (L->vis.pending && !L->vis.visible)
 						RImplementation.LP_pending.v_shadowed.push_back(L);
 					else
 						RImplementation.LP_normal.v_shadowed.push_back(L);
@@ -691,7 +703,7 @@ void light::export_()
 				this->set_volumetric_intensity(m_volumetric_intensity);
 				vis_prepare();
 
-				if (vis.pending)
+				if (vis.pending && !vis.visible)
 					RImplementation.LP_pending.v_shadowed.push_back(this);
 				else
 					RImplementation.LP_normal.v_shadowed.push_back(this);
@@ -706,7 +718,7 @@ void light::export_()
 			case IRender_Light::POINT:
 				{
 					vis_prepare();
-					if (vis.pending)
+					if (vis.pending && !vis.visible)
 						RImplementation.LP_pending.v_point.push_back(this);
 					else
 						RImplementation.LP_normal.v_point.push_back(this);
@@ -715,7 +727,7 @@ void light::export_()
 			case IRender_Light::SPOT:
 				{
 					vis_prepare();
-					if (vis.pending)
+					if (vis.pending && !vis.visible)
 						RImplementation.LP_pending.v_spot.push_back(this);
 					else
 						RImplementation.LP_normal.v_spot.push_back(this);				

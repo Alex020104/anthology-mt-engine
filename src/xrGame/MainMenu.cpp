@@ -3,6 +3,7 @@
 #include "UI/UIDialogWnd.h"
 #include "ui/UIMessageBoxEx.h"
 #include "../xrEngine/xr_IOConsole.h"
+#include "../xrEngine/x_ray.h"
 #include "../xrEngine/IGame_Level.h"
 #include "../xrEngine/CameraManager.h"
 #include "../xrEngine/xr_input.h"
@@ -64,6 +65,7 @@ CMainMenu* MainMenu() { return (CMainMenu*)g_pGamePersistent->m_pMainMenu; };
 
 CMainMenu::CMainMenu()
 {
+    PROF_EVENT("Startup.MainMenuCreate");
 	m_Flags.zero();
 	m_startDialog = NULL;
 	m_screenshotFrame = u32(-1);
@@ -177,6 +179,7 @@ extern bool IsGameTypeSingle();
 
 void CMainMenu::Activate(bool bActivate)
 {
+	PROF_EVENT("Startup.MainMenuActivate");
 	if (!!m_Flags.test(flActive) == bActivate) return;
 	if (m_Flags.test(flGameSaveScreenshot)) return;
 	if ((m_screenshotFrame == Device.dwFrame) ||
@@ -229,8 +232,6 @@ void CMainMenu::Activate(bool bActivate)
 			Device.seqRender.Remove(g_pGameLevel);
 			CCameraManager::ResetPP();
 		}
-        else
-            Console->Execute("stat_memory");
 
 		Device.seqRender.Add(this, 4); // 1-console 2-cursor 3-tutorial
 		LogStartupMenuReady();
@@ -294,6 +295,7 @@ void CMainMenu::Activate(bool bActivate)
 
 bool CMainMenu::ReloadUI()
 {
+    PROF_EVENT("Startup.MainMenuReloadUI");
 	CTimer timer;
 	timer.Start();
 	if (m_startDialog)
@@ -447,6 +449,9 @@ void CMainMenu::OnRender()
 		DoRenderDialogs();
 		UI().RenderFont();
 		draw_wnds_rects();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickStartupMenuRendered();
+#endif
 	}
 }
 
@@ -466,6 +471,9 @@ void CMainMenu::OnRenderPPUI_main()
 	{
 		DoRenderDialogs();
 		UI().RenderFont();
+#if XRCORE_PROFILER == PROFILER_OPTICK
+        OptickStartupMenuRendered();
+#endif
 	}
 
 	UI().pp_stop();

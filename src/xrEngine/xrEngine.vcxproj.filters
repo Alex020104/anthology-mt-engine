@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="General">
@@ -210,6 +210,9 @@
     <ClInclude Include="Render.h">
       <Filter>Interfaces\Render</Filter>
     </ClInclude>
+    <ClInclude Include="RendererError.h">
+      <Filter>Interfaces\Render</Filter>
+    </ClInclude>
     <ClInclude Include="ICollidable.h">
       <Filter>Interfaces\Collidable</Filter>
     </ClInclude>
@@ -257,6 +260,12 @@
     </ClInclude>
     <ClInclude Include="Rain.h">
       <Filter>Game API\Environment\Effects</Filter>
+    </ClInclude>
+    <ClInclude Include="renderdoc_app.h">
+      <Filter>General</Filter>
+    </ClInclude>
+    <ClInclude Include="renderdoc_integration.h">
+      <Filter>General</Filter>
     </ClInclude>
     <ClInclude Include="thunderbolt.h">
       <Filter>Game API\Environment\Effects</Filter>
@@ -411,6 +420,12 @@
     <ClInclude Include="device.h">
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClInclude>
+    <ClInclude Include="FramePacer.h">
+      <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
+    </ClInclude>
+<ClInclude Include="LuaGCController.h">
+      <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
+    </ClInclude>
     <ClInclude Include="MonitorList.h">
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClInclude>
@@ -433,6 +448,9 @@
       <Filter>OpenAutomate</Filter>
     </ClInclude>
     <ClInclude Include="ShadersExternalData.h">
+      <Filter>Game API\Objects</Filter>
+    </ClInclude>
+    <ClInclude Include="shader_bus.h">
       <Filter>Game API\Objects</Filter>
     </ClInclude>
     <ClInclude Include="..\3rd party\discord\achievement_manager.h">
@@ -492,6 +510,9 @@
     <ClInclude Include="imgui_helper.h">
       <Filter>Interfaces\ImGui</Filter>
     </ClInclude>
+    <ClInclude Include="GIFResource.h">
+      <Filter>Render\Execution &amp; 3D\Shaders\Textures</Filter>
+    </ClInclude>
     <ClInclude Include="EngineThreading.h" />
   </ItemGroup>
   <ItemGroup>
@@ -543,6 +564,9 @@
     <ClCompile Include="IGame_ObjectPool.cpp">
       <Filter>Game API\Objects</Filter>
     </ClCompile>
+    <ClCompile Include="shader_bus.cpp">
+      <Filter>Game API\Objects</Filter>
+    </ClCompile>
     <ClCompile Include="pure_relcase.cpp">
       <Filter>Game API\Objects</Filter>
     </ClCompile>
@@ -569,6 +593,9 @@
     </ClCompile>
     <ClCompile Include="Rain.cpp">
       <Filter>Game API\Environment\Effects</Filter>
+    </ClCompile>
+    <ClCompile Include="renderdoc_integration.cpp">
+      <Filter>General</Filter>
     </ClCompile>
     <ClCompile Include="thunderbolt.cpp">
       <Filter>Game API\Environment\Effects</Filter>
@@ -717,6 +744,15 @@
     <ClCompile Include="device.cpp">
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClCompile>
+    <ClCompile Include="Device_frame.cpp">
+      <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
+    </ClCompile>
+    <ClCompile Include="FramePacer.cpp">
+      <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
+    </ClCompile>
+<ClCompile Include="LuaGCWorker.cpp">
+      <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
+    </ClCompile>
     <ClCompile Include="MonitorList.cpp">
       <Filter>RenderRef\Execution &amp; 3D\Device</Filter>
     </ClCompile>
@@ -803,6 +839,9 @@
     </ClCompile>
     <ClCompile Include="imgui_helper.cpp">
       <Filter>Interfaces\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="GIFResource.cpp">
+      <Filter>Render\Execution &amp; 3D\Shaders\Textures</Filter>
     </ClCompile>
     <ClCompile Include="EngineThreading.cpp" />
   </ItemGroup>

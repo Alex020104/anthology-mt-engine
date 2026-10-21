@@ -185,7 +185,6 @@ private:
 	bool m_texturePressure = false;
 #endif
 
-	void QueueTextureLoad(const ref_texture& texture);
 	void ResolveTextureSource(LPCSTR name, LPCSTR canonical_level_path, TextureSourceInfo& result);
 	void CompleteTextureLoad(const ResourceLoadGenerationPtr& generation);
 	void RecordTextureLoadFailure(const ResourceLoadGenerationPtr& generation, std::exception_ptr failure);
@@ -193,6 +192,7 @@ private:
 	std::exception_ptr WaitForTextureLoadGeneration(const ResourceLoadGenerationPtr& generation);
 
 public:
+    void QueueTextureLoad(const ref_texture& texture, bool streaming = false);
 	CTextureDescrMngr m_textures_description;
 	xr_vector<std::pair<shared_str, R_constant_setup*>> v_constant_setup;
 	lua_State* LSVM;
@@ -223,6 +223,8 @@ public:
 
 	// Low level resource creation
 	ref_texture _CreateTexture(LPCSTR Name, bool prefetch = false, LPCSTR canonical_level_path = nullptr);
+    static ref_texture AcquireTexture(CTexture* texture);
+    CTexture* _FindTexture(LPCSTR Name);
 	void _DeleteTexture(const CTexture* T);
 	void PrefetchTexture(LPCSTR Name, LPCSTR canonical_level_path = nullptr);
 	void InvalidateTextureSourceCache();

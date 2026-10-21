@@ -201,6 +201,7 @@ bool CPSLibrary::Load2()
 
 bool CPSLibrary::LoadDefinitions(const char* nm)
 {
+    PROF_EVENT("Render.ParticlesPrepare");
 	CTimer startupTimer;
 	startupTimer.Start();
 	FS_FileSet files;
@@ -234,8 +235,11 @@ bool CPSLibrary::LoadDefinitions(const char* nm)
 		R_ASSERT(result.effect || 0 == stricmp(extension, ".pg"));
 	}
 
+	const DWORD owner_thread = GetCurrentThreadId();
 	xr_parallel_for(0u, static_cast<u32>(prepared.size()), [&](u32 index)
 	{
+        PROF_THREAD_IF(GetCurrentThreadId() != owner_thread, "X-Ray resource loader");
+        PROF_EVENT("Render.ParticleRead");
 		PreparedParticle& result = prepared[index];
 		string_path fullPath;
 		FS.update_path(fullPath, "$game_particles$", result.file.c_str());
@@ -364,6 +368,7 @@ bool CPSLibrary::LoadDefinitions(const char* nm)
 
 void CPSLibrary::FinalizeLoad()
 {
+    PROF_EVENT("Render.ParticleShaders");
 	CTimer shaderTimer;
 	shaderTimer.Start();
 	for (PS::PEDIt e_it = m_PEDs.begin(); e_it != m_PEDs.end(); ++e_it)

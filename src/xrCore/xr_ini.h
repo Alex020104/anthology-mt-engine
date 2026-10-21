@@ -243,7 +243,7 @@ private:
 		Sect*& CurrentOverride,
 		string_path currentFileName
 	);
-	Items EvaluateSection(
+	const Items& EvaluateSection(
 		shared_str SectionName,
 		EvaluationsContext& Evaluations,
 		string_path currentFileName
@@ -340,6 +340,7 @@ public:
 	void w_bool(LPCSTR S, LPCSTR L, BOOL V, LPCSTR comment = 0);
 
 	void remove_line(LPCSTR S, LPCSTR L);
+	bool remove_section(LPCSTR S);
 };
 
 // Main configuration file

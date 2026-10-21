@@ -1,4 +1,8 @@
 #include "stdafx.h"
+#include "FVisual.h"
+#if defined(USE_DX11) && RENDER == R_R4
+#include "../xrRenderPC_R4/RenderViewPreparation.h"
+#endif
 
 #include "fhierrarhyvisual.h"
 #include "SkeletonCustom.h"
@@ -24,12 +28,40 @@ float r_ssaHZBvsTEX;
 ICF float CalcSSA(float& distSQ, Fvector& C, float R)
 {
 	distSQ = Device.vCameraPosition.distance_to_sqr(C) + EPS;
-    return (R * R / distSQ);
+    return R / distSQ;
 }
 
 ICF float CalcSSA(float& distSQ, Fvector& C, dxRender_Visual* V)
 {
     return CalcSSA(distSQ, C, V->vis.sphere.R);
+}
+
+ICF bool R4FullDetailRejectStatic(dxRender_Visual* pVisual, bool normalPhase)
+{
+#if RENDER == R_R4
+	if (ps_r4_full_detail_distance_scale >= 1.f || !normalPhase ||
+		pVisual->flags.test(IRenderVisualFlags::eIgnoreOptimization) || !g_pGamePersistent ||
+		!g_pGamePersistent->Environment().CurrentEnv)
+		return false;
+
+	// Keep the engine's normal LOD selection alive beyond the full-detail range.
+	if (pVisual->Type == MT_LOD)
+		return false;
+
+	const float farPlane = g_pGamePersistent->Environment().CurrentEnv->far_plane;
+	const float fullDetailDistance = std::max(100.f, farPlane * ps_r4_full_detail_distance_scale);
+	float distanceSquared;
+	const float ssa = CalcSSA(distanceSquared, pVisual->vis.sphere.P, pVisual);
+	const float nearestDistance = _sqrt(distanceSquared) - pVisual->vis.sphere.R;
+	if (nearestDistance <= fullDetailDistance)
+		return false;
+
+	const float transitionRange = std::max(1.f, farPlane - fullDetailDistance);
+	const float transition = clampr((nearestDistance - fullDetailDistance) / transitionRange, 0.f, 1.f);
+	return ssa <= r_ssaDISCARD * (1.f + transition * 11.f);
+#else
+	return false;
+#endif
 }
 
 void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix* xform)
@@ -40,7 +72,8 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 	float distSQ;
 	float SSA = CalcSSA(distSQ, Center, pVisual);
     Flags16& flags = pVisual->flags;
-    if (!flags.test(IRenderVisualFlags::eIgnoreOptimization))
+    ShaderElement* sh_d = &*pVisual->shader->E[4];
+    if (!(flags.test(IRenderVisualFlags::eIgnoreOptimization) || (sh_d && sh_d->flags.bEmissive)))
     {
         if (SSA < r_ssaDISCARD)
         {
@@ -65,12 +98,35 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 		}
 	}
 
+	// HOM occlusion culling for dynamic objects
+    if (ps_r__common_flags.test(RFLAG_HOM_DYNAMIC))
+    {
+#if RENDER!=R_R1
+        if (i_mask[CDSGraphManager::fl_normal])
+#endif
+        {
+            Fbox world_bb;
+            world_bb.xform(pVisual->vis.box, *xform);
+            if (!RImplementation.HOM.visible(world_bb))
+                return;
+        }
+    }
+
+#if RENDER == R_R1 || RENDER == R_R2
+    if (this == &RImplementation.GMBase && RImplementation.scope_heat_only)
+    {
+        ShaderElement* shader = RImplementation.rimp_select_sh_dynamic(pVisual, distSQ);
+        if (shader)
+            RImplementation.AddScopeHeatItem({0, SSA, val_pObject, pVisual, xform, shader, false}, shader);
+        return;
+    }
+#endif
+
 	// Distortive geometry should be marked and R2 special-cases it
 	// a) Allow to optimize RT order
 	// b) Should be rendered to special distort buffer in another pass
 	VERIFY(pVisual->shader._get());
 
-	ShaderElement* sh_d = &*pVisual->shader->E[4];
 	if (sh_d && sh_d->flags.bDistort && i_mask[sh_d->flags.iPriority/2])
 	{
 		if (i_mask[CDSGraphManager::fl_hud])
@@ -85,6 +141,21 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 	if (0==sh)
 		return;
 	u32 shader_priority = sh->flags.iPriority/2;
+#if RENDER == R_R1 || RENDER == R_R2
+    if (i_mask[CDSGraphManager::fl_hud] && sh->flags.iScopeLense)
+    {
+        if (sh->flags.iScopeLense == 3 && RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_NORMAL)
+        {
+#if RENDER == R_R2
+            if (RImplementation.scope_capture_active)
+                return;
+#endif
+            RGraph.mapScopeHUDSorted.emplace_back(distSQ, SSA, val_pObject, pVisual, xform, sh, true);
+        }
+        return;
+    }
+#endif
+
 	if (!i_mask[shader_priority])
 		return;
 
@@ -187,6 +258,18 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 	if (i_mask[CDSGraphManager::fl_invisible])
 		return;
 
+#if RENDER == R_R1 || RENDER == R_R2
+    if (this == &RImplementation.GMBase && i_mask[CDSGraphManager::fl_normal] &&
+        !i_mask[CDSGraphManager::fl_cam] &&
+#if RENDER == R_R2
+        RImplementation.scope_heat_collect &&
+#endif
+        val_pObject && RImplementation.Target->IsScopeThermalActive(RENDER == R_R1))
+    {
+        RImplementation.AddScopeHeatItem({0, SSA, val_pObject, pVisual, xform, sh, false}, sh);
+    }
+#endif
+
 	// strict-sorting selection
 	// Particle visuals have their own render path. Putting strict B2F particles
 	// into the generic sorted queue renders them twice and wastes both CPU and
@@ -274,7 +357,9 @@ void CDSGraphManager::r_dsgraph_insert_static(dxRender_Visual *pVisual)
         !anthology::geometry::visible(true, opt_static, pVisual->vis.sphere.volume(), distSQ, Device.fFOV))
         return;
 
-    if (!flags.test(IRenderVisualFlags::eIgnoreOptimization))
+    ShaderElement* sh_d = &*pVisual->shader->E[4];
+    if (!(flags.test(IRenderVisualFlags::eIgnoreOptimization) || (sh_d && sh_d->flags.bEmissive)))
+
     {
         if (SSA < r_ssaDISCARD)
             return;
@@ -309,7 +394,6 @@ void CDSGraphManager::r_dsgraph_insert_static(dxRender_Visual *pVisual)
 	// a) Allow to optimize RT order
 	// b) Should be rendered to special distort buffer in another pass
 	VERIFY(pVisual->shader._get());
-	ShaderElement* sh_d = &*pVisual->shader->E[4];
 	if (sh_d && sh_d->flags.bDistort && i_mask[sh_d->flags.iPriority/2])
 		RGraph.mapStaticSorted.Distort.emplace_back(distSQ, SSA, nullptr, pVisual, &Fidentity, sh_d, false);
 
@@ -391,7 +475,19 @@ void CDSGraphManager::AddToRenderQueue(R_dsgraph::RenderQueue& queue, const R_ds
 		}
 	}
 
+#if defined(USE_DX11) && RENDER == R_R4
+    if (packet_pass_owners.find(&pass) == packet_pass_owners.end())
+        packet_pass_owners.emplace(&pass, ref_pass(const_cast<SPass*>(&pass)));
+#endif
 	queue.emplace_back(item, pass);
+#if defined(USE_DX11) && RENDER == R_R4
+    if (!item.pMatrix && item.pVisual && item.pVisual->Type == MT_NORMAL && Fvisual::StaticPassSafe(pass))
+    {
+        auto* mesh = static_cast<Fvisual*>(item.pVisual);
+        queue.back().static_batch = mesh->static_batch.get();
+        queue.back().static_first_index = mesh->static_batch_first_index;
+    }
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -407,6 +503,9 @@ void CDSGraphManager::add_Dynamic(IRenderVisual* piVisual, Fmatrix* xform)
 
 	if (!i_mask[CDSGraphManager::fl_normal] && !!flags.test(IRenderVisualFlags::eNoShadow))
 		return;
+    if (pVisual->Type != MT_PARTICLE_GROUP && pVisual->Type != MT_PARTICLE_EFFECT &&
+        !shadow_receiver_visible(pVisual->vis.box, *xform)) return;
+
 
 	// Visual is 100% visible - simply add it
 	switch (pVisual->Type)
@@ -415,13 +514,10 @@ void CDSGraphManager::add_Dynamic(IRenderVisual* piVisual, Fmatrix* xform)
 	{
 		// Add all children, doesn't perform any tests
 		PS::CParticleGroup* pG = (PS::CParticleGroup*)pVisual->dcast_ParticleCustom();
-		xrCriticalSectionGuard guard(&pG->onframe_lock);
-		for (PS::CParticleGroup::SItem& I_ : pG->items)
-		{
-			add_Dynamic(I_._effect, xform);
-			add_leafs_Dynamic(I_._children_related, xform);
-			add_leafs_Dynamic(I_._children_free, xform);
-		}
+        const auto frame = pG->PublishedFrame();
+        if (frame)
+            for (const auto& child : frame->children)
+                add_Dynamic(static_cast<dxRender_Visual*>(child.visual.get()), xform);
 	}return;
 
 	case MT_HIERRARHY:
@@ -474,6 +570,9 @@ void CDSGraphManager::add_Dynamic(dxRender_Visual* pVisual, Fmatrix* xform)
 
 	if (!i_mask[CDSGraphManager::fl_normal] && !!flags.test(IRenderVisualFlags::eNoShadow))
 		return;
+    if (pVisual->Type != MT_PARTICLE_GROUP && pVisual->Type != MT_PARTICLE_EFFECT &&
+        !shadow_receiver_visible(pVisual->vis.box, *xform)) return;
+
 
 	// Visual is 100% visible - simply add it
 	switch (pVisual->Type)
@@ -482,13 +581,10 @@ void CDSGraphManager::add_Dynamic(dxRender_Visual* pVisual, Fmatrix* xform)
 	{
 		// Add all children, doesn't perform any tests
 		PS::CParticleGroup* pG = (PS::CParticleGroup*)pVisual->dcast_ParticleCustom();
-		xrCriticalSectionGuard guard(&pG->onframe_lock);
-		for (PS::CParticleGroup::SItem& I_ : pG->items)
-		{
-			add_Dynamic(I_._effect, xform);
-			add_leafs_Dynamic(I_._children_related, xform);
-			add_leafs_Dynamic(I_._children_free, xform);
-		}
+        const auto frame = pG->PublishedFrame();
+        if (frame)
+            for (const auto& child : frame->children)
+                add_Dynamic(static_cast<dxRender_Visual*>(child.visual.get()), xform);
 	}break;
 
 	case MT_HIERRARHY:
@@ -563,9 +659,13 @@ void CDSGraphManager::add_Static(IRenderVisual* piVisual, CFrustum& frustum, u32
 
 	// Check frustum visibility and calculate distance to visual's center
 	vis_data& vis = pVisual->vis;
+    if (!shadow_receiver_visible(vis.box)) return;
 	EFC_Visible VIS = frustum.testSAABB(vis.sphere.P, vis.sphere.R, vis.box.data(), planes);
 
 	if (fcvNone == VIS)
+		return;
+
+	if (R4FullDetailRejectStatic(pVisual, i_mask[CDSGraphManager::fl_normal]))
 		return;
 
 #if RENDER!=R_R1
@@ -610,8 +710,13 @@ void CDSGraphManager::add_Static(IRenderVisual* piVisual, CFrustum& frustum, u32
 		if (ssa > r_ssaLOD_B)
 #endif
 		{
-			// Add all children, perform tests
-			add_leafs_Static(pV->children);
+            if (fcvPartial == VIS)
+            {
+                for (auto V : pV->children)
+                    add_Static(V, frustum, planes);
+            }
+            else
+                add_leafs_Static(pV->children);
 		}
 	}break;
 
@@ -638,6 +743,7 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 
 	// Check visibility against all active frustums and propagate per-frustum masks.
 	vis_data& vis = pVisual->vis;
+    if (!shadow_receiver_visible(vis.box)) return;
 	bool anyVisible = false;
 	bool hasFullyVisibleFrustum = false;
 	xr_vector<u32> childMasks;
@@ -655,7 +761,7 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 			anyVisible = true;
 			hasFullyVisibleFrustum = true;
 			childMasks[i] = FULLY_VISIBLE_MASK;
-			continue;
+            break;
 		}
 
 		EFC_Visible VIS = frustums[i].testSAABB(vis.sphere.P, vis.sphere.R, vis.box.data(), planeMask);
@@ -671,6 +777,7 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 			// Preserve union semantics by marking this frustum as fully visible.
 			hasFullyVisibleFrustum = true;
 			childMasks[i] = FULLY_VISIBLE_MASK;
+            break;
 		}
 		else
 		{
@@ -679,6 +786,9 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 	}
 
 	if (!anyVisible)
+		return;
+
+	if (R4FullDetailRejectStatic(pVisual, i_mask[CDSGraphManager::fl_normal]))
 		return;
 
 #if RENDER!=R_R1
@@ -722,7 +832,13 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 		if (ssa > r_ssaLOD_B)
 #endif
 		{
-			add_leafs_Static(pV->children);
+            if (hasFullyVisibleFrustum)
+                add_leafs_Static(pV->children);
+            else
+            {
+                for (auto V : pV->children)
+                    add_Static_MultiFrustum(V, frustums, childMasks);
+            }
 		}
 	}break;
 
@@ -737,6 +853,10 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 
 void CDSGraphManager::add_leaf_Static(dxRender_Visual* pVisual)
 {
+    if (!shadow_receiver_visible(pVisual->vis.box)) return;
+	if (R4FullDetailRejectStatic(pVisual, i_mask[CDSGraphManager::fl_normal]))
+		return;
+
 #if RENDER!=R_R1
 	if (i_mask[CDSGraphManager::fl_normal])//phase normal
 #endif
@@ -804,3 +924,26 @@ void CDSGraphManager::add_leafs_Static(xr_vector<IRenderVisual*>& children)
 		add_leaf_Static(pV);
 	}
 }
+
+#if defined(USE_DX11) && RENDER == R_R4
+bool CDSGraphManager::ApplyPreparedStatic(const PreparedStaticCommand& command, const CFrustum& view)
+{
+    dxRender_Visual* visual = command.visual;
+    if (!visual) return false;
+    if (command.kind == PreparedStaticCommand::Fallback)
+    {
+        if (command.full) add_leaf_Static(visual);
+        else
+        {
+            CFrustum frustum = view;
+            add_Static(visual, frustum, command.planes);
+        }
+        return true;
+    }
+    if (!i_mask[fl_normal] && visual->flags.test(IRenderVisualFlags::eNoShadow)) return false;
+    if (!shadow_receiver_visible(visual->vis.box) || R4FullDetailRejectStatic(visual, i_mask[fl_normal])) return false;
+    if (i_mask[fl_normal] && !RImplementation.HOM.visible(visual->vis)) return false;
+    if (command.kind == PreparedStaticCommand::Leaf) r_dsgraph_insert_static(visual);
+    return true;
+}
+#endif
