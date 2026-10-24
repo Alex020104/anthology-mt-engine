@@ -147,6 +147,10 @@ extern CUISequencer* g_tutorial2;
 void CLevel::net_Stop()
 {
     Device.ResetLuaGCState();
+	{
+		xrCriticalSectionGuard guard(m_level_change_guard);
+		m_level_change_pending.store(false);
+	}
 	Msg("- Disconnect");
 
 	if (CurrentGameUI())
@@ -324,6 +328,25 @@ extern BOOL g_SV_Disable_Auth_Check;
 void CLevel::Send(NET_Packet& P, u32 dwFlags, u32 dwTimeout)
 {
 	if (IsDemoPlayStarted() || IsDemoPlayFinished()) return;
+	if (psNET_direct_connect && !Device.IsMainThread() && P.B.count >= sizeof(u16))
+	{
+		u16 message;
+		CopyMemory(&message, P.B.data, sizeof(message));
+		if (message == M_CHANGE_LEVEL)
+		{
+			xrCriticalSectionGuard guard(m_level_change_guard);
+			// Match the server's first-transition-wins rule, and keep storage bounded.
+			if (!m_level_change_pending.load())
+			{
+				m_level_change_packet = P;
+				m_level_change_flags = dwFlags;
+				m_level_change_timeout = dwTimeout;
+				m_level_change_pending.store(true);
+				Msg("* [level-change] deferred to main thread from=%u", GetCurrentThreadId());
+			}
+			return;
+		}
+	}
 	// optimize the case when server located in our memory
 	if (psNET_direct_connect)
 	{
@@ -347,6 +370,32 @@ void CLevel::Send(NET_Packet& P, u32 dwFlags, u32 dwTimeout)
 		phTimefactor = 1.f;
 		psDeviceFlags.set(rsConstantFPS,FALSE);
 	}
+}
+
+void CLevel::ProcessDeferredLevelChange()
+{
+	if (!m_level_change_pending.load())
+		return;
+	R_ASSERT(Device.IsMainThread());
+	NET_Packet packet;
+	u32 flags, timeout;
+	{
+		xrCriticalSectionGuard guard(m_level_change_guard);
+		if (!m_level_change_pending.load())
+			return;
+		packet = m_level_change_packet;
+		flags = m_level_change_flags;
+		timeout = m_level_change_timeout;
+		m_level_change_pending.store(false);
+	}
+	// The packet belongs to this CLevel only; never carry it across a disconnect.
+	if (!Server || net_isDisconnected() || Engine.Event.Peek("KERNEL:disconnect"))
+	{
+		Msg("* [level-change] discarded deferred request during disconnect");
+		return;
+	}
+	Msg("* [level-change] processing deferred request on main thread=%u", GetCurrentThreadId());
+	Send(packet, flags, timeout);
 }
 
 void CLevel::net_Update()

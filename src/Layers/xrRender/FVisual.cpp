@@ -254,11 +254,32 @@ void Fvisual::CommitShaderTexture()
 	dxRender_Visual::CommitShaderTexture();
 }
 
+bool Fvisual::CanUseFastShadow() const
+{
+#if RENDER != R_R1
+	if (!m_fast || RCache.RenderPhase(RImplementation.phase) != CRender::PHASE_SMAP || RCache.is_TessEnabled())
+		return false;
+#if defined(USE_DX11) && RENDER == R_R4
+    // Addon shadow shaders may need UVs/normals absent from the position-only mesh.
+    const auto* shadow = shader ? shader->E[SE_R2_SHADOW]._get() : nullptr;
+    if (shadow)
+        for (const auto& pass : shadow->passes)
+            if (pass->vs && pass->vs->tree_shadow_inputs == 1 && RCache.matches_shadow_batch_pass(*pass))
+                return true;
+    return false;
+#else
+    return true;
+#endif
+#else
+    return false;
+#endif
+}
+
 void Fvisual::Render(float)
 {
 	PROF_EVENT("Fvisual::Render");
 #if (RENDER==R_R2) || (RENDER==R_R3) || (RENDER==R_R4)
-	if (m_fast && RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_SMAP && !RCache.is_TessEnabled())
+	if (CanUseFastShadow())
 	{
 		RCache.set_Geometry(m_fast->rm_geom);
 		RCache.Render(D3DPT_TRIANGLELIST, m_fast->vBase, 0, m_fast->vCount, m_fast->iBase, m_fast->dwPrimitives);
@@ -453,7 +474,8 @@ void Fvisual::BuildStaticBatches(const xr_vector<dxRender_Visual*>& visuals)
 bool Fvisual::ShadowBatchPassSafe(const SPass& pass)
 {
     return pass.vs && pass.ps && pass.state && pass.state->state && pass.constants &&
-        pass.vs->shadow_depth_cache_safe && pass.ps->shadow_batch_safe && NativeShadowHandlers(pass.constants._get()) &&
+        pass.vs->shadow_depth_cache_safe && pass.vs->tree_shadow_inputs == 1 &&
+        pass.ps->shadow_batch_safe && NativeShadowHandlers(pass.constants._get()) &&
         pass.state->state->ShadowBatchSafe() && IsNativeShadowMatrix(pass.constants->get("m_WVP")) &&
         !(pass.gs && pass.gs->gs) && !(pass.hs && pass.hs->sh) && !(pass.ds && pass.ds->sh) && !(pass.cs && pass.cs->sh);
 }

@@ -72,7 +72,7 @@ void FProgressive::Render(float LOD)
 {
 	PROF_EVENT("FProgressive::Render");
 #if RENDER!=R_R1
-	if (m_fast && RCache.RenderPhase(RImplementation.phase) == CRender::PHASE_SMAP)
+	if (CanUseFastShadow())
 	{
 		int lod_id = iFloor((1.f - clampr(LOD, 0.f, 1.f)) * float(xSWI->count - 1) + 0.5f);
 		VERIFY(lod_id>=0 && lod_id<int(xSWI->count));

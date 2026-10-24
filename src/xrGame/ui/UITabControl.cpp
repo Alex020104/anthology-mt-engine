@@ -176,6 +176,7 @@ void CUITabControl::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
 			if (m_TabsArr[i] == pWnd)
 			{
 				m_sPushedId = m_TabsArr[i]->m_btn_id;
+				EnsureVisible(m_sPushedId);
 				if (m_sPrevPushedId == m_sPushedId)
 					return;
 
@@ -233,7 +234,10 @@ void CUITabControl::OnTabChange(const shared_str& sCur, const shared_str& sPrev)
 void CUITabControl::SetActiveTab(const shared_str& sNewTab)
 {
 	if (m_sPushedId == sNewTab)
+	{
+		EnsureVisible(m_sPushedId);
 		return;
+	}
 
 	m_sPushedId = sNewTab;
 	OnTabChange(m_sPushedId, m_sPrevPushedId);

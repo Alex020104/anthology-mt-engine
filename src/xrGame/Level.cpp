@@ -1307,6 +1307,7 @@ BOOL mt_TaskManager = FALSE;
 void CLevel::OnFrame()
 {
 	PROF_EVENT("CLevel::OnFrame()");
+	ProcessDeferredLevelChange();
 	const bool measure_detail = mt_FrameProfile && mt_FrameProfileDetailed && !Device.dwPrecacheFrame;
 	const u64 level_frame_started_at = measure_detail ? CPU::QPC() : 0;
 	u64 phase_started_at = level_frame_started_at;

@@ -933,6 +933,7 @@ void CEnvironment::load()
 
 void CEnvironment::unload()
 {
+	ClearSkyRotationOverride();
 	EnvsMapIt _I, _E;
 	// clear weathers
 	_I = WeatherCycles.begin();

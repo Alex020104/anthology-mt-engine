@@ -411,6 +411,14 @@ extern float ps_r__ssaDISCARD_exp;
 extern float ps_r__ssaDISCARD_fade_k;
 void CDetailManager::UpdateVisibleM()
 {
+#ifndef _EDITOR
+    // The detail worker can arrive before the renderer has rebuilt HOM.
+    // Join its per-frame preparation before reading the raster. Lens frames
+    // retain the main-camera grass set, so their different HOM cannot cull it.
+    const bool use_hom = !RDEVICE.m_SecondViewport.IsSVPFrame();
+    if (use_hom)
+        RImplementation.HOM.MT_RENDER();
+#endif
     m_visible_bounds.invalidate();
 	Fvector EYE = RDEVICE.vCameraPosition_saved;
 
@@ -488,7 +496,7 @@ void CDetailManager::UpdateVisibleM()
 					}
 				}
 #ifndef _EDITOR
-				if (!RImplementation.HOM.visible(S.vis))
+				if (use_hom && !RImplementation.HOM.visible(S.vis.box))
 				{
 					continue; // invisible-occlusion
 				}

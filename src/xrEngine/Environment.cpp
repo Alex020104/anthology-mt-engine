@@ -506,7 +506,28 @@ void CEnvironment::lerp(float& current_weight)
 	if (!m_paused)
 		CurrentEnv->lerp(this, *Current[0], *Current[1], current_weight, EM, mpower);
 
+	// Script updates are scheduled, while weather interpolation runs every frame.
+	// Keep an explicitly owned sky angle across frames between script updates.
+	if (sky_rotation_override_active)
+		CurrentEnv->sky_rotation = sky_rotation_override;
+
 	//Msg("Puddles amount: %f", wetness_factor);
+}
+
+bool CEnvironment::SetSkyRotationOverride(float angle)
+{
+	if (!_valid(angle))
+		return false;
+	sky_rotation_override = angle_normalize(angle);
+	sky_rotation_override_active = true;
+	if (CurrentEnv)
+		CurrentEnv->sky_rotation = sky_rotation_override;
+	return true;
+}
+
+void CEnvironment::ClearSkyRotationOverride()
+{
+	sky_rotation_override_active = false;
 }
 
 void CEnvironment::set_lerp(float current_weight)

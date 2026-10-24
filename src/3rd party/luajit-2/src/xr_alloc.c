@@ -26,6 +26,13 @@ extern PNTAVM ntavm;
 
 static int inited = 0;
 static unsigned reserve_status;
+
+size_t XR_GC_THRESHOLD_LIMIT(void)
+{
+	/* Leave room for allocator overhead and allocations during an unfinished cycle. */
+	return ((size_t)CHUNK_COUNT * CHUNK_SIZE / 4) * 3;
+}
+
 void* g_heap;
 char g_heapMap[CHUNK_COUNT + 1];
 char* g_firstFreeChunk;

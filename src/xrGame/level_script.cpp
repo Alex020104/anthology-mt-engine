@@ -1404,6 +1404,16 @@ bool has_active_tutotial()
 	return (g_tutorial != NULL);
 }
 
+bool set_sky_rotation_override(float angle)
+{
+	return environment()->SetSkyRotationOverride(angle);
+}
+
+void clear_sky_rotation_override()
+{
+	environment()->ClearSkyRotationOverride();
+}
+
 float get_weather_value_numric(LPCSTR name)
 {
 	CEnvDescriptor& E = *environment()->CurrentEnv;
@@ -3005,6 +3015,8 @@ void CLevel::script_register(lua_State* L)
 		def("pause", pause_weather),
 		def("is_paused",is_weather_paused),
 		def("set_value_numric", set_weather_value_numric),
+		def("set_sky_rotation_override", set_sky_rotation_override),
+		def("clear_sky_rotation_override", clear_sky_rotation_override),
 		def("set_value_vector", set_weather_value_vector),
 		def("set_value_string", set_weather_value_string),
 		def("reload", reload_weather),

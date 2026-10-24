@@ -1,0 +1,4 @@
+-- AOE: launcher compatibility is handled in CHUDManager for zoom type 2.
+-- Changing global console flags here also changes the user's saved checkboxes.
+function on_game_start()
+end

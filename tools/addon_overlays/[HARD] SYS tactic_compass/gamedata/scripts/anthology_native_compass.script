@@ -1,0 +1,103 @@
+-- Configuration and addon callbacks only. The engine owns marker discovery,
+-- controls, projection, smoothing, distance text and arrows.
+local function settings()
+    local get = compass_mcm.get_config
+    local result = {
+        top = get("tc_main/compass_sc_pos") == 1,
+        offset_x = tonumber(get("tc_main/compass_pos_x")) or 0,
+        offset_y = tonumber(get("tc_main/compass_pos_y")) or 0,
+        width = tc_variables.TC_COMPASS_WIDTH,
+        fade = tc_variables.TC_FADE_DISTANCE,
+        categories = {}, spots = {},
+    }
+    for name in pairs(markers_definitions.marker_configs) do
+        result.categories[name] = markers_utils.define_distance_to_marker(name)
+    end
+    for spot, category in pairs(markers_definitions.marker_categories) do
+        if not markers_definitions.blacklisted_categories[spot] then result.spots[spot] = category end
+    end
+    for spot, category in pairs(markers_definitions.transition_types) do
+        if not markers_definitions.blacklisted_categories[spot] then result.spots[spot] = category end
+    end
+    return result
+end
+
+function bind(api, ribbon)
+    api.native_backend = true
+    local hud, shown, next_visibility = nil, true, 0
+    local looted, legacy_markers = {}, {}
+    local function configure()
+        if hud then hud:Configure(settings()) end
+    end
+    local function activate()
+        if hud then return end
+        hud = CUIAddonCompass()
+        hud:Init(ribbon)
+        configure()
+        for id, value in pairs(looted) do
+            id = tonumber(id)
+            if value and id and id >= 0 and id < 65535 then hud:Looted(id, true) end
+        end
+        hud:SetEnabled(shown)
+        hud:SetHudVisible(main_hud_shown() and true or false)
+        get_hud():AddDialogToRender(hud)
+    end
+    local function deactivate()
+        if not hud then return end
+        hud:SetEnabled(false)
+        get_hud():RemoveDialogToRender(hud)
+        hud = nil
+    end
+    local function visibility()
+        if not hud or time_global() < next_visibility then return end
+        next_visibility = time_global() + 125
+        hud:SetHudVisible(main_hud_shown() and true or false)
+    end
+    local function toggle(key)
+        if key ~= compass_mcm.get_config("tc_keybinds/keybind") then return end
+        shown = not shown
+        if hud then hud:SetEnabled(shown) end
+    end
+    local function invalidate()
+        if hud then hud:Invalidate() end
+    end
+    local function load(data)
+        looted = type(data.looted_corpses) == "table" and data.looted_corpses or {}
+        legacy_markers = type(data.init_markers) == "table" and data.init_markers or {}
+    end
+    local function save(data)
+        -- Preserve the existing save schema; the live catalogue belongs to MapManager.
+        data.looted_corpses = looted
+        data.init_markers = legacy_markers
+    end
+    local function used(npc)
+        if not npc or npc:alive() then return end
+        local id = npc:id()
+        looted[id] = true
+        if hud then hud:Looted(id, true) end
+    end
+    api.on_game_start = function()
+        RegisterScriptCallback("actor_on_first_update", activate)
+        RegisterScriptCallback("actor_on_net_destroy", deactivate)
+        RegisterScriptCallback("actor_on_before_death", deactivate)
+        RegisterScriptCallback("actor_on_update", visibility)
+        RegisterScriptCallback("on_option_change", configure)
+        RegisterScriptCallback("on_key_press", toggle)
+        if not ribbon then
+            RegisterScriptCallback("load_state", load)
+            RegisterScriptCallback("save_state", save)
+            RegisterScriptCallback("npc_on_use", used)
+        end
+    end
+    if ribbon then
+        api.activate_compass, api.deactivate_compass, api.compass_toggle = activate, deactivate, toggle
+        api.tactic_compass_is_visible = function() return shown end
+    else
+        api.activate_markers, api.deactivate_markers, api.markers_toggle = activate, deactivate, toggle
+        api.map_location_added, api.begin_marker_collection = invalidate, invalidate
+        api.remove_old_marker, api.clear_marker = invalidate, invalidate
+        api.on_check_spot_existing, api.marker_background_update = invalidate, invalidate
+        api.load_state, api.save_state, api.npc_on_use = load, save, used
+        api.actor_on_first_update = activate
+    end
+end

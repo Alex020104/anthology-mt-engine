@@ -14,6 +14,7 @@
 #include "Level_network_map_sync.h"
 #include "secure_messaging.h"
 #include "traffic_optimization.h"
+#include <atomic>
 
 class CHUDManager;
 class CParticlesObject;
@@ -122,6 +123,14 @@ public:
 	virtual void OnConnectRejected();
 
 private:
+	// A local transition can originate in the script worker, but loading owns render resources.
+	xrCriticalSection m_level_change_guard;
+	std::atomic<bool> m_level_change_pending{false};
+	NET_Packet m_level_change_packet;
+	u32 m_level_change_flags = 0;
+	u32 m_level_change_timeout = 0;
+	void ProcessDeferredLevelChange();
+
 	void OnSecureMessage(NET_Packet& P);
 	void OnSecureKeySync(NET_Packet& P);
 	void SecureSend(NET_Packet& P, u32 dwFlags = DPNSEND_GUARANTEED, u32 dwTimeout = 0);

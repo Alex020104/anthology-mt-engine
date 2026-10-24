@@ -106,6 +106,9 @@ void CDetailManager::hw_Load_Shaders()
 void CDetailManager::hw_Render(light* L)
 {
 	PROF_EVENT("CDetailManager::hw_Render");
+	// Shadow passes also enter here directly; maps such as fake_start have no details.
+	if (!dtFS || !hw_Geom)
+		return;
 	// Render-prepare
 	//	Update timer
 	//	Can't use Device.fTimeDelta since it is smoothed! Don't know why, but smoothed value looks more choppy!

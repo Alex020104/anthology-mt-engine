@@ -1,0 +1,165 @@
+-- RVR ActiveStorages Nil Guard (wrap in on_game_start / actor_on_first_update; no filename prefix needed)
+-- RVR ActiveStorages Nil Guard
+-- Anomaly 1.5.3 / Anthology 2.1
+--
+-- [GAM] Optimized Storage System patches ui_inventory.start at file load and
+-- indexes global ActiveStorages without a nil check (engine.script:1835).
+-- ActiveStorages is only created in InitActiveStorages(), which runs from
+-- actor_on_first_update -> init(). If that path did not populate the table
+-- (missed/aborted init after save load), opening any inventory with obj
+-- (anomalous stash via Dotmarks) fatals:
+--   attempt to index global 'ActiveStorages' (a nil value)
+--
+-- Fix: ensure module.ActiveStorages is a table (and try InitDefault/InitActive)
+-- before the RVR patch runs, via an outer ui_inventory.start wrap + heal on
+-- actor_on_first_update. Does not replace upstream files.
+
+local LOG_TAG = "[fix_rvr_active_storages_nil]"
+local VERSION = "1.0.1"
+local MODULE_NAME = "rvr_storage_system_engine"
+local LOG_INTERVAL_MS = 1000
+
+printf("%s loaded v%s", LOG_TAG, VERSION)
+
+local orig_start = nil
+local installed = false
+local callbacks_registered = false
+local heal_count = 0
+local last_log_tg = 0
+
+local function module_of()
+	return rawget(_G, MODULE_NAME)
+end
+
+local function log_heal(reason)
+	heal_count = heal_count + 1
+	local now = time_global()
+	if (now - last_log_tg) < LOG_INTERVAL_MS then
+		return
+	end
+	last_log_tg = now
+	printf(
+		"%s healed ActiveStorages reason=%s (batch_total=%s)",
+		LOG_TAG,
+		tostring(reason),
+		tostring(heal_count)
+	)
+end
+
+local function run_init_pipeline(mod, reason)
+	if type(mod.InitDefaultStorages) == "function" then
+		local ok, err = pcall(mod.InitDefaultStorages)
+		if not ok then
+			printf("%s InitDefaultStorages failed (%s): %s", LOG_TAG, tostring(reason), tostring(err))
+		end
+	end
+
+	if type(mod.InitActiveStorages) == "function" then
+		local ok, err = pcall(mod.InitActiveStorages)
+		if not ok then
+			printf("%s InitActiveStorages failed (%s): %s", LOG_TAG, tostring(reason), tostring(err))
+		end
+	end
+
+	if type(mod.ActiveStorages) ~= "table" then
+		mod.ActiveStorages = {}
+	end
+end
+
+-- Returns true when RVR module exists. If ActiveStorages was nil, creates {}
+-- and optionally rebuilds from RVRData via InitDefault/InitActive.
+local function ensure_active_storages(reason, do_init)
+	local mod = module_of()
+	if type(mod) ~= "table" then
+		return false
+	end
+
+	local was_nil = type(mod.ActiveStorages) ~= "table"
+	if was_nil then
+		mod.ActiveStorages = {}
+		log_heal(reason)
+	end
+
+	if do_init and (was_nil or next(mod.ActiveStorages) == nil) then
+		run_init_pipeline(mod, reason)
+	end
+
+	return true
+end
+
+function guarded_ui_inventory_start(mode, obj)
+	-- Heal before RVR's inner patch indexes ActiveStorages[obj:id()].
+	ensure_active_storages("ui_inventory.start", true)
+	if not orig_start then
+		return
+	end
+	return orig_start(mode, obj)
+end
+
+local function wraps_ok()
+	return ui_inventory and ui_inventory.start == guarded_ui_inventory_start and type(orig_start) == "function"
+end
+
+local function install()
+	-- Other addons may wrap this guard. Recapturing their wrapper here
+	-- creates a cycle: guard -> outer wrapper -> guard.
+	if installed then
+		return type(orig_start) == "function"
+	end
+
+	if not (ui_inventory and type(ui_inventory.start) == "function") then
+		printf("%s ui_inventory.start not found - guard NOT installed", LOG_TAG)
+		return false
+	end
+
+	local mod = module_of()
+	if type(mod) ~= "table" then
+		printf("%s %s not found - guard NOT installed", LOG_TAG, MODULE_NAME)
+		return false
+	end
+
+	if ui_inventory.start == guarded_ui_inventory_start then
+		installed = type(orig_start) == "function"
+		return installed
+	end
+
+	orig_start = ui_inventory.start
+	ui_inventory.start = guarded_ui_inventory_start
+	installed = true
+	printf("%s guard installed v%s", LOG_TAG, VERSION)
+	return true
+end
+
+local function uninstall()
+	if wraps_ok() then
+		ui_inventory.start = orig_start
+		orig_start = nil
+		installed = false
+	end
+	-- A later addon still holds our wrapper when it is not the outermost
+	-- entry. Keep its original callable for that chain and the next load.
+end
+
+function on_actor_first_update()
+	-- After load_state: rebuild if RVR init missed this session.
+	ensure_active_storages("actor_on_first_update", true)
+	install()
+end
+
+function on_game_start()
+	-- Do not Init* here: load_state may not have restored RVRData yet.
+	install()
+
+	if not callbacks_registered then
+		RegisterScriptCallback("actor_on_first_update", on_actor_first_update)
+		callbacks_registered = true
+	end
+end
+
+function on_game_end()
+	if callbacks_registered then
+		UnregisterScriptCallback("actor_on_first_update", on_actor_first_update)
+		callbacks_registered = false
+	end
+	uninstall()
+end

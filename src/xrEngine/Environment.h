@@ -359,6 +359,14 @@ public:
 	void OnFrame();
 	void lerp(float& current_weight);
     void set_lerp(float current_weight);
+	bool SetSkyRotationOverride(float angle);
+	void ClearSkyRotationOverride();
+
+private:
+	bool sky_rotation_override_active = false;
+	float sky_rotation_override = 0.f;
+
+public:
 
 	void RenderSky(bool only_MV = false);
 	void RenderClouds();

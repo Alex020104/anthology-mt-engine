@@ -53,6 +53,7 @@ public:
 	CUIStatic* m_ind_boost_rad;
 
 public:
+	void SetInteractionPrompt(bool enabled);
 	void ShowZoneMap(bool status);
 	void DrawZoneMap();
 	void UpdateZoneMap();
@@ -70,6 +71,7 @@ public:
 	CUITextWnd* m_QuickSlotText3;
 	CUITextWnd* m_QuickSlotText4;
 protected:
+	bool m_interaction_prompt_enabled = true;
 	// 5 статиков для отображения иконок:
 	// - сломанного оружия(only mp)
 	// - радиации

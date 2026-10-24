@@ -963,7 +963,13 @@ static size_t gc_onestep(lua_State *L)
       setgcrefr(g->gc.udscananchor, g->gc.udscanprev);
       g->gc.udscanmode = UDSCAN_PREFIX;
       g->gc.state = GCSseparate;
-      return LJ_MAX_MEM;
+      /* Close a short new prefix and enter atomic in the same GC step.
+      ** Yielding here unconditionally lets every subsequent allocation add
+      ** another prefix, so allocation-driven GC can never reach sweep. */
+      {
+        size_t cost = gc_udata_scan_step(g);
+        if (g->gc.state != GCSatomic) return cost;
+      }
     }
     atomic(g, L);
     g->gc.state = GCSsweepstring;  /* Start of sweep phase. */
@@ -1020,6 +1026,14 @@ static size_t gc_onestep(lua_State *L)
   }
 }
 
+/* A pause must end before the fixed low-address pool runs out of room. */
+MSize lj_gc_nextcycle(global_State *g)
+{
+  uint64_t threshold = (uint64_t)(g->gc.estimate/100) * g->gc.pause;
+  MSize limit = (MSize)XR_GC_THRESHOLD_LIMIT();
+  return threshold < limit ? (MSize)threshold : limit;
+}
+
 /* Perform a limited amount of incremental GC steps. */
 int LJ_FASTCALL lj_gc_step(lua_State *L)
 {
@@ -1036,7 +1050,7 @@ int LJ_FASTCALL lj_gc_step(lua_State *L)
   do {
     lim -= (MSize)gc_onestep(L);
     if (g->gc.state == GCSpause) {
-      g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
+      g->gc.threshold = lj_gc_nextcycle(g);
       g->vmstate = ostate;
       GC_PROFILE_END();
       return 1;  /* Finished a GC cycle. */
@@ -1099,7 +1113,7 @@ void lj_gc_fullgc(lua_State *L)
   /* Now perform a full GC. */
   g->gc.state = GCSpause;
   do { gc_onestep(L); } while (g->gc.state != GCSpause);
-  g->gc.threshold = (g->gc.estimate/100) * g->gc.pause;
+  g->gc.threshold = lj_gc_nextcycle(g);
   g->vmstate = ostate;
   GC_PROFILE_END();
 }

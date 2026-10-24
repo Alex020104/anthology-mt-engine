@@ -1,0 +1,31 @@
+local filters = {}
+
+local function class_filter(kind)
+    if filters[kind] then return filters[kind] end
+    local classes = {}
+    -- The engine exports clsid as userdata and clsid_table as its iterable mirror.
+    for _, id in pairs(clsid_table or {}) do
+        if type(id) == "number" then
+            local matches = kind == "npc" and (IsStalker(nil,id) or IsTrader(nil,id))
+                or kind == "monster" and IsMonster(nil,id)
+                or kind == "stalker" and IsStalker(nil,id)
+                or kind == "box" and IsInvbox(nil,id)
+                or kind == "smart" and id == clsid.smart_terrain
+            if matches then classes[id] = true end
+        end
+    end
+    filters[kind] = {classes=classes}
+    return filters[kind]
+end
+
+function npc_ids()
+    if not (level and level.addon_object_ids) then return {} end
+    return level.addon_object_ids(class_filter("npc"))
+end
+
+function task_ids(kind)
+    if not (level and level.addon_object_ids) then return {} end
+    local filter = kind == 1 and "monster" or (kind == 2 or kind == 5) and "stalker"
+        or kind == 3 and "smart" or (kind == 4 or kind == 6 or kind == 9 or kind == 10) and "box"
+    return filter and level.addon_object_ids(class_filter(filter)) or {}
+end

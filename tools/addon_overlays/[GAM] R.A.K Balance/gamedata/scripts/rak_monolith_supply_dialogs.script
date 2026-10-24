@@ -1,0 +1,191 @@
+local S = rak_monolith_supply
+local R = rak_monolith_supply_roles
+local classes = {"pistol", "shotgun", "assault", "machinegun", "sniper"}
+local patched = false
+
+local function npc(a, b)
+    if not a or not b then return nil end
+    return dialogs.who_is_npc(a, b)
+end
+
+function can_request(a, b)
+    return R.is_commander(npc(a, b))
+end
+
+function can_collect(a, b)
+    local obj = npc(a, b)
+    for _, c in ipairs(S.pending_categories()) do if S.can_collect(obj, c) then return true end end
+    return false
+end
+
+-- Cached dialog graphs must refer to permanent module functions. Generated
+-- _request_N closures disappear on module reload and may change meaning when
+-- a second graph is built. Store the arguments in the native phrase instead.
+local function cb(name, ...)
+    local args = {...}
+    if #args == 0 then return "rak_monolith_supply_dialogs." .. name end
+    return "rak_monolith_supply_dialogs." .. name .. "(" .. table.concat(args, ":") .. ")"
+end
+
+function category_available(a, b, _, _, _, p)
+    return p and p[1] and can_request(a, b) and S.available(p[1]) or false
+end
+function class_available(a, b, _, _, _, p)
+    return p and p[1] and p[2] and #S.choices(p[1], p[2]) > 0 or false
+end
+function choice_available(a, b, _, _, _, p)
+    return p and p[1] and p[2] and S.choice_available(p[1], p[2], p[3]) or false
+end
+function collect_available(a, b, _, _, _, p)
+    return p and p[1] and S.can_collect(npc(a, b), p[1]) or false
+end
+function open_selection(a, b, _, _, _, p)
+    rak_monolith_supply_ui.open(npc(a, b), p and p[1])
+end
+function request_item(a, b, _, _, _, p)
+    if p and p[1] then S.request(npc(a, b), p[1], p[2], p[3]) end
+end
+function collect_item(a, b, _, _, _, p)
+    if p and p[1] then S.collect(npc(a, b), p[1]) end
+end
+function item_text(a, b, _, _, _, p)
+    local section = p and p[1]
+    if not section then return "" end
+    local key = system_ini():r_string_ex(section, "inv_name") or section
+    return game.translate_string(key)
+end
+function result_text() return S.result_text() end
+function status_text() return S.status_text() end
+
+local function builder(dialog)
+    local next_id = 0
+    return function(parent, text, condition, action, dynamic)
+        local id = tostring(next_id)
+        next_id = next_id + 1
+        local phrase = dialog:AddPhrase(dynamic and "" or text, id, parent or "", -10000)
+        if not phrase then return id end
+        local script = phrase:GetPhraseScript()
+        if condition then script:AddPrecondition(condition) end
+        if action then script:AddAction(action) end
+        if dynamic then script:SetScriptText(dynamic) end
+        return id
+    end
+end
+
+function init_request(dialog)
+    local add = builder(dialog)
+    if S.option("visual_selection", true) then
+        local root = add(nil, "rak_ms_request", cb("can_request"), cb("open_selection"))
+        add(root, "rak_ms_ui_opening")
+        return
+    end
+    local root = add(nil, "rak_ms_request")
+    local menu = add(root, "rak_ms_choose")
+    for _, category in ipairs(S.pending_categories()) do
+        local category_id = add(menu, "rak_ms_" .. category, cb("category_available", category),
+            not S.is_choice(category) and cb("request_item", category) or nil)
+        if category == "weapon" then
+            local class_menu = add(category_id, "rak_ms_choose_class")
+            for _, class in ipairs(classes) do
+                local branch = add(class_menu, "rak_ms_" .. class, cb("class_available", category, class))
+                local items_menu = add(branch, "rak_ms_choose_item")
+                for _, section in ipairs(S.all_choices(category, class)) do
+                    local option = add(items_menu, "", cb("choice_available", category, section, class),
+                        cb("request_item", category, section, class), cb("item_text", section))
+                    local reply = add(option, "", nil, nil, cb("result_text"))
+                    add(reply, "rak_ms_leave")
+                end
+                add(items_menu, "rak_ms_leave")
+            end
+            add(class_menu, "rak_ms_leave")
+        elseif S.is_choice(category) then
+            local items_menu = add(category_id, "rak_ms_choose_item")
+            for _, section in ipairs(S.all_choices(category)) do
+                local option = add(items_menu, "", cb("choice_available", category, section),
+                    cb("request_item", category, section), cb("item_text", section))
+                local reply = add(option, "", nil, nil, cb("result_text"))
+                add(reply, "rak_ms_leave")
+            end
+            add(items_menu, "rak_ms_leave")
+        else
+            local reply = add(category_id, "", nil, nil, cb("result_text"))
+            add(reply, "rak_ms_leave")
+        end
+    end
+    local status = add(menu, "rak_ms_status")
+    local reply = add(status, "", nil, nil, cb("status_text"))
+    add(reply, "rak_ms_leave")
+    add(menu, "rak_ms_leave")
+end
+
+function init_collect(dialog)
+    local add = builder(dialog)
+    local root = add(nil, "rak_ms_collect")
+    local menu = add(root, "rak_ms_pickup")
+    for _, category in ipairs(S.pending_categories()) do
+        local option = add(menu, "rak_ms_" .. category, cb("collect_available", category), cb("collect_item", category))
+        local reply = add(option, "", nil, nil, cb("result_text"))
+        add(reply, "rak_ms_leave")
+    end
+    add(menu, "rak_ms_leave")
+end
+
+
+function money_blocked(obj)
+    return S.enabled() and S.option("block_money_services", true) and obj and IsStalker(obj)
+        and obj:character_community() == "monolith" or false
+end
+
+function money_allowed(a, b)
+    return not money_blocked(npc(a, b))
+end
+
+local function before_mode(mode, flags, obj)
+    if mode_blocked(mode, obj) then flags.ret = true end
+end
+
+function mode_blocked(mode, obj)
+    if not money_blocked(obj) then return false end
+    if mode == "repair" then return not rak_monolith_supply_services.free_engineer(obj) end
+    return mode == "trade"
+end
+
+local function on_use(obj)
+    if money_blocked(obj) and obj.disable_trade then obj:disable_trade() end
+end
+
+local function patch_entrypoints()
+    if patched then return end
+    patched = true
+    if rawget(_G, "barter_core") then
+        RegisterScriptCallback("barter_ui_on_before_dialog", function(obj, flags)
+            if money_blocked(obj) then flags.result = false end
+        end)
+    end
+    for _, name in ipairs({"npc_is_trader", "npc_is_tech"}) do
+        local original = dialogs[name]
+        if type(original) == "function" then
+            dialogs[name] = function(a, b, ...)
+                if name == "npc_is_tech" and rak_monolith_supply_services.can_upgrade(a, b) then
+                    return original(a, b, ...)
+                end
+                if money_allowed(a, b) then return original(a, b, ...) end
+            end
+        end
+    end
+    -- ui_inventory replaces the native menu and does not respect flags.ret.
+    local ui = rawget(_G, "ui_inventory")
+    if ui and type(ui.start) == "function" then
+        local original = ui.start
+        ui.start = function(mode, obj, ...)
+            if mode_blocked(mode, obj) then return end
+            return original(mode, obj, ...)
+        end
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("ActorMenu_on_before_init_mode", before_mode)
+    RegisterScriptCallback("npc_on_use", on_use)
+    RegisterScriptCallback("actor_on_first_update", patch_entrypoints)
+end

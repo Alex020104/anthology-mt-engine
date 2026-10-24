@@ -161,6 +161,12 @@ void SetCursorPosition_script(Fvector2& pos)
 	GetUICursor().SetUICursorPosition(pos);
 }
 
+static bool same_ui_window(const CUIWindow* left, const CUIWindow* right)
+{
+	// The same native window can have distinct Lua userdata wrappers.
+	return left == right;
+}
+
 template <typename T>
 T* ui_window_cast(CUIWindow* window)
 {
@@ -201,6 +207,7 @@ void CUIWindow::script_register(lua_State* L)
 
 		class_<CUIWindow>("CUIWindow")
 		.def(constructor<>())
+		.def("__eq", &same_ui_window)
 		.def("AttachChild", &CUIWindow::AttachChild, adopt<2>())
 		.def("AttachChildKeepOwner", &CUIWindow::AttachChild)
 		.def("DetachChild", &CUIWindow::DetachChild)

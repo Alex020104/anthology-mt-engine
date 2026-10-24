@@ -403,6 +403,13 @@ void CUIMainIngameWnd::Update()
 } //update
 
 
+void CUIMainIngameWnd::SetInteractionPrompt(bool enabled)
+{
+    m_interaction_prompt_enabled = enabled;
+    if (!enabled && UIStaticQuickHelp)
+        UIStaticQuickHelp->Show(false);
+}
+
 void CUIMainIngameWnd::RenderQuickInfos()
 {
 	CActor* pActor = smart_cast<CActor*>(Level().CurrentViewEntity());
@@ -411,7 +418,7 @@ void CUIMainIngameWnd::RenderQuickInfos()
 
 	static CGameObject* pObject = NULL;
 	LPCSTR actor_action = pActor->GetDefaultActionForObject();
-	UIStaticQuickHelp->Show(NULL != actor_action);
+	UIStaticQuickHelp->Show(m_interaction_prompt_enabled && NULL != actor_action);
 
 	if (NULL != actor_action)
 	{

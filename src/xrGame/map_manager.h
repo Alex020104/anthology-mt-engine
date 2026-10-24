@@ -20,8 +20,10 @@ class CMapManager
 	xr_vector<CMapLocation*> m_deffered_destroy_queue;
 
 	xr_vector<SRemovedSpot> m_removed_spots;
+	u64 m_addon_revision = 0;
 	void QueueRemovedNotify(const shared_str& spot_type, u16 id);
 public:
+	u64 AddonRevision() const { return m_addon_revision; }
 	// called from the main thread only
 	void FlushRemovedNotify();
 
@@ -48,7 +50,7 @@ public:
 	void ReloadSpots();
 	bool GetMapLocationsForObject(u16 id, xr_vector<CMapLocation*>& res);
 	void OnObjectDestroyNotify(u16 id);
-	void ResetStorage() { m_locations = NULL; m_removed_spots.clear_not_free(); };
+	void ResetStorage() { m_locations = NULL; m_removed_spots.clear_not_free(); ++m_addon_revision; };
 #ifdef DEBUG
 	void					Dump						();
 #endif

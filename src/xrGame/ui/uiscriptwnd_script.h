@@ -38,6 +38,11 @@ struct CWrapperBase : public T, public ::luabind::wrap_base
 
 	virtual void Update()
 	{
+		if (!this->ScriptUpdateDue())
+		{
+			inherited::Update();
+			return;
+		}
 		call_member<void>(this, "Update");
 	}
 

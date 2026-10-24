@@ -625,6 +625,8 @@ LPCSTR CMapLocation::GetHint()
 	{
 		return NULL;
 	}
+	if (m_hint == "no hint" && m_cached.m_LevelName.size())
+		return CStringTable().translate(m_cached.m_LevelName).c_str();
 	return CStringTable().translate(m_hint).c_str();
 };
 

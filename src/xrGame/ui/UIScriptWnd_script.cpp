@@ -15,6 +15,7 @@
 #include "UITabControl.h"
 
 #include "uiscriptwnd_script.h"
+#include "../AddonRuntime.h"
 
 using namespace luabind;
 
@@ -34,7 +35,13 @@ void CUIDialogWndEx::script_register(lua_State* L)
 			)
 		)
 		.def("Load", &BaseType::Load)
+		.def("ConfigureNativeMarker", &BaseType::ConfigureNativeMarker)
+		.def("SampleNativeMarker", &BaseType::SampleNativeMarker)
+		.def("SetNativeMarkerVisible", &BaseType::SetNativeMarkerVisible)
+		.def("ClearNativeMarker", &BaseType::ClearNativeMarker)
+		.def("SetNativeMarkerPolicyInterval", &BaseType::SetNativeMarkerPolicyInterval)
 	];
+	register_addon_runtime(L);
 }
 
 export_class script_register_ui_window1(export_class &&instance)

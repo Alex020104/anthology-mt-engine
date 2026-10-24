@@ -151,6 +151,7 @@ void IGame_Persistent::Start(LPCSTR op)
 void IGame_Persistent::Disconnect()
 {
 #ifndef _EDITOR
+	Environment().ClearSkyRotationOverride();
 	// clear "need to play" particles
 	destroy_particles(true);
 

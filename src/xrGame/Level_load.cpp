@@ -133,9 +133,12 @@ void CLevel::BeginGameSpecificPrepare(LPCSTR canonical_level_path)
 		level_path += '\\';
 	if (m_game_specific_prepare)
 	{
-		R_ASSERT3(!stricmp(m_game_specific_prepare->level_path.c_str(), level_path.c_str()),
-			"Level prepare target changed", level_path.c_str());
-		return;
+		if (!stricmp(m_game_specific_prepare->level_path.c_str(), level_path.c_str()))
+			return;
+		// Save metadata is only a prefetch hint. ALife may resolve another level.
+		// Join every reader before replacing its buffers; never commit the old hint.
+		Msg("* [level-prepare] retarget %s -> %s", m_game_specific_prepare->level_path.c_str(), level_path.c_str());
+		ShutdownGameSpecificPrepare();
 	}
 
 	level_game_specific_prepare* prepared = xr_new<level_game_specific_prepare>();

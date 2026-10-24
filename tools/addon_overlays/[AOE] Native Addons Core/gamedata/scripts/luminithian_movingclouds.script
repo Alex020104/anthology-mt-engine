@@ -1,0 +1,156 @@
+--------------------------------------------------------------------------------
+-- MovingClouds — LUMINithian
+-- STALKER Anomaly 1.5.3 (Modded Exes required)
+--
+-- Slowly rotates sky_rotation via absolute angle owned by this mod.
+-- Spins continuously indoors and outdoors; re-applies every frame
+-- so weather lerp does not reset rotation.
+--
+-- actor_on_update required because weather lerp fights per-tick sets.
+--------------------------------------------------------------------------------
+
+local PERSIST_INTERVAL = 1000
+local DEBUG_INTERVAL = 10000
+
+-- MCM spin_speed fallback (0-5 scale; 5 = default drift).
+local DEFAULT_SPIN_SPEED = 5
+
+local spin_offset = 0.0
+local actor_update_registered = false
+local last_persist_time = 0
+local last_debug_time = 0
+
+
+local function luminithian_movingclouds_get_mcm(id, default)
+    if ui_mcm then
+        local val = ui_mcm.get("luminithian_movingclouds/" .. id)
+        if val ~= nil then
+            return val
+        end
+    end
+    return default
+end
+
+
+function luminithian_movingclouds_debug(fmt, ...)
+    if luminithian_movingclouds_get_mcm("debug", false) then
+        printf("~[MovingClouds - LUMINithian] " .. string.format(fmt, ...))
+    end
+end
+
+
+local function luminithian_movingclouds_get_spin_speed_deg()
+    local speed = luminithian_movingclouds_get_mcm("spin_speed", DEFAULT_SPIN_SPEED)
+    if speed < 0 then speed = 0 elseif speed > 5 then speed = 5 end
+    if speed == 0 then return 0 end
+    return speed / 10000
+end
+
+
+local function luminithian_movingclouds_wrap_radians(val)
+    local two_pi = 2 * math.pi
+    val = val % two_pi
+    if val < 0 then
+        val = val + two_pi
+    end
+    return val
+end
+
+
+local function luminithian_movingclouds_apply_rotation(angle)
+    if not weather or not weather.set_value_numric then
+        return
+    end
+    if weather.set_sky_rotation_override then
+        weather.set_sky_rotation_override(angle)
+    else
+        pcall(weather.set_value_numric, "sky_rotation", angle)
+    end
+end
+
+
+local function luminithian_movingclouds_register_actor_update()
+    if actor_update_registered then
+        return
+    end
+    RegisterScriptCallback("actor_on_update", luminithian_movingclouds_actor_on_update)
+    actor_update_registered = true
+end
+
+
+function luminithian_movingclouds_actor_on_update()
+    if not db.actor then
+        return
+    end
+
+    local deg_per_sec = luminithian_movingclouds_get_spin_speed_deg()
+    if deg_per_sec > 0 then
+        -- device().time_delta is ms, used raw as dt factor on this mod's speed scale.
+        local dt = 0.016
+        if device and device().time_delta then
+            local td = device().time_delta
+            if td and td > 0 then
+                dt = td
+            end
+        end
+
+        spin_offset = luminithian_movingclouds_wrap_radians(
+            spin_offset + (deg_per_sec * math.pi / 180) * dt
+        )
+    end
+
+    luminithian_movingclouds_apply_rotation(spin_offset)
+
+    local now = time_global()
+    if now - last_persist_time >= PERSIST_INTERVAL then
+        last_persist_time = now
+        alife_storage_manager.get_state().luminithian_movingclouds_spin = spin_offset
+    end
+
+    if luminithian_movingclouds_get_mcm("debug", false) then
+        if now - last_debug_time >= DEBUG_INTERVAL then
+            last_debug_time = now
+            luminithian_movingclouds_debug(
+                "tick: speed=%.4f spin=%.4f rad",
+                deg_per_sec,
+                spin_offset
+            )
+        end
+    end
+end
+
+
+function luminithian_movingclouds_bootstrap()
+    if not db.actor then
+        return
+    end
+
+    local state = alife_storage_manager.get_state()
+    if state.luminithian_movingclouds_spin then
+        spin_offset = state.luminithian_movingclouds_spin
+    elseif state.luminised_skypin_spin then
+        -- Migrate angle from LUMINised_SkySpin prototype if present.
+        spin_offset = state.luminised_skypin_spin
+    end
+
+    luminithian_movingclouds_register_actor_update()
+    luminithian_movingclouds_apply_rotation(spin_offset)
+
+    luminithian_movingclouds_debug("bootstrap spin=%.4f rad", spin_offset)
+end
+
+
+function luminithian_movingclouds_on_option_change()
+    if not db.actor then
+        return
+    end
+
+    luminithian_movingclouds_debug("MCM options refreshed")
+end
+
+
+function on_game_start()
+    RegisterScriptCallback("actor_on_first_update", luminithian_movingclouds_bootstrap)
+    RegisterScriptCallback("on_game_load", luminithian_movingclouds_bootstrap)
+    RegisterScriptCallback("on_option_change", luminithian_movingclouds_on_option_change)
+end

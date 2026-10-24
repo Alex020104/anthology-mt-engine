@@ -281,7 +281,7 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
 		ID3DState* pState = nullptr;
 		STextureList* pTextures = nullptr;
 
-        u64 high = 0;
+        bool first_packet = true;
 
         #if defined(USE_DX11) && RENDER == R_R4
         std::shared_ptr<Fvisual::StaticBatch> batch;
@@ -317,64 +317,61 @@ void CDSGraphManager::r_dsgraph_render_graph(RenderQueueArray& queues, u32 _prio
             if (batch && (!eligible || batch != mesh->static_batch || batch_pass != pass || batch_lod != packet_lod ||
                 !aoe_render::adjacent_static_range(batch_first, batch_count, mesh->static_batch_first_index))) flush_static();
 #endif
-            auto& currentKey = packet.sortKey;
-            if (currentKey.high != high)
+            // Sort keys contain only 16 address bits per resource. Equal keys
+            // do not prove equal pipelines, and the first packet must unbind
+            // null GS/HS/DS stages inherited from an earlier render pass.
+            if (first_packet || packet.pState != pState)
             {
-                high = currentKey.high;
-
-                if (packet.pState != pState)
-                {
-                    pState = packet.pState;
-                    RCache.set_States(pState);
-                }
-
-#if defined(USE_DX10) || defined(USE_DX11)
-                if (packet.pGS != pGS)
-                {
-                    pGS = packet.pGS;
-                    RCache.set_GS(pGS);
-                }
-#endif
-
-#ifdef USE_DX11
-                if (packet.pHS != pHS)
-                {
-                    pHS = packet.pHS;
-                    RCache.set_HS(pHS);
-                }
-                if (packet.pDS != pDS)
-                {
-                    pDS = packet.pDS;
-                    RCache.set_DS(pDS);
-                }
-#endif
+                pState = packet.pState;
+                RCache.set_States(pState);
             }
+#if defined(USE_DX10) || defined(USE_DX11)
+            if (first_packet || packet.pGS != pGS)
+            {
+                pGS = packet.pGS;
+                RCache.set_GS(pGS);
+            }
+#endif
+#ifdef USE_DX11
+            if (first_packet || packet.pHS != pHS)
+            {
+                pHS = packet.pHS;
+                RCache.set_HS(pHS);
+            }
+            if (first_packet || packet.pDS != pDS)
+            {
+                pDS = packet.pDS;
+                RCache.set_DS(pDS);
+            }
+#endif
 
             // Compare low key stuff regardless, too high collision probability
-            if (packet.pVS != pVS)
+            if (first_packet || packet.pVS != pVS)
             {
                 pVS = packet.pVS;
                 RCache.set_VS(pVS);
             }
 
-            if (packet.pPS != pPS)
+            if (first_packet || packet.pPS != pPS)
             {
                 pPS = packet.pPS;
                 RCache.set_PS(pPS);
             }
 
-            if (packet.pCS != pCS)
+            if (first_packet || packet.pCS != pCS)
             {
                 pCS = packet.pCS;
                 RCache.set_Constants(pCS);
             }
 
-            if (packet.pTextures != pTextures)
+            if (first_packet || packet.pTextures != pTextures)
             {
                 pTextures = packet.pTextures;
                 RCache.set_Textures(pTextures);
                 RImplementation.apply_lmaterial();
             }
+
+            first_packet = false;
 
 			auto& item = packet.item;
 			if (!static_geometry)

@@ -150,28 +150,13 @@ void CHUDManager::OnFrame()
 }
 
 xrCriticalSection ui_lock;
-// mt_ui overlaps pUIGame::OnFrame with world rendering. The lock prevents an
-// update and a draw from touching the UI tree at the same time, but by itself
-// does not define which one wins: RenderUI could acquire the lock first and
-// draw the previous frame. Fast visibility-driven HUD scripts (Dot Marks in
-// particular) then visibly alternate between old and current state. Publish
-// the frame only after its worker update has completed and make RenderUI wait
-// for that publication. This preserves the useful renderer overlap without
-// allowing stale UI state to reach the screen.
-static xr_atomic_u32 ui_update_frame{u32(-1)};
+// Join the UI owner before taking ui_lock. A frame-number spin can never
+// finish when an update is skipped or throws; the task join also propagates
+// worker exceptions and handles paused/SVP-only frames without a new task.
 void CHUDManager::WaitForUIUpdate()
 {
 	PROF_EVENT("Wait current MT UI frame");
-	u32 spin_count = 0;
-	while (mt_ui && b_online &&
-		ui_update_frame.load(std::memory_order_acquire) !=
-		Device.dwFrame - (Device.IsSVPRenderOnlyFrame() ? 1u : 0u))
-	{
-		if (++spin_count < 256)
-			_mm_pause();
-		else
-			SwitchToThread();
-	}
+	Device.WaitForGameLogic();
 }
 
 extern BOOL mt_TaskManager;
@@ -187,8 +172,6 @@ void CHUDManager::OnFrameMT()
 
     if (!psHUD_Flags.is(HUD_DRAW_RT2))
     {
-        if (mt_ui)
-            ui_update_frame.store(Device.dwFrame, std::memory_order_release);
         return;
     }
 
@@ -199,7 +182,6 @@ void CHUDManager::OnFrameMT()
             if (pUIGame)
                 pUIGame->OnFrame();
         }
-        ui_update_frame.store(Device.dwFrame, std::memory_order_release);
     }
 }
 
@@ -364,7 +346,8 @@ bool CHUDManager::FireposActive()
 	if (!pWeapon)
 		return psActorFlags.test(AF_FIREPOS);
 
-	if (!pWeapon->GetFirepos())
+	// Launcher aiming uses its own trajectory; never overwrite the user flags.
+	if (pWeapon->GetZoomType() == 2 || !pWeapon->GetFirepos())
 		return false;
 
 	// Firepos is active if a setting matches its respective zoom state
@@ -385,7 +368,8 @@ bool CHUDManager::AimposActive()
 	if (!pWeapon)
 		return psActorFlags.test(AF_AIMPOS);
 
-	if (!pWeapon->GetAimpos())
+	// Launcher aiming uses its own trajectory; never overwrite the user flags.
+	if (pWeapon->GetZoomType() == 2 || !pWeapon->GetAimpos())
 		return false;
 
 	// Firepos is active if a setting matches its respective zoom state

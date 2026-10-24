@@ -36,22 +36,26 @@ using namespace luabind;
 
 CUIActorMenu* GetActorMenu()
 {
-	return &CurrentGameUI()->GetActorMenu();
+	auto* ui = CurrentGameUI();
+	return ui ? &ui->GetActorMenu() : nullptr;
 }
 
 CUIPdaWnd* GetPDAMenu()
 {
-	return &CurrentGameUI()->GetPdaMenu();
+	auto* ui = CurrentGameUI();
+	return ui ? &ui->GetPdaMenu() : nullptr;
 }
 
 CUIMainIngameWnd* GetMainGameMenu()
 {
-	return CurrentGameUI()->UIMainIngameWnd;
+	auto* ui = CurrentGameUI();
+	return ui ? ui->UIMainIngameWnd : nullptr;
 }
 
 CUIMessagesWindow* GetMessagesMenu()
 {
-	return CurrentGameUI()->m_pMessagesWnd;
+	auto* ui = CurrentGameUI();
+	return ui ? ui->m_pMessagesWnd : nullptr;
 }
 
 u8 GrabMenuMode()
@@ -348,6 +352,7 @@ void CUIActorMenu::script_register(lua_State* L)
 		.def(constructor<>())
 		.def_readonly("UIStaticDiskIO", &CUIMainIngameWnd::UIStaticDiskIO)
 		.def_readonly("UIStaticQuickHelp", &CUIMainIngameWnd::UIStaticQuickHelp)
+		.def("SetInteractionPrompt", &CUIMainIngameWnd::SetInteractionPrompt)
 		.def_readonly("UIMotionIcon", &CUIMainIngameWnd::UIMotionIcon)
 		.def_readonly("UIZoneMap", &CUIMainIngameWnd::UIZoneMap)
 		.def_readonly("m_ui_hud_states", &CUIMainIngameWnd::m_ui_hud_states)

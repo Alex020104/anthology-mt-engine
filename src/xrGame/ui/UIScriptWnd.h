@@ -5,6 +5,7 @@
 #include "../../xrServerEntities/script_export_space.h"
 
 struct SCallbackInfo;
+class CAddonMarkerLayout;
 
 class CUIDialogWndEx : public CUIDialogWnd, public DLL_Pure
 {
@@ -14,6 +15,8 @@ class CUIDialogWndEx : public CUIDialogWnd, public DLL_Pure
 
 private:
 	CALLBACKS m_callbacks;
+	CAddonMarkerLayout* m_addonMarker = nullptr;
+	u32 m_addonUpdateInterval = 0, m_addonNextUpdate = 0;
 	virtual void SendMessage(CUIWindow* pWnd, s16 msg, void* pData = NULL);
 	SCallbackInfo* NewCallback();
 protected:
@@ -28,6 +31,12 @@ public:
 	void AddCallback(LPCSTR control_id, s16 event, const ::luabind::functor<void>& functor,
 	                 const ::luabind::object& object);
 	virtual void Update();
+	bool ConfigureNativeMarker(const ::luabind::object& data);
+	bool SampleNativeMarker(const ::luabind::object& data);
+	void SetNativeMarkerVisible(bool visible);
+	void ClearNativeMarker();
+	void SetNativeMarkerPolicyInterval(u32 interval);
+	bool ScriptUpdateDue();
 	virtual bool OnMouseAction(float x, float y, EUIMessages mouse_action);
 	virtual bool OnKeyboardAction(int dik, EUIMessages keyboard_action);
 	virtual bool Dispatch(int cmd, int param) { return true; }

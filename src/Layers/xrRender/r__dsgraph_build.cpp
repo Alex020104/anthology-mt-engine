@@ -82,10 +82,9 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
         }
     }
 
-	// May 2026 Monolith optimization, adapted for Anthology: reject dynamic
-	// world visuals hidden by the level HOM before creating render packets.
-	// The normal-pass guard keeps HUD/PiP-specific queues out of this test.
-	if (ps_r__common_flags.test(RFLAG_HOM_DYNAMIC))
+	// HUD transforms use the weapon camera, not the world HOM projection.
+	// Only world objects in the normal pass may be rejected by this test.
+	if (!i_mask[CDSGraphManager::fl_hud] && ps_r__common_flags.test(RFLAG_HOM_DYNAMIC))
 	{
 #if RENDER!=R_R1
 		if (i_mask[CDSGraphManager::fl_normal])
@@ -97,20 +96,6 @@ void CDSGraphManager::r_dsgraph_insert_dynamic(dxRender_Visual *pVisual, Fmatrix
 				return;
 		}
 	}
-
-	// HOM occlusion culling for dynamic objects
-    if (ps_r__common_flags.test(RFLAG_HOM_DYNAMIC))
-    {
-#if RENDER!=R_R1
-        if (i_mask[CDSGraphManager::fl_normal])
-#endif
-        {
-            Fbox world_bb;
-            world_bb.xform(pVisual->vis.box, *xform);
-            if (!RImplementation.HOM.visible(world_bb))
-                return;
-        }
-    }
 
 #if RENDER == R_R1 || RENDER == R_R2
     if (this == &RImplementation.GMBase && RImplementation.scope_heat_only)

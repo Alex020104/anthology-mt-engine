@@ -135,6 +135,10 @@ void CPEDef::ExecuteCollision(PAPI::Particle* particles, u32 p_cnt, float dt, CP
 {
 	pVector pt, n;
 #ifndef _EDITOR
+    // Persistent effects can outlive a disconnected level and keep animating
+    // in the menu. They have no collision world until the next level is ready.
+    if (!g_pGameLevel || !g_pGameLevel->bReady)
+        return;
 	const bool seasonalSnow = m_Name == "anthology_seasons\\effects\\snow_balanced";
 	u32 snowBudget = 256;
 #endif
